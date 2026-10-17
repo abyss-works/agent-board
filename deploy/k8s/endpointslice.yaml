@@ -1,0 +1,18 @@
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: agb-host-tailscale
+  namespace: agb
+  labels:
+    kubernetes.io/service-name: agb-host
+addressType: IPv4
+ports:
+  - name: http
+    port: 8420
+    protocol: TCP
+endpoints:
+  # Tailscale address of the host that runs the container.
+  - addresses:
+      - 100.104.90.109
+    conditions:
+      ready: true
