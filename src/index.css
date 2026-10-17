@@ -1,0 +1,178 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(0.165 0.006 275);
+  --foreground: oklch(0.93 0.004 275);
+  --card: oklch(0.2 0.006 275);
+  --card-foreground: oklch(0.93 0.004 275);
+  --popover: oklch(0.215 0.007 275);
+  --popover-foreground: oklch(0.93 0.004 275);
+  --primary: oklch(0.62 0.16 275);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.25 0.006 275);
+  --secondary-foreground: oklch(0.93 0.004 275);
+  --muted: oklch(0.23 0.006 275);
+  --muted-foreground: oklch(0.66 0.012 275);
+  --accent: oklch(0.26 0.008 275);
+  --accent-foreground: oklch(0.96 0.004 275);
+  --destructive: oklch(0.65 0.19 24);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.62 0.16 275 / 60%);
+  --sidebar: oklch(0.145 0.006 275);
+  --sidebar-foreground: oklch(0.86 0.006 275);
+  --sidebar-accent: oklch(0.21 0.008 275);
+  --sidebar-accent-foreground: oklch(0.97 0.004 275);
+  --sidebar-border: oklch(1 0 0 / 6%);
+  --flash: oklch(0.62 0.16 275 / 22%);
+}
+
+@theme inline {
+  --font-sans: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --animate-flash: flash 2.5s ease-out;
+
+  @keyframes flash {
+    from {
+      background-color: var(--flash);
+    }
+    to {
+      background-color: transparent;
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  ::selection {
+    background: oklch(0.62 0.16 275 / 40%);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(1 0 0 / 14%) transparent;
+  }
+}
+
+/* 마크다운 본문. 유틸리티가 덮어쓸 수 있도록 components 레이어에 둔다. */
+@layer components {
+  .prose-agb {
+    @apply text-[13.5px] leading-relaxed text-foreground/90;
+  }
+  .prose-agb > :first-child {
+    margin-top: 0;
+  }
+  .prose-agb > :last-child {
+    margin-bottom: 0;
+  }
+  .prose-agb h1,
+  .prose-agb h2,
+  .prose-agb h3,
+  .prose-agb h4 {
+    @apply mt-5 mb-2 font-semibold tracking-tight text-foreground;
+  }
+  .prose-agb h1 {
+    @apply text-lg;
+  }
+  .prose-agb h2 {
+    @apply text-base;
+  }
+  .prose-agb h3,
+  .prose-agb h4 {
+    @apply text-sm;
+  }
+  .prose-agb p {
+    @apply my-2;
+  }
+  .prose-agb ul,
+  .prose-agb ol {
+    @apply my-2 pl-5;
+  }
+  .prose-agb ul {
+    list-style: disc;
+  }
+  .prose-agb ol {
+    list-style: decimal;
+  }
+  .prose-agb li {
+    @apply my-0.5;
+  }
+  .prose-agb li > ul,
+  .prose-agb li > ol {
+    @apply my-0.5;
+  }
+  .prose-agb a {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary;
+  }
+  .prose-agb code {
+    @apply rounded bg-muted px-1 py-px font-mono text-[12px] text-foreground;
+  }
+  .prose-agb pre {
+    @apply my-3 overflow-x-auto rounded-md border bg-sidebar p-3 font-mono text-[12px] leading-relaxed;
+  }
+  .prose-agb pre code {
+    @apply bg-transparent p-0;
+  }
+  .prose-agb blockquote {
+    @apply my-2 border-l-2 border-border pl-3 text-muted-foreground;
+  }
+  .prose-agb hr {
+    @apply my-4 border-border;
+  }
+  .prose-agb table {
+    @apply my-3 w-full border-collapse text-[13px];
+  }
+  .prose-agb th,
+  .prose-agb td {
+    @apply border px-2 py-1 text-left align-top;
+  }
+  .prose-agb th {
+    @apply bg-muted font-medium;
+  }
+  .prose-agb input[type='checkbox'] {
+    @apply mr-1.5 align-middle;
+  }
+  .prose-agb img {
+    @apply my-2 max-w-full rounded;
+  }
+}
