@@ -1,5 +1,5 @@
 // Command agb is the agent-board binary. "agb serve" runs the API server;
-// client commands are added later and talk to the server over HTTP only.
+// every other command is a client that talks to the server over HTTP only.
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wsk0715/agent-board/internal/cli"
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/server"
 )
@@ -19,20 +20,13 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
-const usage = `usage: agb <command>
-
-commands:
-  serve     run the API server (configured with AGB_* environment variables)
-  version   print the binary version
-`
-
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
 }
 
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
+		fmt.Fprint(stderr, cli.Usage)
 		return 2
 	}
 	switch args[0] {
@@ -41,10 +35,12 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return 0
 	case "serve":
 		return serve(stderr, getenv)
-	default:
-		fmt.Fprintf(stderr, "agb: unknown command %q\n\n%s", args[0], usage)
-		return 2
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	app := cli.New(version, getenv)
+	app.Stdout, app.Stderr = stdout, stderr
+	return app.Run(ctx, args)
 }
 
 func serve(stderr io.Writer, getenv func(string) string) int {

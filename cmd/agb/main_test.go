@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,21 @@ func TestUsage(t *testing.T) {
 	}
 	if code, _, _ := run2("bogus"); code != 2 {
 		t.Errorf("unknown command: code=%d", code)
+	}
+}
+
+func TestClientCommandsAreDispatched(t *testing.T) {
+	if code, out, _ := run2("help"); code != 0 || !strings.Contains(out, "issue") || !strings.Contains(out, "serve") {
+		t.Errorf("help: code=%d out=%q", code, out)
+	}
+	if code, out, _ := run2("issue", "create", "--help"); code != 0 || !strings.Contains(out, "--body-file") {
+		t.Errorf("issue create --help: code=%d out=%q", code, out)
+	}
+	// Without a URL anywhere the client stops before any request.
+	var out, errb bytes.Buffer
+	code := run([]string{"--config", filepath.Join(t.TempDir(), "none.json"), "health"}, &out, &errb, func(string) string { return "" })
+	if code != 2 || !strings.Contains(errb.String(), "AGB_URL") {
+		t.Errorf("health without url: code=%d err=%q", code, errb.String())
 	}
 }
 
