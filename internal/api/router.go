@@ -90,7 +90,3 @@ func (h *handler) listActors(w http.ResponseWriter, _ *http.Request) {
 func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, h.actors[TraceFrom(r.Context()).Actor])
 }
-
-// Registration hooks for the resource handlers added in later features.
-
-func (h *handler) registerViews(*http.ServeMux) {}

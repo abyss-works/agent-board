@@ -64,6 +64,8 @@ type IssueFilter struct {
 	Sort            []Sort // priority, created_at, updated_at, key, relevance
 	Limit           int
 	Offset          int
+
+	closedSince *model.Time // board: only issues closed at or after this time
 }
 
 // issueRow is an issue with the internal ids needed inside transactions.
@@ -96,6 +98,14 @@ func scanIssue(sc interface{ Scan(...any) error }) (*issueRow, error) {
 		&statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy); err != nil {
 		return nil, err
 	}
+	if err := r.finishScan(parentKey, recheck, closedAt, created, updated, statusChanged); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// finishScan converts the nullable and timestamp columns of a scanned row.
+func (r *issueRow) finishScan(parentKey, recheck, closedAt sql.NullString, created, updated, statusChanged string) error {
 	if parentKey.Valid {
 		r.Parent = &parentKey.String
 	}
@@ -104,23 +114,23 @@ func scanIssue(sc interface{ Scan(...any) error }) (*issueRow, error) {
 	}
 	var err error
 	if r.CreatedAt, err = model.ParseTime(created); err != nil {
-		return nil, err
+		return err
 	}
 	if r.UpdatedAt, err = model.ParseTime(updated); err != nil {
-		return nil, err
+		return err
 	}
 	if r.StatusChangedAt, err = model.ParseTime(statusChanged); err != nil {
-		return nil, err
+		return err
 	}
 	if closedAt.Valid {
 		t, err := model.ParseTime(closedAt.String)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		r.ClosedAt = &t
 	}
 	r.Labels, r.DependsOn, r.Refs = []string{}, []string{}, []string{}
-	return &r, nil
+	return nil
 }
 
 func getIssueRow(ctx context.Context, q querier, key string) (*issueRow, error) {
@@ -546,6 +556,10 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 			args = append(args, *f.Parent)
 		}
 	}
+	if f.closedSince != nil {
+		where = append(where, "i.closed_at >= ?")
+		args = append(args, f.closedSince.String())
+	}
 	cond := ""
 	if len(where) > 0 {
 		cond = " where " + strings.Join(where, " and ")
@@ -608,30 +622,9 @@ func scanIssueWithSnippet(rows *sql.Rows, snippets *[]string) (*issueRow, error)
 		&statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy, &snippet); err != nil {
 		return nil, err
 	}
-	if parentKey.Valid {
-		r.Parent = &parentKey.String
-	}
-	if recheck.Valid {
-		r.RecheckCondition = &recheck.String
-	}
-	var err error
-	if r.CreatedAt, err = model.ParseTime(created); err != nil {
+	if err := r.finishScan(parentKey, recheck, closedAt, created, updated, statusChanged); err != nil {
 		return nil, err
 	}
-	if r.UpdatedAt, err = model.ParseTime(updated); err != nil {
-		return nil, err
-	}
-	if r.StatusChangedAt, err = model.ParseTime(statusChanged); err != nil {
-		return nil, err
-	}
-	if closedAt.Valid {
-		t, err := model.ParseTime(closedAt.String)
-		if err != nil {
-			return nil, err
-		}
-		r.ClosedAt = &t
-	}
-	r.Labels, r.DependsOn, r.Refs = []string{}, []string{}, []string{}
 	*snippets = append(*snippets, snippet)
 	return &r, nil
 }
