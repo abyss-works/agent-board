@@ -81,7 +81,7 @@
   html {
     color-scheme: dark;
     /* 화면 배율. 이 값 하나로 전체 크기를 조절한다(크기 단위는 rem을 쓴다). */
-    font-size: 125%;
+    font-size: 112.5%;
   }
   body {
     @apply bg-background text-foreground antialiased;
