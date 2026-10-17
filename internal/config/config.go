@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ type Config struct {
 	DataDir string
 	Token   string
 	Actors  []model.Actor
+	WebDir  string // folder with the built web client; empty means it is not served
 	Backup  Backup
 }
 
@@ -43,6 +45,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		Addr:    getenv("AGB_ADDR"),
 		DataDir: getenv("AGB_DATA_DIR"),
 		Token:   getenv("AGB_TOKEN"),
+		WebDir:  getenv("AGB_WEB_DIR"),
 		Backup: Backup{
 			Bucket:          getenv("AGB_BACKUP_BUCKET"),
 			Endpoint:        getenv("AGB_BACKUP_ENDPOINT"),
@@ -75,6 +78,12 @@ func Load(getenv func(string) string) (*Config, error) {
 		errs = append(errs, err)
 	}
 	cfg.Actors = actors
+
+	if cfg.WebDir != "" {
+		if info, err := os.Stat(cfg.WebDir); err != nil || !info.IsDir() {
+			errs = append(errs, fmt.Errorf("AGB_WEB_DIR must be an existing directory, got %q", cfg.WebDir))
+		}
+	}
 
 	if v := getenv("AGB_BACKUP_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)

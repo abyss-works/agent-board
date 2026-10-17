@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -59,7 +60,11 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		st.Close()
 		return nil, fmt.Errorf("declare actors: %w", err)
 	}
-	h := api.New(api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st})
+	var web fs.FS
+	if cfg.WebDir != "" {
+		web = os.DirFS(cfg.WebDir)
+	}
+	h := api.New(api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web})
 	return &Server{
 		cfg:   cfg,
 		opts:  opts,
@@ -84,6 +89,9 @@ func (s *Server) Start() (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.startBackground(ctx)
+	if s.cfg.WebDir != "" {
+		s.opts.Logger.Info("serving web client", "dir", s.cfg.WebDir)
+	}
 	go func() {
 		defer close(s.done)
 		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

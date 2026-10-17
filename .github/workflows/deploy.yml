@@ -1,0 +1,140 @@
+name: deploy
+
+# Runs only for pushes to main and manual runs. Never add a pull_request or
+# pull_request_target trigger: the deploy job runs on a self-hosted runner.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # web/package.json names no package manager, so the pnpm version is fixed here.
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck web
+        working-directory: web
+        run: pnpm typecheck
+      - name: Lint web
+        working-directory: web
+        run: pnpm lint
+      - name: Test web
+        working-directory: web
+        run: pnpm test
+      - name: Build web
+        working-directory: web
+        run: pnpm build
+
+  image:
+    # A manual run from another branch must not publish the main tag.
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/abyss-works/agent-board
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and push
+        run: |
+          tag="git-${GITHUB_SHA::7}"
+          docker build --platform linux/arm64 --build-arg "VERSION=${tag}" -t "${IMAGE}:${tag}" -t "${IMAGE}:main" .
+          docker push "${IMAGE}:${tag}"
+          docker push "${IMAGE}:main"
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
+
+  deploy:
+    # A manual run from another branch must not reach production.
+    if: github.ref == 'refs/heads/main'
+    needs: image
+    runs-on: [self-hosted, ab]
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Pull and start the new image
+        run: |
+          export AGB_IMAGE_TAG="git-${GITHUB_SHA::7}"
+          compose=(docker compose -f deploy/compose.prod.yaml --env-file /home/ubuntu/agb/.env)
+          "${compose[@]}" pull
+          "${compose[@]}" up -d
+      - name: Check health
+        run: |
+          tag="git-${GITHUB_SHA::7}"
+          body="$(mktemp)"
+          trap 'rm -f "$body"' EXIT
+
+          # Waits up to 60 seconds for a 200 whose version names this build.
+          check() {
+            local url="$1" code=""
+            for _ in $(seq 1 30); do
+              code="$(curl -sS --max-time 5 -o "$body" -w '%{http_code}' "$url" 2>/dev/null || true)"
+              if [ "$code" = 200 ] && grep -Eq "\"version\":\"[^\"]*${tag}" "$body"; then
+                echo "ok: $url"
+                cat "$body"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "health check failed: $url (last status: ${code:-none}, expected version containing ${tag})" >&2
+            return 1
+          }
+
+          check "http://100.104.90.109:8420/v1/health"
+          check "https://agb.abyssworks.dev/v1/health"
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io

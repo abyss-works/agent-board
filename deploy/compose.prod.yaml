@@ -1,0 +1,21 @@
+name: agb
+
+services:
+  agb:
+    image: ghcr.io/abyss-works/agent-board:${AGB_IMAGE_TAG:?AGB_IMAGE_TAG is required}
+    restart: unless-stopped
+    ports:
+      # Bind to a single host address: the Tailscale address of the server.
+      - "${AGB_BIND:?AGB_BIND is required}:${AGB_PORT:-8420}:8420"
+    environment:
+      AGB_TOKEN: ${AGB_TOKEN:?AGB_TOKEN is required}
+      AGB_ACTORS: ${AGB_ACTORS:?AGB_ACTORS is required}
+      AGB_BACKUP_BUCKET: ${AGB_BACKUP_BUCKET:-}
+      AGB_BACKUP_ENDPOINT: ${AGB_BACKUP_ENDPOINT:-}
+      AGB_BACKUP_ACCESS_KEY_ID: ${AGB_BACKUP_ACCESS_KEY_ID:-}
+      AGB_BACKUP_SECRET_ACCESS_KEY: ${AGB_BACKUP_SECRET_ACCESS_KEY:-}
+    volumes:
+      - agb-data:/data
+
+volumes:
+  agb-data:

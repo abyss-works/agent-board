@@ -11,6 +11,7 @@ import { defineConfig } from 'vitest/config'
 const instances = {
   local: 'http://127.0.0.1:8420',
   staging: 'http://127.0.0.1:8421',
+  prod: 'https://agb.abyssworks.dev',
 } as const
 
 function proxyFor(name: keyof typeof instances): ProxyOptions {
@@ -19,6 +20,7 @@ function proxyFor(name: keyof typeof instances): ProxyOptions {
   return {
     target,
     changeOrigin: true,
+    secure: true,
     rewrite: (path) => path.slice(prefix.length),
     configure: (proxy) => {
       // 대상 서버가 꺼져 있으면 http-proxy의 기본 500 대신 JSON 502를 돌려주어
@@ -49,6 +51,7 @@ export default defineConfig({
     proxy: {
       '/api/local': proxyFor('local'),
       '/api/staging': proxyFor('staging'),
+      '/api/prod': proxyFor('prod'),
     },
   },
   test: {

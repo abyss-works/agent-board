@@ -3,6 +3,7 @@
 package api
 
 import (
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -22,6 +23,9 @@ type Options struct {
 	Version string
 	Logger  *slog.Logger
 	Store   *store.Store
+	// Web is the built web client. When set, every path outside /v1 is served
+	// from it without authentication. When nil those paths belong to the API.
+	Web fs.FS
 }
 
 type handler struct {
@@ -53,7 +57,16 @@ func New(o Options) http.Handler {
 
 	root := http.NewServeMux()
 	route(root, "/v1/health", methods{"GET": h.health})
-	root.Handle("/", auth(o.Token, trace(h.actors, protected)))
+	guarded := auth(o.Token, trace(h.actors, protected))
+	if o.Web == nil {
+		root.Handle("/", guarded)
+	} else {
+		// Only /v1 stays behind authentication; a browser asking for a page
+		// sends neither the token nor the trace headers.
+		root.Handle("/v1", guarded)
+		root.Handle("/v1/", guarded)
+		root.Handle("/", webHandler(o.Web))
+	}
 	return logging(h.opts.Logger, root)
 }
 
