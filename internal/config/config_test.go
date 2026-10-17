@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +34,9 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.Actors) != 2 || cfg.Actors[0].ID != "owner" || cfg.Actors[0].Kind != "user" || cfg.Actors[1].ID != "claude" || cfg.Actors[1].Kind != "agent" {
 		t.Errorf("Actors = %+v", cfg.Actors)
 	}
+	if cfg.WebDir != "" {
+		t.Errorf("WebDir = %q, want empty (web client not served)", cfg.WebDir)
+	}
 	if cfg.Backup.Enabled() {
 		t.Error("backup must be disabled without a bucket")
 	}
@@ -41,11 +46,13 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadOverrides(t *testing.T) {
+	webDir := t.TempDir()
 	cfg, err := Load(env(map[string]string{
 		"AGB_TOKEN":                    testToken,
 		"AGB_ACTORS":                   "owner:user",
 		"AGB_ADDR":                     "100.64.0.1:9000",
 		"AGB_DATA_DIR":                 "/data",
+		"AGB_WEB_DIR":                  webDir,
 		"AGB_BACKUP_BUCKET":            "agb-backup",
 		"AGB_BACKUP_ENDPOINT":          "https://example.r2.cloudflarestorage.com",
 		"AGB_BACKUP_ACCESS_KEY_ID":     "dummy-id",
@@ -57,7 +64,7 @@ func TestLoadOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != "100.64.0.1:9000" || cfg.DataDir != "/data" {
+	if cfg.Addr != "100.64.0.1:9000" || cfg.DataDir != "/data" || cfg.WebDir != webDir {
 		t.Errorf("overrides = %+v", cfg)
 	}
 	if !cfg.Backup.Enabled() || cfg.Backup.Interval != 30*time.Minute || cfg.Backup.Retention != 48*time.Hour || cfg.Backup.Prefix != "p" {
@@ -102,6 +109,23 @@ func TestLoadRejects(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), testToken) {
 			t.Errorf("%s: error leaks the token", c.name)
+		}
+	}
+}
+
+func TestLoadRejectsUnusableWebDir(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "index.html")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"missing folder": filepath.Join(t.TempDir(), "none"),
+		"regular file":   file,
+	}
+	for name, dir := range cases {
+		_, err := Load(env(map[string]string{"AGB_TOKEN": testToken, "AGB_ACTORS": "owner:user", "AGB_WEB_DIR": dir}))
+		if err == nil || !strings.Contains(err.Error(), "AGB_WEB_DIR") {
+			t.Errorf("%s: err = %v, want an AGB_WEB_DIR error", name, err)
 		}
 	}
 }
