@@ -68,7 +68,8 @@ function IssueDetail({ issue }: { issue: Issue }) {
   // 종류를 관측으로 바꿀 때 재검토 조건이 없으면 먼저 받는다.
   const [pendingRecheck, setPendingRecheck] = useState<string | null>(null)
 
-  const items = activity.data ? [...activity.data.items].reverse() : undefined
+  // 서버가 최신 기록부터 돌려준다.
+  const items = activity.data?.items
   const flash = useFlash(items, (a) => a.id, () => '')
 
   const save = (body: IssuePatch, label: string) =>
@@ -166,19 +167,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
 
             <section className="mt-8">
               <h3 className="mb-2 text-xs font-semibold text-muted-foreground">활동 {activity.data ? `· ${activity.data.total}건` : ''}</h3>
-              <div className="rounded-lg border">
-                {activity.isPending ? <Loading /> : null}
-                {activity.isError ? <QueryError error={activity.error} className="m-2" /> : null}
-                {items && items.length === 0 ? <EmptyState className="py-6">기록이 없습니다.</EmptyState> : null}
-                {items && items.length > 0 ? (
-                  <ul>
-                    {items.map((a) => (
-                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} />
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-              <div className="mt-3 space-y-2">
+              <div className="mb-3 space-y-2">
                 <Textarea
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
@@ -192,6 +181,18 @@ function IssueDetail({ issue }: { issue: Issue }) {
                     댓글 달기
                   </Button>
                 </div>
+              </div>
+              <div className="rounded-lg border">
+                {activity.isPending ? <Loading /> : null}
+                {activity.isError ? <QueryError error={activity.error} className="m-2" /> : null}
+                {items && items.length === 0 ? <EmptyState className="py-6">기록이 없습니다.</EmptyState> : null}
+                {items && items.length > 0 ? (
+                  <ul>
+                    {items.map((a) => (
+                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} />
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             </section>
           </div>
