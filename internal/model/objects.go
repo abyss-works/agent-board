@@ -1,0 +1,118 @@
+package model
+
+import "encoding/json"
+
+// Actor is a declared user or agent profile.
+type Actor struct {
+	ID   string    `json:"id"`
+	Kind ActorKind `json:"kind"`
+}
+
+// Trace carries the three mandatory request headers into every write.
+type Trace struct {
+	Actor      string
+	SessionID  string
+	ClientHost string
+}
+
+// Project is a project resource.
+type Project struct {
+	Key       string        `json:"key"`
+	Name      string        `json:"name"`
+	Status    ProjectStatus `json:"status"`
+	CreatedAt Time          `json:"created_at"`
+	UpdatedAt Time          `json:"updated_at"`
+	CreatedBy string        `json:"created_by"`
+	UpdatedBy string        `json:"updated_by"`
+}
+
+// Issue is a full issue resource including the body.
+type Issue struct {
+	Key              string      `json:"key"`
+	Project          string      `json:"project"`
+	Number           int64       `json:"number"`
+	Title            string      `json:"title"`
+	Body             string      `json:"body"`
+	Type             IssueType   `json:"type"`
+	Status           IssueStatus `json:"status"`
+	Priority         Priority    `json:"priority"`
+	Labels           []string    `json:"labels"`
+	Parent           *string     `json:"parent"`
+	DependsOn        []string    `json:"depends_on"`
+	Refs             []string    `json:"refs"`
+	RecheckCondition *string     `json:"recheck_condition"`
+	Version          int64       `json:"version"`
+	CreatedAt        Time        `json:"created_at"`
+	UpdatedAt        Time        `json:"updated_at"`
+	ClosedAt         *Time       `json:"closed_at"`
+	StatusChangedAt  Time        `json:"status_changed_at"`
+	StatusChangedBy  string      `json:"status_changed_by"`
+	CreatedBy        string      `json:"created_by"`
+	UpdatedBy        string      `json:"updated_by"`
+}
+
+// IssueSummary is an issue without its body, as returned by list views.
+// Snippet is set only by full text search.
+type IssueSummary struct {
+	Key              string      `json:"key"`
+	Project          string      `json:"project"`
+	Number           int64       `json:"number"`
+	Title            string      `json:"title"`
+	Type             IssueType   `json:"type"`
+	Status           IssueStatus `json:"status"`
+	Priority         Priority    `json:"priority"`
+	Labels           []string    `json:"labels"`
+	Parent           *string     `json:"parent"`
+	DependsOn        []string    `json:"depends_on"`
+	Refs             []string    `json:"refs"`
+	RecheckCondition *string     `json:"recheck_condition"`
+	Version          int64       `json:"version"`
+	CreatedAt        Time        `json:"created_at"`
+	UpdatedAt        Time        `json:"updated_at"`
+	ClosedAt         *Time       `json:"closed_at"`
+	StatusChangedAt  Time        `json:"status_changed_at"`
+	StatusChangedBy  string      `json:"status_changed_by"`
+	CreatedBy        string      `json:"created_by"`
+	UpdatedBy        string      `json:"updated_by"`
+	Snippet          *string     `json:"snippet,omitempty"`
+}
+
+// Summary strips the body from an issue.
+func (i *Issue) Summary() IssueSummary {
+	return IssueSummary{
+		Key: i.Key, Project: i.Project, Number: i.Number, Title: i.Title,
+		Type: i.Type, Status: i.Status, Priority: i.Priority,
+		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
+		RecheckCondition: i.RecheckCondition, Version: i.Version,
+		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
+		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,
+		CreatedBy: i.CreatedBy, UpdatedBy: i.UpdatedBy,
+	}
+}
+
+// QueueItem is an issue summary with its readiness in the priority queue.
+type QueueItem struct {
+	IssueSummary
+	Ready     bool     `json:"ready"`
+	BlockedBy []string `json:"blocked_by"`
+}
+
+// Change is one field change in an activity record.
+type Change struct {
+	From json.RawMessage `json:"from,omitempty"`
+	To   json.RawMessage `json:"to"`
+}
+
+// Activity is one append-only record of a write to an issue.
+type Activity struct {
+	ID         int64             `json:"id"`
+	Issue      string            `json:"issue"`
+	Project    string            `json:"project"`
+	Kind       ActivityKind      `json:"kind"`
+	Actor      string            `json:"actor"`
+	SessionID  string            `json:"session_id"`
+	ClientHost string            `json:"client_host"`
+	At         Time              `json:"at"`
+	Changes    map[string]Change `json:"changes"`
+	Body       *string           `json:"body"`
+}
