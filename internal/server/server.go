@@ -14,14 +14,18 @@ import (
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/api"
+	"github.com/wsk0715/agent-board/internal/backup"
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
 // Options are the process level settings not read from the environment.
+// BackupStore is the object store adapter; it is required when backups are
+// enabled in the configuration.
 type Options struct {
-	Version string
-	Logger  *slog.Logger
+	Version     string
+	Logger      *slog.Logger
+	BackupStore backup.ObjectStore
 }
 
 // Server is a configured, not yet listening, API server.
@@ -33,12 +37,16 @@ type Server struct {
 	ln     net.Listener
 	cancel context.CancelFunc
 	done   chan struct{}
+	bgDone chan struct{}
 }
 
 // New opens the store and prepares the HTTP server.
 func New(cfg *config.Config, opts Options) (*Server, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	if cfg.Backup.Enabled() && opts.BackupStore == nil {
+		return nil, errors.New("AGB_BACKUP_BUCKET is set but this build has no object store adapter")
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
@@ -60,7 +68,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			Handler:           h,
 			ReadHeaderTimeout: 10 * time.Second,
 		},
-		done: make(chan struct{}),
+		done:   make(chan struct{}),
+		bgDone: make(chan struct{}),
 	}, nil
 }
 
@@ -85,9 +94,27 @@ func (s *Server) Start() (string, error) {
 	return ln.Addr().String(), nil
 }
 
-// startBackground launches periodic jobs. Later features add the backup
-// runner here.
-func (s *Server) startBackground(context.Context) {}
+// startBackground launches the backup runner when a bucket is configured.
+func (s *Server) startBackground(ctx context.Context) {
+	if !s.cfg.Backup.Enabled() {
+		s.opts.Logger.Info("backup disabled: AGB_BACKUP_BUCKET is empty")
+		close(s.bgDone)
+		return
+	}
+	r := &backup.Runner{
+		Store:     s.opts.BackupStore,
+		Source:    s.store,
+		Prefix:    s.cfg.Backup.Prefix,
+		Interval:  s.cfg.Backup.Interval,
+		Retention: s.cfg.Backup.Retention,
+		TempDir:   filepath.Join(s.cfg.DataDir, "backup-tmp"),
+		Logger:    s.opts.Logger,
+	}
+	go func() {
+		defer close(s.bgDone)
+		r.Run(ctx)
+	}()
+}
 
 // Shutdown stops accepting connections, waits for in-flight requests until
 // ctx expires, stops background jobs and closes the store.
@@ -97,6 +124,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	err := s.http.Shutdown(ctx)
 	<-s.done
+	if s.ln != nil {
+		<-s.bgDone
+	}
 	if cerr := s.store.Close(); err == nil {
 		err = cerr
 	}
