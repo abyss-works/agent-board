@@ -27,8 +27,9 @@ export function isEditableTarget(target: unknown): boolean {
   return el.isContentEditable === true
 }
 
-/** 눌린 키가 메뉴 단축키면 이동할 경로를, 아니면 null을 돌려준다. */
-export function shortcutRoute(e: KeyEventLike): string | null {
+/** 눌린 키가 메뉴 단축키면 이동할 경로를, 아니면 null을 돌려준다. 이슈 오버레이가 열려 있으면 뒤 화면이 바뀌지 않도록 null이다. */
+export function shortcutRoute(e: KeyEventLike, overlayOpen = false): string | null {
+  if (overlayOpen) return null
   if (e.ctrlKey || e.altKey || e.metaKey) return null
   if (isEditableTarget(e.target)) return null
   return MENU_SHORTCUTS.find((s) => s.key === e.key)?.path ?? null

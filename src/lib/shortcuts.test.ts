@@ -41,4 +41,11 @@ describe('shortcutRoute', () => {
     expect(shortcutRoute(event('1', { altKey: true }))).toBeNull()
     expect(shortcutRoute(event('1', { metaKey: true }))).toBeNull()
   })
+  it('이슈 오버레이가 열려 있으면 1~4도 동작하지 않는다', () => {
+    for (const key of ['1', '2', '3', '4']) expect(shortcutRoute(event(key), true)).toBeNull()
+  })
+  it('이슈 오버레이가 닫혀 있으면 기존대로 이동한다', () => {
+    expect(shortcutRoute(event('1'), false)).toBe('/overview')
+    expect(shortcutRoute(event('4'), false)).toBe('/activity')
+  })
 })
