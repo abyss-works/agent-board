@@ -13,6 +13,10 @@ export default tseslint.config(
       ecmaVersion: 2022,
       globals: globals.browser,
     },
+    rules: {
+      // `const { node, ...rest } = props`처럼 DOM에 넘기지 않을 속성을 걸러 내는 구조 분해를 허용한다.
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true, argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
   },
   {
     files: ['vite.config.ts'],

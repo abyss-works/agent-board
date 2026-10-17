@@ -52,6 +52,12 @@ describe('Markdown', () => {
     expect(html).toContain('href="https://example.com/doc"')
     expect(html).toContain('target="_blank"')
     expect(html).toContain('rel="noopener noreferrer"')
+    expect(html).not.toContain('node=')
+  })
+  it('내부 링크는 새 창으로 열지 않는다', () => {
+    const html = render('[AGB-1](/issues/AGB-1)')
+    expect(html).toContain('href="/issues/AGB-1"')
+    expect(html).not.toContain('target="_blank"')
   })
   it('이미지의 javascript: 주소는 비운다', () => {
     const html = render('![x](javascript:alert(1))')

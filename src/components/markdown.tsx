@@ -4,7 +4,8 @@ import { isExternalUrl, safeUrl } from '@/lib/sanitize'
 import { cn } from '@/lib/utils'
 
 const components: Components = {
-  a({ href, children, ...rest }) {
+  // react-markdown이 넘기는 node는 DOM 속성이 아니므로 뺀다.
+  a({ href, children, node, ...rest }) {
     const target = href ?? ''
     if (isExternalUrl(target)) {
       return (
