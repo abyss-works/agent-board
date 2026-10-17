@@ -1,7 +1,7 @@
 import { MessageSquareIcon, PencilIcon, PlusIcon } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
-import { Link } from 'react-router'
 import type { Activity, ActivityKind } from '@/api/types'
+import { IssueLink } from '@/components/issue/issue-link'
 import { ActorChip, IssueKey } from '@/components/issue/meta'
 import { Markdown } from '@/components/markdown'
 import { describeChanges } from '@/lib/activity'
@@ -50,9 +50,9 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact }: 
             {KIND_LABEL[a.kind]}
           </span>
           {showIssue ? (
-            <Link to={`/issues/${a.issue}`} className="hover:underline">
+            <IssueLink issueKey={a.issue} className="hover:underline">
               <IssueKey issueKey={a.issue} className="text-foreground/80" />
-            </Link>
+            </IssueLink>
           ) : null}
           {!compact ? (
             <span className="ml-auto truncate font-mono text-[0.625rem] text-muted-foreground/70" title={`세션 ${a.session_id} · 기기 ${a.client_host}`}>

@@ -1,9 +1,9 @@
 import { LockIcon } from 'lucide-react'
 import { Fragment } from 'react'
-import { Link } from 'react-router'
 import type { IssueSummary, QueueItem } from '@/api/types'
 import { formatKst, formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
+import { IssueLink } from './issue-link'
 import { IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon } from './meta'
 
 /** FTS 스니펫의 `[일치]` 부분을 강조해 그린다. */
@@ -37,8 +37,8 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
   const labels = issue.labels.slice(0, compact ? 2 : 4)
   const more = issue.labels.length - labels.length
   return (
-    <Link
-      to={`/issues/${issue.key}`}
+    <IssueLink
+      issueKey={issue.key}
       className={cn(
         'group flex items-center gap-2.5 border-b border-border/60 px-4 transition-colors last:border-b-0 hover:bg-accent/40',
         compact ? 'h-8 px-3' : 'min-h-9 py-1.5',
@@ -82,6 +82,6 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
       >
         {formatRelative(issue.updated_at)}
       </time>
-    </Link>
+    </IssueLink>
   )
 }

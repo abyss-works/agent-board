@@ -1,8 +1,8 @@
 import { useDraggable } from '@dnd-kit/core'
-import { Link } from 'react-router'
 import type { IssueSummary } from '@/api/types'
 import { formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
+import { IssueLink } from './issue-link'
 import { IssueKey, LabelChip, PriorityIcon, TypeIcon } from './meta'
 
 interface Props {
@@ -29,15 +29,15 @@ export function IssueCardBody({ issue, flash, overlay, className }: Props & { cl
           <PriorityIcon priority={issue.priority} className="size-3" />
         </span>
       </div>
-      <Link
-        to={`/issues/${issue.key}`}
+      <IssueLink
+        issueKey={issue.key}
         className={cn(
           'mt-1 line-clamp-3 block text-[0.8125rem] leading-snug hover:underline',
           issue.status === 'cancelled' ? 'text-muted-foreground line-through' : 'text-foreground',
         )}
       >
         {issue.title}
-      </Link>
+      </IssueLink>
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {issue.labels.slice(0, 3).map((l) => (
           <LabelChip key={l} label={l} />
