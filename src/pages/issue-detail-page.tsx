@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils'
 function Property({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-[5.5rem_1fr] items-start gap-2 py-1">
-      <div className="pt-1.5 text-[11px] text-muted-foreground">{label}</div>
+      <div className="pt-1.5 text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className="min-w-0">{children}</div>
     </div>
   )
@@ -44,9 +44,9 @@ function Property({ label, children }: { label: string; children: ReactNode }) {
 function Meta({ label, actor, at }: { label: string; actor?: string; at: string | null }) {
   if (!at) return null
   return (
-    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title={`${formatKst(at)} KST`}>
+    <div className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground" title={`${formatKst(at)} KST`}>
       <span className="w-14 shrink-0">{label}</span>
-      {actor ? <ActorChip actor={actor} className="text-[11px]" /> : null}
+      {actor ? <ActorChip actor={actor} className="text-[0.6875rem]" /> : null}
       <span className="ml-auto tabular-nums">{formatRelative(at)}</span>
     </div>
   )
@@ -117,7 +117,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
             <CopyIcon className="size-3" />
           </Button>
           {issue.status === 'deleted' ? <Badge variant="destructive">삭제됨</Badge> : null}
-          <span className="ml-auto font-mono text-[10px] text-muted-foreground">v{issue.version}</span>
+          <span className="ml-auto font-mono text-[0.625rem] text-muted-foreground">v{issue.version}</span>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -145,7 +145,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
                   {issue.body ? (
                     <Markdown source={issue.body} />
                   ) : (
-                    <p className="text-[13px] text-muted-foreground/70 italic">본문이 없습니다.</p>
+                    <p className="text-[0.8125rem] text-muted-foreground/70 italic">본문이 없습니다.</p>
                   )}
                   <Button
                     variant="outline"
@@ -179,11 +179,11 @@ function IssueDetail({ issue }: { issue: Issue }) {
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
                   placeholder="댓글(마크다운)"
-                  className="min-h-20 text-[13px]"
+                  className="min-h-20 text-[0.8125rem]"
                   disabled={comment.isPending}
                 />
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted-foreground">owner로 남깁니다. 삭제된 이슈에도 댓글을 달 수 있습니다.</span>
+                  <span className="text-[0.6875rem] text-muted-foreground">owner로 남깁니다. 삭제된 이슈에도 댓글을 달 수 있습니다.</span>
                   <Button size="sm" onClick={submitComment} disabled={!commentText.trim() || comment.isPending}>
                     댓글 달기
                   </Button>
@@ -195,7 +195,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
       </div>
 
       <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l px-4 py-3">
-        <div className="mb-1 text-[11px] font-medium text-muted-foreground">속성</div>
+        <div className="mb-1 text-[0.6875rem] font-medium text-muted-foreground">속성</div>
         <Property label="상태">
           <PropertySelect value={issue.status} options={STATUS_OPTIONS} onChange={(s) => s !== issue.status && save({ status: s }, '상태')} title="상태" className="-ml-1.5" />
         </Property>
@@ -207,7 +207,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
         </Property>
         {pendingRecheck !== null ? (
           <div className="my-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-2">
-            <div className="text-[11px] text-amber-300">관측에는 재검토 조건이 필요합니다.</div>
+            <div className="text-[0.6875rem] text-amber-300">관측에는 재검토 조건이 필요합니다.</div>
             <Input value={pendingRecheck} onChange={(e) => setPendingRecheck(e.target.value)} placeholder="언제 다시 볼지" className="mt-1.5 h-7 text-xs" autoFocus maxLength={500} />
             <div className="mt-1.5 flex justify-end gap-1">
               <Button variant="ghost" size="xs" onClick={() => setPendingRecheck(null)}>
@@ -286,7 +286,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
             render={(v) => (
               <span className="flex flex-col gap-0.5">
                 {v.split(' ').map((r) => (
-                  <span key={r} className="text-[11px] break-all">
+                  <span key={r} className="text-[0.6875rem] break-all">
                     {r}
                   </span>
                 ))}
@@ -295,13 +295,13 @@ function IssueDetail({ issue }: { issue: Issue }) {
           />
         </Property>
 
-        <div className="mt-4 mb-1 text-[11px] font-medium text-muted-foreground">기록</div>
+        <div className="mt-4 mb-1 text-[0.6875rem] font-medium text-muted-foreground">기록</div>
         <div className="space-y-1.5">
           <Meta label="생성" actor={issue.created_by} at={issue.created_at} />
           <Meta label="수정" actor={issue.updated_by} at={issue.updated_at} />
           <Meta label={`${STATUS_LABEL[issue.status]}로`} actor={issue.status_changed_by} at={issue.status_changed_at} />
           <Meta label="닫힘" at={issue.closed_at} />
-          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
             <span className="w-14 shrink-0">프로젝트</span>
             <span className="font-mono">{issue.project}</span>
             <span className="ml-auto font-mono">#{issue.number}</span>

@@ -60,5 +60,5 @@ export function QueryError({ error, onRetry, className }: { error: unknown; onRe
 /** 입력 칸 아래 오류 문구 */
 export function FieldError({ message }: { message: string | null | undefined }) {
   if (!message) return null
-  return <p className="mt-1 text-[11px] text-destructive">{message}</p>
+  return <p className="mt-1 text-[0.6875rem] text-destructive">{message}</p>
 }

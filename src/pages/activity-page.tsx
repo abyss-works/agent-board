@@ -29,13 +29,13 @@ function Feed({ project, actor, kind }: { project: string | null; actor: string 
         return (
           <Fragment key={a.id}>
             {header ? (
-              <li className="sticky top-0 z-10 border-b bg-background/95 px-4 py-1 text-[11px] font-medium text-muted-foreground backdrop-blur">{date}</li>
+              <li className="sticky top-0 z-10 border-b bg-background/95 px-4 py-1 text-[0.6875rem] font-medium text-muted-foreground backdrop-blur">{date}</li>
             ) : null}
             <ActivityItem activity={a} flash={flash.has(a.id)} />
           </Fragment>
         )
       })}
-      {q.data.total > items.length ? <li className="px-4 py-3 text-center text-[11px] text-muted-foreground">총 {q.data.total}건 중 최근 {items.length}건</li> : null}
+      {q.data.total > items.length ? <li className="px-4 py-3 text-center text-[0.6875rem] text-muted-foreground">총 {q.data.total}건 중 최근 {items.length}건</li> : null}
     </ul>
   )
 }

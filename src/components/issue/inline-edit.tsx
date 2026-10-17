@@ -95,7 +95,7 @@ export function MarkdownArea({ value, onCommit, onCancel, placeholder, className
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         placeholder={placeholder}
-        className="min-h-48 font-mono text-[12.5px]"
+        className="min-h-48 font-mono text-[0.78125rem]"
         disabled={saving}
         onKeyDown={(e) => {
           if (e.key === 'Escape' && onCancel) {

@@ -125,7 +125,7 @@ export function TypeIcon({ type, className }: { type: IssueType; className?: str
 
 export function TypeBadge({ type, className }: { type: IssueType; className?: string }) {
   return (
-    <span className={cn('inline-flex items-center gap-1 text-[11px] text-muted-foreground', className)}>
+    <span className={cn('inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground', className)}>
       <TypeIcon type={type} className="size-3" />
       {TYPE_LABEL[type]}
     </span>
@@ -139,7 +139,7 @@ export function LabelChip({ label, className, onClick }: { label: string; classN
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={cn(
-        'inline-flex h-5 max-w-40 items-center gap-1.5 rounded-full border border-border px-1.5 text-[11px] text-muted-foreground',
+        'inline-flex h-5 max-w-40 items-center gap-1.5 rounded-full border border-border px-1.5 text-[0.6875rem] text-muted-foreground',
         onClick && 'cursor-pointer hover:bg-accent hover:text-accent-foreground',
         className,
       )}
@@ -152,7 +152,7 @@ export function LabelChip({ label, className, onClick }: { label: string; classN
 
 export function ActorChip({ actor, className }: { actor: string; className?: string }) {
   return (
-    <span className={cn('inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground/90', className)}>
+    <span className={cn('inline-flex items-center gap-1.5 text-[0.75rem] font-medium text-foreground/90', className)}>
       <span className={cn('size-2 shrink-0 rounded-full', hashColor(actor))} />
       {actor}
     </span>
@@ -160,5 +160,5 @@ export function ActorChip({ actor, className }: { actor: string; className?: str
 }
 
 export function IssueKey({ issueKey, className }: { issueKey: string; className?: string }) {
-  return <span className={cn('font-mono text-[11px] tracking-tight text-muted-foreground', className)}>{issueKey}</span>
+  return <span className={cn('font-mono text-[0.6875rem] tracking-tight text-muted-foreground', className)}>{issueKey}</span>
 }

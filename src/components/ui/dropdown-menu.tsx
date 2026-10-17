@@ -13,7 +13,7 @@ const contentClass =
   'z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[10rem] overflow-x-hidden overflow-y-auto rounded-lg border bg-popover p-1 text-popover-foreground shadow-xl data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1'
 
 const itemClass =
-  "relative flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px] outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+  "relative flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[0.8125rem] outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
 
 function DropdownMenuContent({
   className,
@@ -97,7 +97,7 @@ function DropdownMenuRadioItem({ className, children, ...props }: React.Componen
 function DropdownMenuLabel({ className, inset, ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Label> & { inset?: boolean }) {
   return (
     <DropdownMenuPrimitive.Label
-      className={cn('px-2 py-1.5 text-[11px] font-medium text-muted-foreground', inset && 'pl-8', className)}
+      className={cn('px-2 py-1.5 text-[0.6875rem] font-medium text-muted-foreground', inset && 'pl-8', className)}
       {...props}
     />
   )
@@ -108,7 +108,7 @@ function DropdownMenuSeparator({ className, ...props }: React.ComponentProps<typ
 }
 
 function DropdownMenuShortcut({ className, ...props }: React.ComponentProps<'span'>) {
-  return <span className={cn('ml-auto text-[11px] tracking-widest text-muted-foreground', className)} {...props} />
+  return <span className={cn('ml-auto text-[0.6875rem] tracking-widest text-muted-foreground', className)} {...props} />
 }
 
 export {

@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { Toaster } from 'sonner'
 import { AppStateProvider } from '@/app/provider'
@@ -9,6 +10,23 @@ import { IssueDetailPage } from '@/pages/issue-detail-page'
 import { IssuesPage } from '@/pages/issues-page'
 import { LoginPage } from '@/pages/login-page'
 import { OverviewPage } from '@/pages/overview-page'
+
+// sonner는 px로 고정한 크기를 레이어 밖 CSS로 넣는다. 루트 글꼴 크기를 따르도록 기본 px 값을 rem(÷16)으로 덮어쓴다.
+// 클래스 끝의 !는 레이어 밖 CSS보다 우선하게 하려는 것이다.
+const TOAST_STYLE = {
+  '--width': '22.25rem',
+  '--border-radius': '0.5rem',
+  '--toast-icon-margin-start': '-0.1875rem',
+  '--toast-icon-margin-end': '0.25rem',
+  '--toast-svg-margin-start': '-0.0625rem',
+} as CSSProperties
+
+const TOAST_CLASS_NAMES = {
+  toast: 'gap-1.5! p-4! text-[0.8125rem]!',
+  icon: 'size-4! [&_svg]:size-5!',
+  content: 'gap-0.5!',
+  closeButton: 'size-5! [&_svg]:size-3!',
+}
 
 function Root() {
   const { token, instance } = useAppState()
@@ -35,7 +53,16 @@ export default function App() {
       <BrowserRouter>
         <Root />
       </BrowserRouter>
-      <Toaster theme="dark" position="bottom-right" richColors closeButton toastOptions={{ className: 'text-[13px]' }} />
+      <Toaster
+        theme="dark"
+        position="bottom-right"
+        richColors
+        closeButton
+        offset="1.5rem"
+        mobileOffset="1rem"
+        style={TOAST_STYLE}
+        toastOptions={{ classNames: TOAST_CLASS_NAMES }}
+      />
     </AppStateProvider>
   )
 }

@@ -46,10 +46,10 @@ function InstanceSwitcher() {
             !single && 'cursor-pointer hover:bg-sidebar-accent',
           )}
         >
-          <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-[11px] font-bold text-primary-foreground">ab</div>
+          <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-[0.6875rem] font-bold text-primary-foreground">ab</div>
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-[13px] font-semibold">agent-board</div>
-            <div className="truncate font-mono text-[10px] text-muted-foreground">
+            <div className="truncate text-[0.8125rem] font-semibold">agent-board</div>
+            <div className="truncate font-mono text-[0.625rem] text-muted-foreground">
               {single ? instance.description : `${instance.label} · ${instance.description}`}
             </div>
           </div>
@@ -62,7 +62,7 @@ function InstanceSwitcher() {
           {instances.map((i) => (
             <DropdownMenuRadioItem key={i.id} value={i.id}>
               <span className="font-medium">{i.label}</span>
-              <span className="ml-auto font-mono text-[11px] text-muted-foreground">{i.description}</span>
+              <span className="ml-auto font-mono text-[0.6875rem] text-muted-foreground">{i.description}</span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -91,7 +91,7 @@ function ProjectSwitcher({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/50 px-2 text-left text-[13px] outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/50 px-2 text-left text-[0.8125rem] outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"
         >
           <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">
@@ -124,7 +124,7 @@ function ProjectSwitcher({
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
-        {projects.isError ? <div className="px-2 py-1.5 text-[11px] text-destructive">프로젝트 목록을 불러오지 못했습니다.</div> : null}
+        {projects.isError ? <div className="px-2 py-1.5 text-[0.6875rem] text-destructive">프로젝트 목록을 불러오지 못했습니다.</div> : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onCreate}>
           <PlusIcon />새 프로젝트
@@ -152,14 +152,14 @@ function ConnectionStatus() {
   const status = useConnection()
   if (status.error) {
     return (
-      <div className="flex items-start gap-1.5 text-[11px] text-rose-400">
+      <div className="flex items-start gap-1.5 text-[0.6875rem] text-rose-400">
         <span className="mt-1 size-1.5 shrink-0 rounded-full bg-rose-400" />
         <span className="leading-snug">{status.error.message}</span>
       </div>
     )
   }
   return (
-    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+    <div className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
       <span className="relative flex size-1.5">
         <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
         <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
@@ -198,7 +198,7 @@ export function Sidebar() {
               to={m.path}
               className={({ isActive }) =>
                 cn(
-                  'flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors',
+                  'flex h-8 items-center gap-2.5 rounded-md px-2 text-[0.8125rem] transition-colors',
                   isActive ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
                 )
               }
@@ -213,7 +213,7 @@ export function Sidebar() {
 
       <div className="mt-auto space-y-2 border-t border-sidebar-border p-3">
         <ConnectionStatus />
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
           <span className="size-2 rounded-full bg-sky-400" />
           행위자 <span className="font-mono text-foreground/80">{ACTOR}</span>
           <Button variant="ghost" size="xs" className="ml-auto" onClick={logout} title="토큰을 지우고 로그인 화면으로">
