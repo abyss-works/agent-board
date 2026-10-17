@@ -92,6 +92,5 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 }
 
 // Registration hooks for the resource handlers added in later features.
-func (h *handler) registerProjects(*http.ServeMux) {}
-func (h *handler) registerIssues(*http.ServeMux)   {}
-func (h *handler) registerViews(*http.ServeMux)    {}
+
+func (h *handler) registerViews(*http.ServeMux) {}
