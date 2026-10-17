@@ -34,12 +34,61 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: str
   )
 }
 
-function Section({ title, total, to, children }: { title: string; total: number; to?: string; children: ReactNode }) {
+// 사용자 확인이 필요한 칸. 항목이 있을 때만 강조한다.
+const ACCENT = {
+  review: {
+    section: 'border-emerald-500/40 bg-emerald-500/[0.04]',
+    header: 'border-emerald-500/30 bg-emerald-500/10',
+    title: 'text-emerald-300',
+    badge: 'success',
+  },
+  decision: {
+    section: 'border-amber-500/40 bg-amber-500/[0.04]',
+    header: 'border-amber-500/30 bg-amber-500/10',
+    title: 'text-amber-300',
+    badge: 'warning',
+  },
+} as const
+
+function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/40">
-      <header className="flex h-9 items-center gap-2 border-b px-3">
-        <h3 className="text-xs font-semibold">{title}</h3>
-        <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}</span>
+    <div className="space-y-2">
+      <h2 className="text-[0.6875rem] font-medium text-muted-foreground">{title}</h2>
+      {children}
+    </div>
+  )
+}
+
+function Section({
+  title,
+  total,
+  to,
+  icon,
+  accent,
+  className,
+  children,
+}: {
+  title: string
+  total: number
+  to?: string
+  icon?: ReactNode
+  accent?: keyof typeof ACCENT
+  className?: string
+  children: ReactNode
+}) {
+  const tone = accent && total > 0 ? ACCENT[accent] : null
+  return (
+    <section className={cn('flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/40', tone?.section, className)}>
+      <header className={cn('flex h-9 items-center gap-2 border-b px-3', tone?.header)}>
+        {icon}
+        <h3 className={cn('text-xs font-semibold', tone?.title)}>{title}</h3>
+        {tone ? (
+          <Badge variant={tone.badge} className="tabular-nums">
+            {total}
+          </Badge>
+        ) : (
+          <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}</span>
+        )}
         {to ? (
           <Link to={to} className="ml-auto inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground">
             전체 보기 <ArrowRightIcon className="size-3" />
@@ -66,7 +115,7 @@ function Counts({ overview }: { overview: Overview }) {
   const { counts } = overview
   const statusTotal = Math.max(1, counts.total)
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
+    <div className="grid gap-3 lg:grid-cols-3 xl:grid-cols-1">
       <div className="rounded-lg border bg-card/40 p-3">
         <div className="mb-2 text-[0.6875rem] font-medium text-muted-foreground">상태별 (전체 {counts.total})</div>
         <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -140,44 +189,68 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           집계 {formatKstTime(o.generated_at)}
         </span>
       </PageHeader>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-        <div className="grid grid-cols-3 gap-3 lg:grid-cols-6">
-          <Stat label="전체" value={o.counts.total} />
-          <Stat label="열린 이슈" value={o.counts.open} />
-          <Stat label="진행" value={o.doing.total} tone="text-amber-400" />
-          <Stat label="검토" value={o.review.total} tone="text-emerald-400" />
-          <Stat label="막힘" value={o.blocked.total} tone={o.blocked.total > 0 ? 'text-rose-400' : undefined} />
-          <Stat label="결정 대기" value={o.decisions.total} tone={o.decisions.total > 0 ? 'text-amber-300' : undefined} />
-        </div>
-        <Counts overview={o} />
-        <div className="grid gap-3 xl:grid-cols-2">
-          <Section title="다음 할 일" total={o.next.total} to="/issues?status=todo">
-            <IssueList items={o.next.items} flash={flash} showReady />
-          </Section>
-          <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
-            <IssueList items={o.doing.items} flash={flash} />
-          </Section>
-          <Section title="검토" total={o.review.total} to="/issues?status=review">
-            <IssueList items={o.review.items} flash={flash} />
-          </Section>
-          <Section title="막힘(선행 이슈 열림)" total={o.blocked.total}>
-            <IssueList items={o.blocked.items} flash={flash} showReady />
-          </Section>
-          <Section title="결정 대기" total={o.decisions.total} to="/issues?type=decision">
-            <IssueList items={o.decisions.items} flash={flash} />
-          </Section>
-          <Section title="최근 활동" total={o.recent_activity.total} to="/activity">
-            {o.recent_activity.items.length === 0 ? (
-              <EmptyState className="py-6">없음</EmptyState>
-            ) : (
-              <ul>
-                {o.recent_activity.items.map((a) => (
-                  <ActivityItem key={a.id} activity={a} compact flash={flashActivity.has(a.id)} />
-                ))}
-              </ul>
-            )}
-          </Section>
-        </div>
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+        <Group title="확인 필요">
+          <div className="grid gap-3 xl:grid-cols-2">
+            <Section
+              title="검토"
+              total={o.review.total}
+              to="/issues?status=review"
+              icon={<StatusIcon status="review" className="size-3.5" />}
+              accent="review"
+            >
+              <IssueList items={o.review.items} flash={flash} />
+            </Section>
+            <Section
+              title="결정 대기"
+              total={o.decisions.total}
+              to="/issues?type=decision"
+              icon={<TypeIcon type="decision" className="size-3.5" />}
+              accent="decision"
+            >
+              <IssueList items={o.decisions.items} flash={flash} />
+            </Section>
+          </div>
+        </Group>
+        <Group title="작업 흐름">
+          <div className="grid gap-3 xl:grid-cols-3">
+            <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
+              <IssueList items={o.doing.items} flash={flash} />
+            </Section>
+            <Section title="다음 할 일" total={o.next.total} to="/issues?status=todo">
+              <IssueList items={o.next.items} flash={flash} showReady />
+            </Section>
+            <Section title="막힘(선행 이슈 열림)" total={o.blocked.total}>
+              <IssueList items={o.blocked.items} flash={flash} showReady />
+            </Section>
+          </div>
+        </Group>
+        <Group title="기록과 통계">
+          <div className="grid gap-3 xl:grid-cols-3">
+            <Section title="최근 활동" total={o.recent_activity.total} to="/activity" className="xl:col-span-2">
+              {o.recent_activity.items.length === 0 ? (
+                <EmptyState className="py-6">없음</EmptyState>
+              ) : (
+                <ul>
+                  {o.recent_activity.items.map((a) => (
+                    <ActivityItem key={a.id} activity={a} compact flash={flashActivity.has(a.id)} />
+                  ))}
+                </ul>
+              )}
+            </Section>
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-3 lg:grid-cols-6 xl:grid-cols-3">
+                <Stat label="전체" value={o.counts.total} />
+                <Stat label="열린 이슈" value={o.counts.open} />
+                <Stat label="진행" value={o.doing.total} tone="text-amber-400" />
+                <Stat label="검토" value={o.review.total} tone="text-emerald-400" />
+                <Stat label="막힘" value={o.blocked.total} tone={o.blocked.total > 0 ? 'text-rose-400' : undefined} />
+                <Stat label="결정 대기" value={o.decisions.total} tone={o.decisions.total > 0 ? 'text-amber-300' : undefined} />
+              </div>
+              <Counts overview={o} />
+            </div>
+          </div>
+        </Group>
       </div>
     </>
   )
