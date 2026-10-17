@@ -1,9 +1,10 @@
 import type { CSSProperties } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router'
 import { Toaster } from 'sonner'
 import { AppStateProvider } from '@/app/provider'
 import { useAppState } from '@/app/state'
 import { AppShell } from '@/components/layout/app-shell'
+import { backgroundOf } from '@/lib/overlay'
 import { ActivityPage } from '@/pages/activity-page'
 import { BoardPage } from '@/pages/board-page'
 import { IssueDetailPage } from '@/pages/issue-detail-page'
@@ -30,20 +31,30 @@ const TOAST_CLASS_NAMES = {
 
 function Root() {
   const { token, instance } = useAppState()
+  const location = useLocation()
   if (!token) return <LoginPage />
+  // 이슈 주소이면 그 밑에 그릴 화면의 위치. 이슈를 열어도 아래 화면이 다시 만들어지지 않도록,
+  // 오버레이가 없을 때도 같은 방식(location 지정)으로 그린다.
+  const background = backgroundOf(location)
   return (
-    // 인스턴스를 바꾸면 트리를 새로 만들어 화면 상태가 섞이지 않게 한다.
-    <Routes key={instance.id}>
-      <Route element={<AppShell />}>
-        <Route index element={<Navigate to="/overview" replace />} />
-        <Route path="/overview" element={<OverviewPage />} />
-        <Route path="/board" element={<BoardPage />} />
-        <Route path="/issues" element={<IssuesPage />} />
-        <Route path="/issues/:key" element={<IssueDetailPage />} />
-        <Route path="/activity" element={<ActivityPage />} />
-        <Route path="*" element={<Navigate to="/overview" replace />} />
-      </Route>
-    </Routes>
+    <>
+      {/* 인스턴스를 바꾸면 트리를 새로 만들어 화면 상태가 섞이지 않게 한다. */}
+      <Routes key={instance.id} location={background ?? location}>
+        <Route element={<AppShell overlayOpen={background !== null} />}>
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<OverviewPage />} />
+          <Route path="/board" element={<BoardPage />} />
+          <Route path="/issues" element={<IssuesPage />} />
+          <Route path="/activity" element={<ActivityPage />} />
+          <Route path="*" element={<Navigate to="/overview" replace />} />
+        </Route>
+      </Routes>
+      {background ? (
+        <Routes>
+          <Route path="/issues/:key" element={<IssueDetailPage />} />
+        </Routes>
+      ) : null}
+    </>
   )
 }
 

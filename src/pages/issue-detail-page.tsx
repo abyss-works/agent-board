@@ -1,12 +1,13 @@
 import { ArrowLeftIcon, CopyIcon, PencilIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue } from '@/api/queries'
 import type { Issue, IssuePatch, IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { InlineInput, MarkdownArea } from '@/components/issue/inline-edit'
+import { IssueLink } from '@/components/issue/issue-link'
 import { parseIssueKeys, parseLabels, parseRefs } from '@/lib/parse'
 import { ActorChip, LabelChip } from '@/components/issue/meta'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from '@/components/issue/options'
@@ -25,9 +26,12 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { useFlash } from '@/hooks/use-flash'
 import { STATUS_LABEL } from '@/lib/labels'
+import { ISSUES_PATH, openedFromScreen } from '@/lib/overlay'
+import { isEditableTarget } from '@/lib/shortcuts'
 import { formatKst, formatRelative } from '@/lib/time'
 import { toastError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -253,9 +257,9 @@ function IssueDetail({ issue }: { issue: Issue }) {
             placeholder="없음"
             mono
             render={(v) => (
-              <Link to={`/issues/${v}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+              <IssueLink issueKey={v} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
                 {v}
-              </Link>
+              </IssueLink>
             )}
           />
         </Property>
@@ -268,9 +272,9 @@ function IssueDetail({ issue }: { issue: Issue }) {
             render={(v) => (
               <span className="flex flex-wrap gap-x-2 gap-y-0.5">
                 {v.split(' ').map((k) => (
-                  <Link key={k} to={`/issues/${k}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+                  <IssueLink key={k} issueKey={k} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
                     {k}
-                  </Link>
+                  </IssueLink>
                 ))}
               </span>
             )}
@@ -357,9 +361,8 @@ function IssueDetail({ issue }: { issue: Issue }) {
   )
 }
 
-export function IssueDetailPage() {
-  const { key = '' } = useParams()
-  const q = useIssue(key)
+function IssueDetailContent({ issueKey }: { issueKey: string }) {
+  const q = useIssue(issueKey)
   if (q.isPending) return <Loading />
   if (q.isError) {
     return (
@@ -372,4 +375,36 @@ export function IssueDetailPage() {
     )
   }
   return <IssueDetail key={q.data.key} issue={q.data} />
+}
+
+/** 이슈 상세를 보던 화면 위의 오른쪽 패널로 연다. 라우터가 이 컴포넌트를 그리는 동안 패널이 열려 있다. */
+export function IssueDetailPage() {
+  const { key = '' } = useParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // 화면에서 열었으면 history에서 한 칸 돌아가 그 화면으로, 주소로 바로 들어왔으면 이슈 목록으로 간다.
+  const close = () => {
+    if (openedFromScreen(location)) navigate(-1)
+    else navigate(ISSUES_PATH, { replace: true })
+  }
+
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) close()
+      }}
+    >
+      <SheetContent
+        // 입력 칸에서 누른 Esc는 입력 칸이 쓴다(편집 취소). 입력 칸 밖에서만 패널을 닫는다.
+        onEscapeKeyDown={(e) => {
+          if (isEditableTarget(e.target)) e.preventDefault()
+        }}
+      >
+        <SheetTitle className="sr-only">이슈 {key}</SheetTitle>
+        <IssueDetailContent issueKey={key} />
+      </SheetContent>
+    </Sheet>
+  )
 }
