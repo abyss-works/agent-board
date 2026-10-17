@@ -1,0 +1,24 @@
+name: agent-board
+
+services:
+  agb:
+    build:
+      context: .
+      args:
+        VERSION: ${AGB_VERSION:-dev}
+    restart: unless-stopped
+    ports:
+      # Bind to a single host address (loopback locally, the Tailscale address on the server).
+      - "${AGB_BIND:-127.0.0.1}:${AGB_PORT:-8420}:8420"
+    environment:
+      AGB_TOKEN: ${AGB_TOKEN:?AGB_TOKEN is required}
+      AGB_ACTORS: ${AGB_ACTORS:?AGB_ACTORS is required}
+      AGB_BACKUP_BUCKET: ${AGB_BACKUP_BUCKET:-}
+      AGB_BACKUP_ENDPOINT: ${AGB_BACKUP_ENDPOINT:-}
+      AGB_BACKUP_ACCESS_KEY_ID: ${AGB_BACKUP_ACCESS_KEY_ID:-}
+      AGB_BACKUP_SECRET_ACCESS_KEY: ${AGB_BACKUP_SECRET_ACCESS_KEY:-}
+    volumes:
+      - agb-data:/data
+
+volumes:
+  agb-data:
