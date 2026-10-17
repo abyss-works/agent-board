@@ -1,6 +1,6 @@
-// Package client is the HTTP client the CLI commands will build on. It
-// talks to the server over HTTP only and carries the token and the three
-// mandatory trace headers on every request.
+// Package client is the HTTP client the CLI commands build on. It talks to
+// the server over HTTP only and carries the token and the three mandatory
+// trace headers on every request.
 package client
 
 import (
@@ -34,16 +34,31 @@ type Detail struct {
 }
 
 // Error is a non-2xx response decoded from the server's error envelope.
+// Body is the response body as the server sent it.
 type Error struct {
 	Status  int
 	Code    string
 	Message string
 	Details []Detail
+	Body    []byte
 }
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("agb: %d %s: %s", e.Status, e.Code, e.Message)
 }
+
+// Response is a 2xx response with its body kept verbatim.
+type Response struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+// ETag returns the ETag header, or "" when the response has none.
+func (r *Response) ETag() string { return r.Header.Get("ETag") }
+
+// Decode unmarshals the body into out.
+func (r *Response) Decode(out any) error { return json.Unmarshal(r.Body, out) }
 
 // Health is the /v1/health response.
 type Health struct {
@@ -52,20 +67,22 @@ type Health struct {
 	APIVersion int    `json:"api_version"`
 }
 
-// Do sends method path with an optional JSON body and decodes the JSON
-// response into out when out is non-nil. Non-2xx responses become *Error.
-func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
+// Request sends method path with an optional JSON body and extra headers
+// and returns the raw response. Non-2xx responses become *Error.
+func (c *Client) Request(ctx context.Context, method, path string, body any, extra http.Header) (*Response, error) {
 	var rd io.Reader
 	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(body); err != nil {
+			return nil, err
 		}
-		rd = bytes.NewReader(b)
+		rd = &buf
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, rd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("X-Actor", c.Actor)
@@ -76,21 +93,24 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	}
+	for k, vs := range extra {
+		req.Header[k] = append([]string(nil), vs...)
+	}
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		apiErr := &Error{Status: resp.StatusCode}
+		apiErr := &Error{Status: resp.StatusCode, Body: data}
 		var env struct {
 			Error struct {
 				Code    string   `json:"code"`
@@ -103,12 +123,22 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 		} else {
 			apiErr.Code, apiErr.Message = "http_error", strings.TrimSpace(string(data))
 		}
-		return apiErr
+		return nil, apiErr
 	}
-	if out == nil || len(data) == 0 {
+	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: data}, nil
+}
+
+// Do sends method path with an optional JSON body and decodes the JSON
+// response into out when out is non-nil. Non-2xx responses become *Error.
+func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
+	resp, err := c.Request(ctx, method, path, body, nil)
+	if err != nil {
+		return err
+	}
+	if out == nil || len(resp.Body) == 0 {
 		return nil
 	}
-	return json.Unmarshal(data, out)
+	return resp.Decode(out)
 }
 
 // Health fetches the server status. It needs no token or trace headers but
