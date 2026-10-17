@@ -349,4 +349,10 @@ func TestCommentsAndActivity(t *testing.T) {
 			t.Errorf("%s: %d", q, rec.Code)
 		}
 	}
+	e.createProject(t, "ARC", "archived")
+	e.createIssue(t, `{"project":"ARC","title":"c"}`)
+	e.do(t, "PATCH", "/v1/projects/ARC", `{"status":"archived"}`, nil)
+	if rec := e.do(t, "POST", "/v1/issues/ARC-1/comments", `{"body":"x"}`, nil); rec.Code != 409 || decodeErr(t, rec).Error.Details[0].Reason != "project_not_active" {
+		t.Errorf("comment on archived project: %d %s", rec.Code, rec.Body.String())
+	}
 }

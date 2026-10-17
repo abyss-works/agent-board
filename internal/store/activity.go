@@ -76,7 +76,8 @@ func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.A
 }
 
 // AddComment appends a commented record to an issue. Comments are allowed
-// on issues in any status, including deleted.
+// on issues in any status, including deleted, but not in a project that is
+// archived or deleted.
 func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string) (*model.Activity, error) {
 	if err := model.ValidateCommentBody(body); err != nil {
 		return nil, err
@@ -84,12 +85,16 @@ func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var issueID int64
-		err := tx.QueryRowContext(ctx, `select id from issue where key = ?`, key).Scan(&issueID)
+		var projectStatus string
+		err := tx.QueryRowContext(ctx, `select i.id, p.status from issue i join project p on p.id = i.project_id where i.key = ?`, key).Scan(&issueID, &projectStatus)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
+		}
+		if model.ProjectStatus(projectStatus) != model.ProjectActive {
+			return ErrProjectNotActive
 		}
 		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, s.stamp(), nil, &body)
 		return err
