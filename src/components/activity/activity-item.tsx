@@ -38,14 +38,14 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact }: 
       <time
         dateTime={a.at}
         title={`${formatKst(a.at)} KST`}
-        className="mt-0.5 w-14 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground"
+        className="mt-0.5 w-14 shrink-0 font-mono text-[0.6875rem] tabular-nums text-muted-foreground"
       >
         {formatKstTime(a.at)}
       </time>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           <ActorChip actor={a.actor} />
-          <span className={cn('inline-flex items-center gap-1 text-[11px]', KIND_COLOR[a.kind])}>
+          <span className={cn('inline-flex items-center gap-1 text-[0.6875rem]', KIND_COLOR[a.kind])}>
             <Icon className="size-3" />
             {KIND_LABEL[a.kind]}
           </span>
@@ -55,7 +55,7 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact }: 
             </Link>
           ) : null}
           {!compact ? (
-            <span className="ml-auto truncate font-mono text-[10px] text-muted-foreground/70" title={`세션 ${a.session_id} · 기기 ${a.client_host}`}>
+            <span className="ml-auto truncate font-mono text-[0.625rem] text-muted-foreground/70" title={`세션 ${a.session_id} · 기기 ${a.client_host}`}>
               {a.session_id.length > 18 ? `${a.session_id.slice(0, 18)}…` : a.session_id} · {a.client_host}
             </span>
           ) : null}
@@ -63,7 +63,7 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact }: 
         {a.kind === 'commented' && a.body ? (
           <Markdown source={a.body} className={cn('mt-1.5 rounded-md border border-border/60 bg-card/60 px-3 py-2', compact && 'line-clamp-3 px-2 py-1 text-xs')} />
         ) : lines.length > 0 ? (
-          <ul className={cn('mt-1 space-y-0.5 text-[12px] text-muted-foreground', compact && 'text-[11px]')}>
+          <ul className={cn('mt-1 space-y-0.5 text-[0.75rem] text-muted-foreground', compact && 'text-[0.6875rem]')}>
             {lines.map((l) => (
               <li key={l.field} className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
                 <span className="shrink-0 text-foreground/70">{l.label}</span>

@@ -32,7 +32,7 @@ export function IssueCardBody({ issue, flash, overlay, className }: Props & { cl
       <Link
         to={`/issues/${issue.key}`}
         className={cn(
-          'mt-1 line-clamp-3 block text-[13px] leading-snug hover:underline',
+          'mt-1 line-clamp-3 block text-[0.8125rem] leading-snug hover:underline',
           issue.status === 'cancelled' ? 'text-muted-foreground line-through' : 'text-foreground',
         )}
       >
@@ -42,8 +42,8 @@ export function IssueCardBody({ issue, flash, overlay, className }: Props & { cl
         {issue.labels.slice(0, 3).map((l) => (
           <LabelChip key={l} label={l} />
         ))}
-        {issue.labels.length > 3 ? <span className="text-[10px] text-muted-foreground">+{issue.labels.length - 3}</span> : null}
-        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{formatRelative(issue.updated_at)}</span>
+        {issue.labels.length > 3 ? <span className="text-[0.625rem] text-muted-foreground">+{issue.labels.length - 3}</span> : null}
+        <span className="ml-auto text-[0.625rem] tabular-nums text-muted-foreground">{formatRelative(issue.updated_at)}</span>
       </div>
     </div>
   )

@@ -68,12 +68,12 @@ function FilterMenu<T extends string>({
         <Button variant={n ? 'secondary' : 'ghost'} size="xs" className={cn(n && 'text-foreground')}>
           {icon}
           {label}
-          {n ? <span className="rounded-full bg-primary/20 px-1.5 text-[10px] tabular-nums text-primary">{n}</span> : null}
+          {n ? <span className="rounded-full bg-primary/20 px-1.5 text-[0.625rem] tabular-nums text-primary">{n}</span> : null}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-80">
         <DropdownMenuLabel>{label}</DropdownMenuLabel>
-        {values.length === 0 ? <div className="px-2 py-1.5 text-[11px] text-muted-foreground">없음</div> : null}
+        {values.length === 0 ? <div className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">없음</div> : null}
         {values.map((v) => (
           <DropdownMenuCheckboxItem key={v} checked={selected.includes(v)} onCheckedChange={(on) => onToggle(v, on === true)} onSelect={(e) => e.preventDefault()}>
             {render(v)}
@@ -97,7 +97,7 @@ function IssueList({ filters }: { filters: IssueListFilters }) {
         <IssueRow key={i.key} issue={i} flash={flash.has(i.key)} />
       ))}
       {q.data.total > items.length ? (
-        <div className="px-4 py-3 text-center text-[11px] text-muted-foreground">
+        <div className="px-4 py-3 text-center text-[0.6875rem] text-muted-foreground">
           총 {q.data.total}건 중 {items.length}건 표시. 필터로 범위를 좁히세요.
         </div>
       ) : null}
@@ -162,7 +162,7 @@ export function IssuesPage() {
   return (
     <>
       <PageHeader title="이슈" meta={project ? <span className="font-mono text-foreground/80">{project}</span> : '전체 프로젝트'}>
-        {total !== undefined ? <span className="text-[11px] tabular-nums text-muted-foreground">{total}건</span> : null}
+        {total !== undefined ? <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}건</span> : null}
         <Button size="xs" onClick={() => setCreate(true)}>
           <PlusIcon />새 이슈
         </Button>
@@ -217,7 +217,7 @@ export function IssuesPage() {
           render={(l: string) => (
             <>
               <LabelChip label={l} />
-              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{labels.data?.items.find((x) => x.label === l)?.count}</span>
+              <span className="ml-auto text-[0.625rem] tabular-nums text-muted-foreground">{labels.data?.items.find((x) => x.label === l)?.count}</span>
             </>
           )}
         />
@@ -260,7 +260,7 @@ export function IssuesPage() {
       </div>
 
       {label.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1 border-b px-4 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1 border-b px-4 py-1.5 text-[0.6875rem] text-muted-foreground">
           라벨 AND:
           {label.map((l) => (
             <LabelChip key={l} label={l} onClick={() => toggle('label', label)(l, false)} />

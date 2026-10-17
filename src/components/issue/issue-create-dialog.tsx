@@ -114,7 +114,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
         </div>
         <FieldError message={errors.project ?? errors.type ?? errors.status ?? errors.priority} />
         {projectOptions.length === 0 && projectsLoaded ? (
-          <p className="text-[11px] text-destructive">활성 프로젝트가 없습니다. 먼저 프로젝트를 만드세요.</p>
+          <p className="text-[0.6875rem] text-destructive">활성 프로젝트가 없습니다. 먼저 프로젝트를 만드세요.</p>
         ) : null}
 
         <div>
@@ -123,7 +123,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
             onChange={(e) => setTitle(e.target.value)}
             placeholder="제목"
             aria-invalid={!!errors.title}
-            className="h-9 border-transparent px-1 text-[15px] font-medium shadow-none focus-visible:border-transparent focus-visible:ring-0"
+            className="h-9 border-transparent px-1 text-[0.9375rem] font-medium shadow-none focus-visible:border-transparent focus-visible:ring-0"
             autoFocus
             maxLength={200}
           />
@@ -135,7 +135,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
             onChange={(e) => setBody(e.target.value)}
             placeholder="본문(마크다운)"
             aria-invalid={!!errors.body}
-            className="min-h-40 border-transparent px-1 font-mono text-[12.5px] focus-visible:border-transparent focus-visible:ring-0"
+            className="min-h-40 border-transparent px-1 font-mono text-[0.78125rem] focus-visible:border-transparent focus-visible:ring-0"
           />
           <FieldError message={errors.body} />
         </div>

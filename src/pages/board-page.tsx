@@ -34,8 +34,8 @@ function Column({ column, flash, onAdd }: { column: BoardColumn; flash: Set<stri
       <header className="flex h-9 shrink-0 items-center gap-2 px-3">
         <StatusIcon status={column.status} />
         <h3 className="text-xs font-semibold">{STATUS_LABEL[column.status]}</h3>
-        <span className="text-[11px] tabular-nums text-muted-foreground">{column.total}</span>
-        {closed ? <span className="text-[10px] text-muted-foreground/70">최근 7일</span> : null}
+        <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{column.total}</span>
+        {closed ? <span className="text-[0.625rem] text-muted-foreground/70">최근 7일</span> : null}
         {column.status !== 'cancelled' ? (
           <Button variant="ghost" size="icon-sm" className="ml-auto" onClick={() => onAdd(column.status)} title={`${STATUS_LABEL[column.status]}에 새 이슈`}>
             <PlusIcon />
@@ -47,12 +47,12 @@ function Column({ column, flash, onAdd }: { column: BoardColumn; flash: Set<stri
         className={cn('min-h-0 flex-1 space-y-2 overflow-y-auto rounded-b-lg border border-transparent p-2 pt-0 transition-colors', isOver && 'border-ring/40 bg-primary/5')}
       >
         {column.issues.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border/60 py-6 text-center text-[11px] text-muted-foreground/70">비어 있음</div>
+          <div className="rounded-md border border-dashed border-border/60 py-6 text-center text-[0.6875rem] text-muted-foreground/70">비어 있음</div>
         ) : (
           column.issues.map((i) => <IssueCard key={i.key} issue={i} flash={flash.has(i.key)} />)
         )}
         {column.issues.length < column.total ? (
-          <div className="py-1 text-center text-[11px] text-muted-foreground">{column.total - column.issues.length}건 더 있음</div>
+          <div className="py-1 text-center text-[0.6875rem] text-muted-foreground">{column.total - column.issues.length}건 더 있음</div>
         ) : null}
       </div>
     </section>

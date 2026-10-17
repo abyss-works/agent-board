@@ -28,7 +28,7 @@ const STATUS_BAR: Record<string, string> = {
 function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
   return (
     <div className="rounded-lg border bg-card px-3 py-2.5">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className={cn('mt-0.5 text-xl font-semibold tabular-nums tracking-tight', tone)}>{value}</div>
     </div>
   )
@@ -39,9 +39,9 @@ function Section({ title, total, to, children }: { title: string; total: number;
     <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/40">
       <header className="flex h-9 items-center gap-2 border-b px-3">
         <h3 className="text-xs font-semibold">{title}</h3>
-        <span className="text-[11px] tabular-nums text-muted-foreground">{total}</span>
+        <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}</span>
         {to ? (
-          <Link to={to} className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+          <Link to={to} className="ml-auto inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground">
             전체 보기 <ArrowRightIcon className="size-3" />
           </Link>
         ) : null}
@@ -68,7 +68,7 @@ function Counts({ overview }: { overview: Overview }) {
   return (
     <div className="grid gap-3 lg:grid-cols-3">
       <div className="rounded-lg border bg-card/40 p-3">
-        <div className="mb-2 text-[11px] font-medium text-muted-foreground">상태별 (전체 {counts.total})</div>
+        <div className="mb-2 text-[0.6875rem] font-medium text-muted-foreground">상태별 (전체 {counts.total})</div>
         <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
           {ISSUE_STATUSES.map((s) => {
             const n = counts.by_status[s] ?? 0
@@ -77,7 +77,7 @@ function Counts({ overview }: { overview: Overview }) {
         </div>
         <ul className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1">
           {ISSUE_STATUSES.map((s) => (
-            <li key={s} className="flex items-center gap-1.5 text-[11px]">
+            <li key={s} className="flex items-center gap-1.5 text-[0.6875rem]">
               <StatusIcon status={s} className="size-3" />
               <span className="text-muted-foreground">{STATUS_LABEL[s]}</span>
               <span className="ml-auto tabular-nums">{counts.by_status[s] ?? 0}</span>
@@ -86,10 +86,10 @@ function Counts({ overview }: { overview: Overview }) {
         </ul>
       </div>
       <div className="rounded-lg border bg-card/40 p-3">
-        <div className="mb-2 text-[11px] font-medium text-muted-foreground">종류별 (열린 이슈 {counts.open})</div>
+        <div className="mb-2 text-[0.6875rem] font-medium text-muted-foreground">종류별 (열린 이슈 {counts.open})</div>
         <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
           {ISSUE_TYPES.map((t) => (
-            <li key={t} className="flex items-center gap-1.5 text-[11px]">
+            <li key={t} className="flex items-center gap-1.5 text-[0.6875rem]">
               <TypeIcon type={t} className="size-3" />
               <span className="text-muted-foreground">{TYPE_LABEL[t]}</span>
               <span className="ml-auto tabular-nums">{counts.by_type[t] ?? 0}</span>
@@ -98,10 +98,10 @@ function Counts({ overview }: { overview: Overview }) {
         </ul>
       </div>
       <div className="rounded-lg border bg-card/40 p-3">
-        <div className="mb-2 text-[11px] font-medium text-muted-foreground">우선순위별 (열린 이슈)</div>
+        <div className="mb-2 text-[0.6875rem] font-medium text-muted-foreground">우선순위별 (열린 이슈)</div>
         <ul className="space-y-1">
           {PRIORITIES.map((p) => (
-            <li key={p} className="flex items-center gap-1.5 text-[11px]">
+            <li key={p} className="flex items-center gap-1.5 text-[0.6875rem]">
               <PriorityIcon priority={p} className="size-3" />
               <span className="text-muted-foreground">{PRIORITY_LABEL[p]}</span>
               <span className="ml-auto tabular-nums">{counts.by_priority[p] ?? 0}</span>
@@ -136,7 +136,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           </span>
         }
       >
-        <span className="text-[11px] tabular-nums text-muted-foreground" title={`${formatKst(o.generated_at)} KST`}>
+        <span className="text-[0.6875rem] tabular-nums text-muted-foreground" title={`${formatKst(o.generated_at)} KST`}>
           집계 {formatKstTime(o.generated_at)}
         </span>
       </PageHeader>
@@ -210,8 +210,8 @@ function ProjectPicker() {
                       <span className="font-mono text-xs font-semibold">{p.key}</span>
                       {p.status !== 'active' ? <Badge variant="outline">{PROJECT_STATUS_LABEL[p.status]}</Badge> : null}
                     </div>
-                    <div className="truncate text-[13px]">{p.name}</div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">수정 {formatKst(p.updated_at)}</div>
+                    <div className="truncate text-[0.8125rem]">{p.name}</div>
+                    <div className="mt-1 text-[0.6875rem] text-muted-foreground">수정 {formatKst(p.updated_at)}</div>
                   </div>
                 </button>
               ))}

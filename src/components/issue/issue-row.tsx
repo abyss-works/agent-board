@@ -10,7 +10,7 @@ import { IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon } from './meta'
 export function SnippetText({ snippet }: { snippet: string }) {
   const parts = snippet.split(/(\[[^\]]*\])/g)
   return (
-    <span className="text-[11px] text-muted-foreground">
+    <span className="text-[0.6875rem] text-muted-foreground">
       {parts.map((p, i) =>
         p.startsWith('[') && p.endsWith(']') ? (
           <mark key={i} className="rounded-sm bg-primary/25 px-0.5 text-foreground">
@@ -50,11 +50,11 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
       <IssueKey issueKey={issue.key} className="w-16 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className={cn('truncate text-[13px]', issue.status === 'cancelled' || issue.status === 'deleted' ? 'text-muted-foreground line-through' : 'text-foreground')}>
+          <span className={cn('truncate text-[0.8125rem]', issue.status === 'cancelled' || issue.status === 'deleted' ? 'text-muted-foreground line-through' : 'text-foreground')}>
             {issue.title}
           </span>
           {showReady && queue && !queue.ready ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-amber-400" title={`선행 이슈 ${queue.blocked_by.join(', ')}가 열려 있음`}>
+            <span className="inline-flex shrink-0 items-center gap-1 text-[0.625rem] text-amber-400" title={`선행 이슈 ${queue.blocked_by.join(', ')}가 열려 있음`}>
               <LockIcon className="size-3" />
               {queue.blocked_by.join(', ')}
             </span>
@@ -71,14 +71,14 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
           {labels.map((l) => (
             <LabelChip key={l} label={l} />
           ))}
-          {more > 0 ? <span className="text-[10px] text-muted-foreground">+{more}</span> : null}
+          {more > 0 ? <span className="text-[0.625rem] text-muted-foreground">+{more}</span> : null}
         </div>
       ) : null}
       {!compact ? <TypeIcon type={issue.type} className="shrink-0" /> : null}
       <time
         dateTime={issue.updated_at}
         title={`수정 ${formatKst(issue.updated_at)} KST`}
-        className="w-14 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground"
+        className="w-14 shrink-0 text-right text-[0.6875rem] tabular-nums text-muted-foreground"
       >
         {formatRelative(issue.updated_at)}
       </time>

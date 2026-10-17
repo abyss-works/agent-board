@@ -50,7 +50,7 @@ export function LoginPage() {
           </div>
           <div>
             <h1 className="text-sm font-semibold tracking-tight">agent-board</h1>
-            <p className="text-[11px] text-muted-foreground">공용 토큰으로 로그인합니다</p>
+            <p className="text-[0.6875rem] text-muted-foreground">공용 토큰으로 로그인합니다</p>
           </div>
         </div>
 
@@ -62,11 +62,11 @@ export function LoginPage() {
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md border border-input px-2.5 text-[13px] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md border border-input px-2.5 text-[0.8125rem] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <ServerIcon className="size-3.5 text-muted-foreground" />
                     <span className="font-medium">{instance.label}</span>
-                    <span className="ml-auto font-mono text-[11px] text-muted-foreground">{instance.description}</span>
+                    <span className="ml-auto font-mono text-[0.6875rem] text-muted-foreground">{instance.description}</span>
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
@@ -74,19 +74,19 @@ export function LoginPage() {
                     {instances.map((i) => (
                       <DropdownMenuRadioItem key={i.id} value={i.id}>
                         <span className="font-medium">{i.label}</span>
-                        <span className="ml-auto font-mono text-[11px] text-muted-foreground">{i.description}</span>
+                        <span className="ml-auto font-mono text-[0.6875rem] text-muted-foreground">{i.description}</span>
                       </DropdownMenuRadioItem>
                     ))}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="flex h-8 items-center gap-2 rounded-md border border-input px-2.5 text-[13px]">
+              <div className="flex h-8 items-center gap-2 rounded-md border border-input px-2.5 text-[0.8125rem]">
                 <ServerIcon className="size-3.5 text-muted-foreground" />
                 <span className="font-mono text-xs">{instance.description}</span>
               </div>
             )}
-            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <p className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
               <span
                 className={cn(
                   'size-1.5 rounded-full',
@@ -125,13 +125,13 @@ export function LoginPage() {
                 {show ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
               </button>
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-[0.6875rem] text-muted-foreground">
               토큰은 이 브라우저의 localStorage에 인스턴스별로 저장되며 요청마다 <code className="font-mono">Authorization: Bearer</code>로
               보냅니다. 행위자는 <code className="font-mono">owner</code>입니다.
             </p>
           </div>
 
-          {authNotice ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-[12px] text-destructive">{authNotice}</p> : null}
+          {authNotice ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-[0.75rem] text-destructive">{authNotice}</p> : null}
 
           <Button type="submit" className="w-full" disabled={!token.trim()}>
             로그인

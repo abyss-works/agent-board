@@ -146,7 +146,7 @@ function ProjectForm({ project, onDone, onCreated }: { project?: Project; onDone
                 </button>
               ))}
             </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">보관·삭제 상태의 프로젝트에는 이슈를 쓸 수 없습니다(409).</p>
+            <p className="mt-1 text-[0.6875rem] text-muted-foreground">보관·삭제 상태의 프로젝트에는 이슈를 쓸 수 없습니다(409).</p>
             <FieldError message={errors.status} />
           </div>
         ) : null}
