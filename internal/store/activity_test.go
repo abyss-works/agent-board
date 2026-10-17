@@ -24,6 +24,14 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	if _, err := s.AddComment(ctx, trClaude, "AGB-9", "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing issue err = %v", err)
 	}
+	// Comments are writes to the issue, so a non-active project rejects them.
+	archived := model.ProjectArchived
+	s.UpdateProject(ctx, trOwner, "OTH", ProjectPatch{Status: &archived})
+	if _, err := s.AddComment(ctx, trClaude, b.Key, "x"); !errors.Is(err, ErrProjectNotActive) {
+		t.Errorf("archived project comment err = %v", err)
+	}
+	active := model.ProjectActive
+	s.UpdateProject(ctx, trOwner, "OTH", ProjectPatch{Status: &active})
 	doing := model.StatusDoing
 	s.UpdateIssue(ctx, trOwner, a.Key, IssuePatch{Status: &doing}, nil)
 	s.UpdateIssue(ctx, trOwner, b.Key, IssuePatch{Title: str("b2")}, nil)
