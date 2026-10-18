@@ -82,6 +82,17 @@ const (
 // ProjectStatuses lists every project status.
 var ProjectStatuses = []ProjectStatus{ProjectActive, ProjectArchived, ProjectDeleted}
 
+// TopicStatus is the lifecycle state of a topic. Deletion is a status.
+type TopicStatus string
+
+const (
+	TopicActive  TopicStatus = "active"
+	TopicDeleted TopicStatus = "deleted"
+)
+
+// TopicStatuses lists every topic status.
+var TopicStatuses = []TopicStatus{TopicActive, TopicDeleted}
+
 // Priority orders issues in the queue. P0 is the most urgent.
 type Priority string
 
@@ -136,6 +147,9 @@ func ParseIssueStatus(v string) (IssueStatus, bool) { return parseEnum(v, IssueS
 
 // ParseProjectStatus returns the project status named v.
 func ParseProjectStatus(v string) (ProjectStatus, bool) { return parseEnum(v, ProjectStatuses) }
+
+// ParseTopicStatus returns the topic status named v.
+func ParseTopicStatus(v string) (TopicStatus, bool) { return parseEnum(v, TopicStatuses) }
 
 // ParsePriority returns the priority named v.
 func ParsePriority(v string) (Priority, bool) { return parseEnum(v, Priorities) }

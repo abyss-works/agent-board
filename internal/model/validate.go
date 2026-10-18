@@ -19,6 +19,7 @@ const (
 	MaxRecheckRunes     = 500
 	MaxSummaryRunes     = 30
 	MaxReasonRunes      = 500
+	MaxTopicNameRunes   = 50
 	MaxSearchTerms      = 10
 	DefaultIssueType    = TypeFeature
 	DefaultIssueStatus  = StatusBacklog
@@ -193,6 +194,19 @@ func ResolveStatusReason(from, to IssueStatus, reason *string) (*string, error) 
 		return nil, e.orNil()
 	}
 	return reason, nil
+}
+
+// ValidateTopicName checks the name of a topic: 1 to MaxTopicNameRunes
+// characters without a slash, which separates the levels of a topic path.
+func ValidateTopicName(name string) error {
+	var e ValidationError
+	if n := utf8.RuneCountInString(name); n < 1 || n > MaxTopicNameRunes {
+		e.add("name", "1~%d자여야 합니다.", MaxTopicNameRunes)
+	}
+	if strings.Contains(name, "/") {
+		e.add("name", "'/'를 넣을 수 없습니다.")
+	}
+	return e.orNil()
 }
 
 // ValidateProject checks the key and name of a project.

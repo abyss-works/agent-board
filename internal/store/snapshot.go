@@ -22,18 +22,20 @@ func (s *Store) Snapshot(ctx context.Context, dst string) error {
 
 // FingerprintNow returns a string that changes whenever the database
 // content changes: every issue write appends an activity row, every
-// project write bumps project.updated_at, and migrations bump user_version.
+// project or topic write bumps updated_at there (a topic has no activity
+// record), and migrations bump user_version.
 func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 	var maxActivity sql.NullInt64
-	var maxProject sql.NullString
-	var projects, actors int
+	var maxProject, maxTopic sql.NullString
+	var projects, actors, topics int
 	var version int
 	if err := s.db.QueryRowContext(ctx, `select (select max(id) from activity), (select max(updated_at) from project),
-		(select count(*) from project), (select count(*) from actor)`).Scan(&maxActivity, &maxProject, &projects, &actors); err != nil {
+		(select count(*) from project), (select count(*) from actor), (select max(updated_at) from topic), (select count(*) from topic)`).
+		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics); err != nil {
 		return "", err
 	}
 	if err := s.db.QueryRowContext(ctx, `pragma user_version`).Scan(&version); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d", version, maxActivity.Int64, maxProject.String, projects, actors), nil
+	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d", version, maxActivity.Int64, maxProject.String, projects, actors, maxTopic.String, topics), nil
 }

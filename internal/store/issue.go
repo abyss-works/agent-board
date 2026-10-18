@@ -32,6 +32,7 @@ type IssueInput struct {
 	DependsOn        []string
 	Refs             []string
 	RecheckCondition *string
+	Topic            *int64
 }
 
 // IssuePatch is a JSON merge patch. Nil pointers are unchanged; Optional
@@ -47,6 +48,7 @@ type IssuePatch struct {
 	DependsOn        *[]string
 	Refs             *[]string
 	RecheckCondition Optional[string]
+	Topic            Optional[int64]
 	StatusReason     *string // only valid together with a status change
 }
 
@@ -62,6 +64,8 @@ type IssueFilter struct {
 	UpdatedBy       []string
 	StatusChangedBy []string
 	Acknowledged    *bool // true: acknowledged by the user, false: not yet
+	Topics          []int64
+	TopicNone       bool // also select issues without a topic
 	Query           string
 	Sort            []Sort // priority, created_at, updated_at, key, relevance
 	Limit           int
@@ -79,7 +83,12 @@ type issueRow struct {
 	projectStatus model.ProjectStatus
 }
 
-const issueFrom = ` from issue i join project p on p.id = i.project_id left join issue par on par.id = i.parent_id`
+// issueJoins attach the project, the parent issue and the topic with its
+// top-level topic to issue rows aliased i.
+const issueJoins = ` join project p on p.id = i.project_id left join issue par on par.id = i.parent_id
+	left join topic tp on tp.id = i.topic_id left join topic tpp on tpp.id = tp.parent_id`
+
+const issueFrom = ` from issue i` + issueJoins
 
 func issueCols(withBody bool) string {
 	body := "i.body"
@@ -87,7 +96,9 @@ func issueCols(withBody bool) string {
 		body = "''"
 	}
 	return `i.id, i.project_id, p.key, p.status, i.number, i.key, i.title, ` + body + `, i.type, i.status, i.priority,
-		i.parent_id, par.key, i.recheck_condition, i.status_reason, i.acknowledged_at, i.acknowledged_by, i.version, i.created_at, i.updated_at, i.closed_at,
+		i.parent_id, par.key, i.recheck_condition, i.topic_id,
+		case when tp.id is null then null when tpp.id is null then tp.name else tpp.name || '/' || tp.name end,
+		i.status_reason, i.acknowledged_at, i.acknowledged_by, i.version, i.created_at, i.updated_at, i.closed_at,
 		i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by`
 }
 
@@ -97,7 +108,8 @@ type rowScanner interface{ Scan(...any) error }
 // scan.
 type issueScan struct {
 	parentKey, recheck, reason, closedAt sql.NullString
-	ackAt, ackBy                         sql.NullString
+	topicPath, ackAt, ackBy              sql.NullString
+	topicID                              sql.NullInt64
 	created, updated, statusChanged      string
 }
 
@@ -107,7 +119,7 @@ func scanIssue(sc rowScanner, extra ...any) (*issueRow, error) {
 	var r issueRow
 	var raw issueScan
 	dest := []any{&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &raw.parentKey, &raw.recheck, &raw.reason, &raw.ackAt, &raw.ackBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
+		&r.parentID, &raw.parentKey, &raw.recheck, &raw.topicID, &raw.topicPath, &raw.reason, &raw.ackAt, &raw.ackBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
 		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy}
 	if err := sc.Scan(append(dest, extra...)...); err != nil {
 		return nil, err
@@ -125,6 +137,12 @@ func (r *issueRow) finishScan(raw issueScan) error {
 	}
 	if raw.recheck.Valid {
 		r.RecheckCondition = &raw.recheck.String
+	}
+	if raw.topicID.Valid {
+		r.Topic = &raw.topicID.Int64
+	}
+	if raw.topicPath.Valid {
+		r.TopicPath = &raw.topicPath.String
 	}
 	if raw.reason.Valid {
 		r.StatusReason = &raw.reason.String
@@ -235,7 +253,7 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		Project: in.Project, Title: in.Title, Body: in.Body,
 		Type: in.Type, Status: in.Status, Priority: in.Priority,
 		Labels: in.Labels, Parent: in.Parent, DependsOn: in.DependsOn, Refs: in.Refs, RecheckCondition: in.RecheckCondition,
-		Version: 1, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
+		Topic: in.Topic, Version: 1, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
 		StatusChangedBy: tr.Actor, CreatedBy: tr.Actor, UpdatedBy: tr.Actor,
 	}
 	if issue.Type == "" {
@@ -273,6 +291,11 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		if err != nil {
 			return err
 		}
+		if issue.Topic != nil {
+			if err := checkIssueTopic(ctx, tx, projectID, *issue.Topic); err != nil {
+				return err
+			}
+		}
 		var number int64
 		if err := tx.QueryRowContext(ctx, `update project set next_number = next_number + 1 where id = ? returning next_number - 1`, projectID).Scan(&number); err != nil {
 			return err
@@ -283,10 +306,10 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		if kind == model.ActorUser {
 			ackAt, ackBy = now.String(), tr.Actor
 		}
-		res, err := tx.ExecContext(ctx, `insert into issue(project_id, number, key, title, body, type, status, priority, parent_id, recheck_condition,
+		res, err := tx.ExecContext(ctx, `insert into issue(project_id, number, key, title, body, type, status, priority, parent_id, recheck_condition, topic_id,
 			acknowledged_at, acknowledged_by, version, created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
-			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
-			projectID, number, key, issue.Title, issue.Body, string(issue.Type), string(issue.Status), string(issue.Priority), parentID, issue.RecheckCondition,
+			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+			projectID, number, key, issue.Title, issue.Body, string(issue.Type), string(issue.Status), string(issue.Priority), parentID, issue.RecheckCondition, issue.Topic,
 			ackAt, ackBy, now.String(), now.String(), timePtr(issue.ClosedAt), now.String(), tr.Actor, tr.Actor, tr.Actor)
 		if err != nil {
 			return err
@@ -356,6 +379,9 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if patch.RecheckCondition.Set {
 			next.RecheckCondition = patch.RecheckCondition.Value
 		}
+		if patch.Topic.Set {
+			next.Topic = patch.Topic.Value
+		}
 		model.NormalizeIssue(&next)
 		reason, reasonErr := model.ResolveStatusReason(cur.Status, next.Status, patch.StatusReason)
 		if err := model.MergeValidation(model.ValidateIssue(&next), reasonErr); err != nil {
@@ -380,6 +406,12 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if err != nil {
 			return err
 		}
+		// A topic deleted after the issue got it stays; only a changed topic is checked.
+		if next.Topic != nil && (cur.Topic == nil || *cur.Topic != *next.Topic) {
+			if err := checkIssueTopic(ctx, tx, cur.projectID, *next.Topic); err != nil {
+				return err
+			}
+		}
 		if err := checkCycles(ctx, tx, cur.id, parentID, depIDs); err != nil {
 			return err
 		}
@@ -398,9 +430,9 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `update issue set title = ?, body = ?, type = ?, status = ?, priority = ?, parent_id = ?, recheck_condition = ?,
-			status_reason = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?, status_changed_at = ?, status_changed_by = ? where id = ?`,
+			topic_id = ?, status_reason = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?, status_changed_at = ?, status_changed_by = ? where id = ?`,
 			next.Title, next.Body, string(next.Type), string(next.Status), string(next.Priority), parentID, next.RecheckCondition,
-			next.StatusReason, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt), next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
+			next.Topic, next.StatusReason, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt), next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
 			return err
 		}
 		for _, table := range []string{"issue_label", "issue_dependency", "issue_ref"} {
@@ -441,7 +473,7 @@ func rawJSON(v any) json.RawMessage {
 func fieldValues(i *model.Issue) map[string]any {
 	return map[string]any{
 		"title": i.Title, "body": i.Body, "type": i.Type, "status": i.Status, "priority": i.Priority,
-		"labels": i.Labels, "parent": i.Parent, "depends_on": i.DependsOn, "refs": i.Refs, "recheck_condition": i.RecheckCondition,
+		"labels": i.Labels, "parent": i.Parent, "depends_on": i.DependsOn, "refs": i.Refs, "recheck_condition": i.RecheckCondition, "topic": i.Topic,
 	}
 }
 
@@ -574,7 +606,7 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 	from := issueFrom
 	cols := issueCols(false)
 	if match != "" {
-		from = ` from issue_fts join issue i on i.id = issue_fts.rowid join project p on p.id = i.project_id left join issue par on par.id = i.parent_id`
+		from = ` from issue_fts join issue i on i.id = issue_fts.rowid` + issueJoins
 		cols += `, snippet(issue_fts, -1, '[', ']', '...', 16)`
 		where = append(where, "issue_fts match ?")
 		args = append(args, match)
@@ -606,6 +638,10 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 			where = append(where, "par.key = ?")
 			args = append(args, *f.Parent)
 		}
+	}
+	if clause, topicArgs := topicFilterClause(f.Topics, f.TopicNone); clause != "" {
+		where = append(where, clause)
+		args = append(args, topicArgs...)
 	}
 	if f.Acknowledged != nil {
 		if *f.Acknowledged {
