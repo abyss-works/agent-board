@@ -351,6 +351,7 @@ type overview struct {
 	Blocked        section[model.QueueItem]    `json:"blocked"`
 	Decisions      section[model.IssueSummary] `json:"decisions"`
 	Next           section[model.QueueItem]    `json:"next"`
+	Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
 	RecentActivity section[model.Activity]     `json:"recent_activity"`
 }
 
@@ -391,6 +392,7 @@ func (a *App) renderOverview(w io.Writer, resp *client.Response) error {
 	queue("blocked", o.Blocked)
 	issues("decisions", o.Decisions)
 	queue("next", o.Next)
+	issues("unacknowledged", o.Unacknowledged)
 	fmt.Fprintf(w, "\n== recent_activity (%d) ==\n", o.RecentActivity.Total)
 	if len(o.RecentActivity.Items) > 0 {
 		a.activityTable(o.RecentActivity.Items).write(w, a.TermWidth)

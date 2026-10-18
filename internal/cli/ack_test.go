@@ -106,3 +106,24 @@ func TestIssueListAcknowledgedFilterAndView(t *testing.T) {
 		t.Errorf("issue help: code=%d out=%s", code, h.stdout)
 	}
 }
+
+func TestOverviewTableListsUnacknowledgedIssues(t *testing.T) {
+	project := `{"key":"CLI","name":"cli 검증","status":"active","created_at":"2026-10-17T05:30:00.000Z","updated_at":"2026-10-17T05:30:00.000Z","created_by":"claude","updated_by":"claude"}`
+	empty := `{"total":0,"items":[]}`
+	body := `{"project":` + project + `,"generated_at":"2026-10-17T09:00:00.000Z","counts":{"total":1,"open":1,"by_status":{},"by_type":{},"by_priority":{}},` +
+		`"doing":` + empty + `,"review":` + empty + `,"blocked":` + empty + `,"decisions":` + empty + `,"next":` + empty +
+		`,"unacknowledged":{"total":1,"items":[` + unackedIssueJSON + `]},"recent_activity":` + empty + `}`
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/projects/CLI/overview", canned{body: body})
+	h := newHarness(t, srv, true)
+	if code := h.run("project", "overview", "CLI"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	if !strings.Contains(out, "== unacknowledged (1) ==") || !strings.Contains(out, "둘째 이슈") {
+		t.Errorf("overview table:\n%s", out)
+	}
+	if strings.Index(out, "== next (0) ==") > strings.Index(out, "== unacknowledged (1) ==") || strings.Index(out, "== unacknowledged (1) ==") > strings.Index(out, "== recent_activity (0) ==") {
+		t.Errorf("unacknowledged sits between next and recent_activity:\n%s", out)
+	}
+}
