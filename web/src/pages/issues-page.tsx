@@ -1,10 +1,10 @@
-import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, FolderTreeIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
+import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, FolderTreeIcon, MilestoneIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { IssueListFilters } from '@/api/client'
-import { useAcknowledgeMany, useIssues, useLabels, useTopics } from '@/api/queries'
-import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type IssueStatus, type IssueType, type Priority } from '@/api/types'
+import { useAcknowledgeMany, useIssues, useLabels, useMilestones, useTopics } from '@/api/queries'
+import { ISSUE_STATUSES, ISSUE_TYPES, MILESTONE_STATUSES, PRIORITIES, type IssueStatus, type IssueType, type Priority } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { IssueCreateDialog } from '@/components/issue/issue-create-dialog'
@@ -25,7 +25,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { useFlash } from '@/hooks/use-flash'
 import { unacknowledgedKeys } from '@/lib/acknowledge'
-import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
+import { MILESTONE_STATUS_LABEL, PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
 import { toastError } from '@/lib/toast'
 import { flattenTopics, groupTopics } from '@/lib/topics'
 import { cn } from '@/lib/utils'
@@ -115,6 +115,7 @@ export function IssuesPage() {
   const labels = useLabels(project)
   const topics = useTopics(project)
   const topicOptions = flattenTopics(groupTopics(topics.data?.items ?? []))
+  const milestones = useMilestones(project, MILESTONE_STATUSES)
   const [create, setCreate] = useState(false)
 
   const status = csv(params.get('status'))
@@ -122,6 +123,9 @@ export function IssuesPage() {
   const priority = csv(params.get('priority'))
   const label = params.getAll('label')
   const topic = csv(params.get('topic'))
+  const milestone = csv(params.get('milestone'))
+  // 삭제된 마일스톤은 이미 고른 것만 목록에 남겨 이름을 보이고 해제할 수 있게 한다.
+  const milestoneOptions = (milestones.data?.items ?? []).filter((m) => m.status !== 'deleted' || milestone.includes(String(m.id)))
   const acknowledgedParam = params.get('acknowledged')
   const acknowledged = acknowledgedParam === 'false' || acknowledgedParam === 'true' ? acknowledgedParam : undefined
   const q = params.get('q') ?? ''
@@ -149,7 +153,7 @@ export function IssuesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const toggle = (name: 'status' | 'type' | 'priority' | 'label' | 'topic', current: readonly string[]) => (v: string, on: boolean) => {
+  const toggle = (name: 'status' | 'type' | 'priority' | 'label' | 'topic' | 'milestone', current: readonly string[]) => (v: string, on: boolean) => {
     const set = new Set(current.filter((x) => x !== 'all' && x !== 'closed'))
     if (on) set.add(v)
     else set.delete(v)
@@ -158,13 +162,13 @@ export function IssuesPage() {
   }
 
   const filters = useMemo<IssueListFilters>(
-    () => ({ project, status, type, priority, label, topic, acknowledged, q, sort, limit: LIMIT }),
+    () => ({ project, status, type, priority, label, topic, milestone, acknowledged, q, sort, limit: LIMIT }),
     // 배열은 URL 문자열에서 매번 새로 만들어지므로 문자열로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, paramsKey],
   )
   const filterKey = `${project ?? '*'}|${paramsKey}`
-  const hasFilter = status.length + type.length + priority.length + label.length + topic.length > 0 || q !== '' || acknowledged !== undefined
+  const hasFilter = status.length + type.length + priority.length + label.length + topic.length + milestone.length > 0 || q !== '' || acknowledged !== undefined
   const statusPreset = status.length === 1 && (status[0] === 'all' || status[0] === 'closed') ? status[0] : status.length === 0 ? '' : null
   const list = useIssues(filters).data
   const total = list?.total
@@ -260,6 +264,26 @@ export function IssuesPage() {
               if (id === 'none') return <span className="text-muted-foreground">주제 없음</span>
               const f = topicOptions.find((o) => String(o.topic.id) === id)
               return <span className={cn(f?.depth === 1 ? 'pl-3' : 'font-medium')}>{f?.topic.name ?? `#${id}`}</span>
+            }}
+          />
+        ) : null}
+        {project ? (
+          <FilterMenu
+            label="마일스톤"
+            icon={<MilestoneIcon className="size-3.5 text-muted-foreground" />}
+            values={['none', ...milestoneOptions.map((m) => String(m.id))]}
+            selected={milestone}
+            onToggle={toggle('milestone', milestone)}
+            render={(id: string) => {
+              if (id === 'none') return <span className="text-muted-foreground">마일스톤 없음</span>
+              const m = milestoneOptions.find((o) => String(o.id) === id)
+              if (!m) return null
+              return (
+                <>
+                  <span className="truncate">{m.name}</span>
+                  {m.status !== 'open' ? <span className="ml-auto text-[0.625rem] text-muted-foreground">{MILESTONE_STATUS_LABEL[m.status]}</span> : null}
+                </>
+              )
             }}
           />
         ) : null}

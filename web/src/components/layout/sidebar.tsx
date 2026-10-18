@@ -1,4 +1,4 @@
-import { ActivityIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
+import { ActivityIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
 import { useProjects } from '@/api/queries'
@@ -32,6 +32,7 @@ const MENU_ICON: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   '/board': KanbanIcon,
   '/issues': ListIcon,
   '/activity': ActivityIcon,
+  '/milestones': MilestoneIcon,
 }
 
 function InstanceSwitcher() {

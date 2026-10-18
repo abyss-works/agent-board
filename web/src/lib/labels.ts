@@ -1,4 +1,4 @@
-import type { ActivityKind, IssueStatus, IssueType, Priority, ProjectStatus } from '@/api/types'
+import type { ActivityKind, IssueStatus, IssueType, MilestoneStatus, Priority, ProjectStatus } from '@/api/types'
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   backlog: '백로그',
@@ -32,6 +32,12 @@ export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   deleted: '삭제',
 }
 
+export const MILESTONE_STATUS_LABEL: Record<MilestoneStatus, string> = {
+  open: '열림',
+  closed: '닫힘',
+  deleted: '삭제됨',
+}
+
 export const KIND_LABEL: Record<ActivityKind, string> = {
   created: '생성',
   updated: '수정',
@@ -51,6 +57,7 @@ export const FIELD_LABEL: Record<string, string> = {
   refs: '참조',
   recheck_condition: '재검토 조건',
   topic: '주제',
+  milestone: '마일스톤',
   status_reason: '상태 사유',
   acknowledged: '확인',
   project: '프로젝트',

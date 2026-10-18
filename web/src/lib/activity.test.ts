@@ -130,6 +130,36 @@ describe('주제 변경', () => {
   })
 })
 
+describe('마일스톤 변경', () => {
+  const names: Record<number, string> = { 2: 'v0.2.0', 5: 'v0.3.0' }
+  const milestoneName = (id: number) => names[id]
+  const change = activity({ changes: { milestone: { from: null, to: 2 } } })
+  it('마일스톤 ID를 이름으로 바꾸는 조회가 있으면 이름을 보인다', () => {
+    expect(describeChanges(change, { milestoneName })).toEqual([{ field: 'milestone', label: '마일스톤', from: '없음', to: 'v0.2.0' }])
+    expect(summarizeActivity(change, { milestoneName })).toBe('마일스톤: 없음 → v0.2.0')
+  })
+  it('이름을 모르면 ID를 보인다', () => {
+    expect(describeChanges(change)[0].to).toBe('마일스톤 #2')
+    expect(describeChanges(change, { milestoneName: () => undefined })[0].to).toBe('마일스톤 #2')
+    expect(summarizeActivity(change)).toBe('마일스톤: 없음 → 마일스톤 #2')
+  })
+  it('다른 마일스톤으로 옮기거나 지우면 이전 값과 새 값을 모두 보인다', () => {
+    const moved = activity({ changes: { milestone: { from: 2, to: 5 } } })
+    const cleared = activity({ changes: { milestone: { from: 5, to: null } } })
+    expect(summarizeActivity(moved, { milestoneName })).toBe('마일스톤: v0.2.0 → v0.3.0')
+    expect(summarizeActivity(cleared, { milestoneName })).toBe('마일스톤: v0.3.0 → 없음')
+  })
+  it('주제와 함께 바뀌어도 각자 이름을 찾는다', () => {
+    const both = activity({ changes: { topic: { from: null, to: 7 }, milestone: { from: null, to: 2 } } })
+    const lines = describeChanges(both, { topicName: () => '이슈 흐름/트리아지', milestoneName })
+    expect(lines.map((l) => `${l.label}:${l.to}`)).toEqual(['주제:이슈 흐름/트리아지', '마일스톤:v0.2.0'])
+  })
+  it('생성 기록은 마일스톤이 있어도 제목 한 줄만 낸다', () => {
+    const created = activity({ kind: 'created', changes: { title: { to: '새 이슈' }, milestone: { to: 2 } } })
+    expect(describeChanges(created, { milestoneName })).toEqual([{ field: 'title', label: '제목', from: null, to: '새 이슈' }])
+  })
+})
+
 describe('bodyExcerpt', () => {
   it('20자 이하 본문은 그대로 두고 말줄임표를 붙이지 않는다', () => {
     expect(bodyExcerpt('랭킹 UI 위치를 옮겼다.')).toBe('랭킹 UI 위치를 옮겼다.')

@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useApi, useAppState } from '@/app/state'
+import { milestoneListParams } from '@/lib/milestones'
 import { issueListQuery, type IssueListFilters } from './client'
 import type {
   Activity,
@@ -10,6 +11,10 @@ import type {
   IssuePatch,
   IssueSummary,
   LabelCount,
+  Milestone,
+  MilestoneCreate,
+  MilestonePatch,
+  MilestoneStatus,
   Overview,
   Page,
   Project,
@@ -128,6 +133,23 @@ export function useTopics(projectKey: string | null, status: TopicStatus | 'all'
   return useQuery({
     queryKey: [inst, 'topics', projectKey, status],
     queryFn: ({ signal }) => api.get<{ items: Topic[] }>(`/projects/${projectKey}/topics`, { status: status === 'active' ? undefined : status }, signal),
+    enabled: projectKey !== null,
+  })
+}
+
+const OPEN_ONLY: readonly MilestoneStatus[] = ['open']
+
+/**
+ * 프로젝트의 마일스톤 목록. 기본은 열린 것만이고, 서버가 목표일 순(목표일이 없는 것은 뒤)으로 돌려준다.
+ * 프로젝트를 고르지 않으면 부르지 않는다.
+ */
+export function useMilestones(projectKey: string | null, statuses: readonly MilestoneStatus[] = OPEN_ONLY) {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  const params = milestoneListParams(statuses)
+  return useQuery({
+    queryKey: [inst, 'milestones', projectKey, params.status ?? 'open'],
+    queryFn: ({ signal }) => api.get<{ items: Milestone[] }>(`/projects/${projectKey}/milestones`, params, signal),
     enabled: projectKey !== null,
   })
 }
@@ -277,6 +299,33 @@ export function useDeleteTopic() {
   const invalidate = useInvalidateInstance()
   return useMutation({
     mutationFn: (id: number) => api.delete<Topic>(`/topics/${id}`),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useCreateMilestone() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ project, body }: { project: string; body: MilestoneCreate }) => api.post<Milestone>(`/projects/${project}/milestones`, body),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function usePatchMilestone() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: MilestonePatch }) => api.patch<Milestone>(`/milestones/${id}`, patch),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useDeleteMilestone() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<Milestone>(`/milestones/${id}`),
     onSuccess: () => invalidate(),
   })
 }

@@ -30,6 +30,8 @@ interface Props {
   compact?: boolean
   /** 주제 ID를 경로로 바꾸는 조회. 없으면 `주제 #ID`로 보인다. */
   topicName?: (id: number) => string | undefined
+  /** 마일스톤 ID를 이름으로 바꾸는 조회. 없으면 `마일스톤 #ID`로 보인다. */
+  milestoneName?: (id: number) => string | undefined
 }
 
 /** 한 줄 행. 시각, 행위자, 종류 아이콘, 이슈 키, 요약 문구 순이고 행 전체가 이슈 링크다. */
@@ -53,10 +55,10 @@ function CompactActivityRow({ activity: a, flash }: { activity: Activity; flash?
   )
 }
 
-export function ActivityItem({ activity: a, flash, showIssue = true, compact, topicName }: Props) {
+export function ActivityItem({ activity: a, flash, showIssue = true, compact, topicName, milestoneName }: Props) {
   if (compact) return <CompactActivityRow activity={a} flash={flash} />
   const Icon = KIND_ICON[a.kind]
-  const lines = describeChanges(a, { topicName })
+  const lines = describeChanges(a, { topicName, milestoneName })
   return (
     <li className={cn('flex gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0', flash && 'animate-flash')}>
       <time

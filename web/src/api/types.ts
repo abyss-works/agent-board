@@ -7,6 +7,7 @@ export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
 export type ActorKind = 'user' | 'agent'
 export type ActivityKind = 'created' | 'updated' | 'commented'
 export type TopicStatus = 'active' | 'deleted'
+export type MilestoneStatus = 'open' | 'closed' | 'deleted'
 
 export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'decision', 'idea', 'observation']
 export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review', 'done', 'cancelled', 'deleted']
@@ -14,6 +15,7 @@ export const OPEN_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review
 export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
+export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted']
 
 export interface Project {
   key: string
@@ -40,6 +42,30 @@ export interface Topic {
   updated_by: string
 }
 
+/** 마일스톤의 진행. 취소·삭제한 이슈를 뺀 이슈 수(total)와 그중 완료한 수(done)다. 조회할 때마다 서버가 계산한다. */
+export interface MilestoneProgress {
+  total: number
+  done: number
+}
+
+/** 프로젝트의 출시나 목표 단위로 이슈를 묶는다. */
+export interface Milestone {
+  id: number
+  project: string
+  name: string
+  description: string
+  /** `YYYY-MM-DD`. 정하지 않았으면 null이다. */
+  target_date: string | null
+  status: MilestoneStatus
+  progress: MilestoneProgress
+  /** 닫은 시각. 열려 있으면 null이다. */
+  closed_at: string | null
+  created_at: string
+  updated_at: string
+  created_by: string
+  updated_by: string
+}
+
 /** 목록, 보드, 큐, 현황에 담기는 요약 이슈. 본문이 없다. */
 export interface IssueSummary {
   key: string
@@ -58,6 +84,10 @@ export interface IssueSummary {
   topic: number | null
   /** `대주제/주제` 또는 `대주제`. 주제가 없으면 null이다. */
   topic_path: string | null
+  /** 이슈가 속한 마일스톤의 ID. 마일스톤은 하나만 붙는다. */
+  milestone: number | null
+  /** 마일스톤 이름. 마일스톤이 없으면 null이다. 삭제된 마일스톤이어도 이름이 온다. */
+  milestone_name: string | null
   /** 마지막 상태 변경의 사유. 상태를 바꾼 적이 없으면 null이다. */
   status_reason: string | null
   /** 사용자가 이 이슈를 확인한 시각과 행위자. 미확인이면 둘 다 null이다. 작업 흐름과 무관한 표시다. */
@@ -193,6 +223,7 @@ export interface IssueCreate {
   refs?: string[]
   recheck_condition?: string | null
   topic?: number | null
+  milestone?: number | null
 }
 
 /** PATCH /v1/issues/{key} 본문(JSON Merge Patch). null은 지움이다. */
@@ -204,6 +235,7 @@ export interface IssuePatch {
   /** 상태를 바꿀 때만 쓴다. 취소·삭제로 바꿀 때는 필수다. */
   status_reason?: string
   topic?: number | null
+  milestone?: number | null
   priority?: Priority
   labels?: string[]
   parent?: string | null
@@ -231,4 +263,19 @@ export interface TopicPatch {
   name?: string
   parent?: number | null
   status?: TopicStatus
+}
+
+/** POST /v1/projects/{key}/milestones 본문 */
+export interface MilestoneCreate {
+  name: string
+  description?: string
+  target_date?: string | null
+}
+
+/** PATCH /v1/milestones/{id} 본문(JSON Merge Patch). target_date의 null은 목표일을 지운다. */
+export interface MilestonePatch {
+  name?: string
+  description?: string
+  target_date?: string | null
+  status?: MilestoneStatus
 }

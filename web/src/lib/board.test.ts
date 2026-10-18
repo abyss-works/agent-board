@@ -18,6 +18,8 @@ function issue(key: string, status: IssueSummary['status']): IssueSummary {
     recheck_condition: null,
     topic: null,
     topic_path: null,
+    milestone: null,
+    milestone_name: null,
     status_reason: null,
     acknowledged_at: null,
     acknowledged_by: null,

@@ -97,6 +97,8 @@ export interface IssueListFilters {
   label: readonly string[]
   /** 주제 ID(문자열)와 none. 쉼표 OR. 대주제 ID는 그 아래 주제의 이슈도 포함한다. */
   topic?: readonly string[]
+  /** 마일스톤 ID(문자열)와 none. 쉼표 OR. none은 마일스톤이 없는 이슈다. */
+  milestone?: readonly string[]
   /** 'false'면 미확인만, 'true'면 확인된 것만. 없으면 거르지 않는다. */
   acknowledged?: 'true' | 'false'
   q: string
@@ -114,6 +116,7 @@ export function issueListQuery(f: IssueListFilters): string {
     priority: f.priority.join(','),
     label: f.label,
     topic: f.topic?.join(','),
+    milestone: f.milestone?.join(','),
     acknowledged: f.acknowledged,
     q: f.q.trim(),
     sort: f.sort,
