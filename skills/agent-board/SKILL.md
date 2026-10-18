@@ -80,6 +80,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    agb issue update <ISSUE> --status doing
    ```
    - Expected: 응답의 `status`가 `doing`. 상태 변경에 행위자와 세션 ID가 함께 남는다.
+   - 상태를 바꿀 때는 `--reason "<사유>"`로 이유를 남길 수 있다. 사유는 1~500자이고 이슈의 상태 사유와 활동 기록에 남는다. 생략하면 서버가 `할 일 → 진행`처럼 이전 상태와 새 상태를 사유로 적는다. 기본 문장보다 알려야 할 이유가 있으면 직접 쓴다.
 
 ## 4. 진행 중
 
@@ -110,7 +111,11 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    ```
    agb issue update <ISSUE> --add-ref doc:<결정 기록 파일명> --status done
    ```
-3. 최종 보고 전에 현황을 다시 본다.
+3. 필요 없어진 이슈는 취소한다. 취소(`cancelled`)와 삭제(`deleted`)는 사유가 필수이고, 사유가 없으면 서버가 422로 거절한다.
+   ```
+   agb issue update <ISSUE> --status cancelled --reason "<취소한 이유. 중복이면 원본 이슈 키>"
+   ```
+4. 최종 보고 전에 현황을 다시 본다.
    ```
    agb project overview <KEY>
    ```
@@ -234,7 +239,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 ## 지키는 것
 
-- 이슈와 프로젝트를 지우지 않는다. `agb issue delete`, `agb project delete`를 쓰지 않는다. 필요 없어진 이슈는 `cancelled`로 바꾼다.
+- 이슈와 프로젝트를 지우지 않는다. `agb issue delete`, `agb project delete`를 쓰지 않는다. 필요 없어진 이슈는 사유(`--reason`)를 붙여 `cancelled`로 바꾼다. 취소에는 사유가 필수다.
 - 활동 기록은 수정 요청마다 바뀐 필드의 이전 값과 새 값을 모두 남긴다. `agb issue activity <ISSUE>`로 본다.
 - 스테이징이나 테스트 서버에 기록하지 않는다. 기록은 설정 파일의 서버 하나에만 한다.
 
