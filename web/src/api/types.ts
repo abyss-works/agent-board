@@ -84,6 +84,16 @@ export interface QueueItem extends IssueSummary {
   blocked_by: string[]
 }
 
+/** 이슈 종류별 본문 템플릿. 에이전트가 만드는 이슈는 서버가 body의 `## 제목`을 순서대로 검사한다. */
+export interface Template {
+  type: IssueType
+  /** 이슈 제목을 쓰는 규칙 */
+  title_rule: string
+  /** body의 `## ` 제목들 */
+  headings: string[]
+  body: string
+}
+
 export interface Change {
   from?: unknown
   to?: unknown

@@ -16,6 +16,7 @@ import type {
   ProjectCreate,
   ProjectPatch,
   QueueItem,
+  Template,
   Topic,
   TopicCreate,
   TopicPatch,
@@ -128,6 +129,18 @@ export function useTopics(projectKey: string | null, status: TopicStatus | 'all'
     queryKey: [inst, 'topics', projectKey, status],
     queryFn: ({ signal }) => api.get<{ items: Topic[] }>(`/projects/${projectKey}/topics`, { status: status === 'active' ? undefined : status }, signal),
     enabled: projectKey !== null,
+  })
+}
+
+/** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 3초 갱신에서 뺀다. */
+export function useTemplates() {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: [inst, 'templates'],
+    queryFn: ({ signal }) => api.get<{ items: Template[] }>('/templates', undefined, signal),
+    refetchInterval: false,
+    staleTime: 5 * 60_000,
   })
 }
 
