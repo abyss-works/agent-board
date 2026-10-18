@@ -6,3 +6,4 @@ data
 *.db-shm
 web/node_modules
 web/dist
+.worktrees
