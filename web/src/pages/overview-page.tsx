@@ -1,4 +1,4 @@
-import { ArrowRightIcon, FolderIcon, LockIcon } from 'lucide-react'
+import { ArrowRightIcon, BellDotIcon, FolderIcon, LockIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useOverview, useProjects } from '@/api/queries'
@@ -11,6 +11,7 @@ import { PriorityIcon, StatusIcon, TypeIcon } from '@/components/issue/meta'
 import { PageHeader } from '@/components/layout/page-header'
 import { Badge } from '@/components/ui/badge'
 import { useFlash } from '@/hooks/use-flash'
+import { unacknowledgedListPath } from '@/lib/acknowledge'
 import { PRIORITY_LABEL, PROJECT_STATUS_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
 import { formatKst, formatKstTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -53,6 +54,12 @@ const ACCENT = {
     header: 'border-rose-500/30 bg-rose-500/10',
     title: 'text-rose-300',
     badge: 'destructive',
+  },
+  unacknowledged: {
+    section: 'border-sky-500/40 bg-sky-500/[0.04]',
+    header: 'border-sky-500/30 bg-sky-500/10',
+    title: 'text-sky-300',
+    badge: 'info',
   },
 } as const
 
@@ -169,7 +176,9 @@ function Counts({ overview }: { overview: Overview }) {
 function ProjectOverview({ projectKey }: { projectKey: string }) {
   const q = useOverview(projectKey)
   const o = q.data
-  const issues = o ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items] : undefined
+  const issues = o
+    ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unacknowledged.items]
+    : undefined
   const flash = useFlash(issues, (i) => i.key, (i) => i.updated_at)
   const flashActivity = useFlash(o?.recent_activity.items, (a: Activity) => a.id, () => '')
 
@@ -208,7 +217,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           </div>
         </Group>
         <Group title="내 차례">
-          <div className="grid gap-3 xl:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             <Section
               title="결정 대기"
               total={o.decisions.total}
@@ -229,6 +238,15 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
             </Section>
             <Section title="막힘(선행 이슈 열림)" total={o.blocked.total} icon={<LockIcon className="size-3.5" />} accent="blocked">
               <IssueList items={o.blocked.items} flash={flash} showReady />
+            </Section>
+            <Section
+              title="미확인"
+              total={o.unacknowledged.total}
+              to={unacknowledgedListPath()}
+              icon={<BellDotIcon className="size-3.5" />}
+              accent="unacknowledged"
+            >
+              <IssueList items={o.unacknowledged.items} flash={flash} />
             </Section>
           </div>
         </Group>

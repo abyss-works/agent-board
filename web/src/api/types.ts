@@ -40,6 +40,9 @@ export interface IssueSummary {
   recheck_condition: string | null
   /** 마지막 상태 변경의 사유. 상태를 바꾼 적이 없으면 null이다. */
   status_reason: string | null
+  /** 사용자가 이 이슈를 확인한 시각과 행위자. 미확인이면 둘 다 null이다. 작업 흐름과 무관한 표시다. */
+  acknowledged_at: string | null
+  acknowledged_by: string | null
   version: number
   created_at: string
   updated_at: string
@@ -124,6 +127,8 @@ export interface Overview {
   blocked: Section<QueueItem>
   decisions: Section<IssueSummary>
   next: Section<QueueItem>
+  /** 삭제되지 않은 미확인 이슈. 최근에 만든 것부터. */
+  unacknowledged: Section<IssueSummary>
   recent_activity: Section<Activity>
 }
 

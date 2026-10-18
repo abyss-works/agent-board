@@ -95,6 +95,8 @@ export interface IssueListFilters {
   type: readonly string[]
   priority: readonly string[]
   label: readonly string[]
+  /** 'false'면 미확인만, 'true'면 확인된 것만. 없으면 거르지 않는다. */
+  acknowledged?: 'true' | 'false'
   q: string
   sort: string
   limit?: number
@@ -109,6 +111,7 @@ export function issueListQuery(f: IssueListFilters): string {
     type: f.type.join(','),
     priority: f.priority.join(','),
     label: f.label,
+    acknowledged: f.acknowledged,
     q: f.q.trim(),
     sort: f.sort,
     limit: f.limit,

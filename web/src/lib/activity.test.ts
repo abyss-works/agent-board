@@ -107,6 +107,16 @@ describe('상태 변경의 사유', () => {
   })
 })
 
+describe('확인 표시의 변경', () => {
+  it('확인과 해제를 한국어로 보인다', () => {
+    expect(formatValue(true, 'acknowledged')).toBe('확인됨')
+    expect(formatValue(false, 'acknowledged')).toBe('미확인')
+    const lines = describeChanges(activity({ changes: { acknowledged: { from: false, to: true } } }))
+    expect(lines).toEqual([{ field: 'acknowledged', label: '확인', from: '미확인', to: '확인됨' }])
+    expect(summarizeActivity(activity({ changes: { acknowledged: { from: true, to: false } } }))).toBe('확인: 확인됨 → 미확인')
+  })
+})
+
 describe('bodyExcerpt', () => {
   it('20자 이하 본문은 그대로 두고 말줄임표를 붙이지 않는다', () => {
     expect(bodyExcerpt('랭킹 UI 위치를 옮겼다.')).toBe('랭킹 UI 위치를 옮겼다.')

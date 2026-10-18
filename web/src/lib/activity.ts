@@ -18,6 +18,7 @@ export function formatValue(value: unknown, field?: string): string {
   if (value === null || value === undefined) return '없음'
   if (Array.isArray(value)) return value.length ? value.map((v) => formatValue(v)).join(', ') : '없음'
   const text = typeof value === 'string' ? value : JSON.stringify(value)
+  if (field === 'acknowledged') return value === true ? '확인됨' : '미확인'
   if (field === 'status') return statusLabel(text)
   if (field === 'type') return typeLabel(text)
   return text.length > MAX ? `${text.slice(0, MAX)}…` : text

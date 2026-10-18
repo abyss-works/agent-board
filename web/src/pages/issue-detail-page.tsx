@@ -1,8 +1,8 @@
-import { ArrowLeftIcon, CopyIcon, PencilIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue } from '@/api/queries'
+import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue, useSetAcknowledged } from '@/api/queries'
 import type { Issue, IssuePatch, IssueStatus, IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -55,6 +55,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const navigate = useNavigate()
   const patch = usePatchIssue()
   const del = useDeleteIssue()
+  const acknowledge = useSetAcknowledged()
   const comment = useCreateComment()
   const activity = useIssueActivity(issue.key)
   const [editingBody, setEditingBody] = useState(false)
@@ -71,6 +72,9 @@ function IssueDetail({ issue }: { issue: Issue }) {
 
   const save = (body: IssuePatch, label: string) =>
     patch.mutate({ key: issue.key, patch: body, version: issue.version }, { onError: (err) => toastError(err, `${label}을(를) 저장하지 못했습니다`) })
+
+  const setAcknowledged = (acknowledged: boolean) =>
+    acknowledge.mutate({ key: issue.key, acknowledged }, { onError: (err) => toastError(err, '확인 표시를 바꾸지 못했습니다') })
 
   const changeStatus = (status: IssueStatus) => {
     if (status === issue.status) return
@@ -125,7 +129,28 @@ function IssueDetail({ issue }: { issue: Issue }) {
             <CopyIcon className="size-3" />
           </Button>
           {issue.status === 'deleted' ? <Badge variant="destructive">삭제됨</Badge> : null}
-          <span className="ml-auto font-mono text-[0.625rem] text-muted-foreground">v{issue.version}</span>
+          <div className="ml-auto flex items-center gap-2">
+            {issue.acknowledged_at === null ? (
+              <>
+                <Badge variant="info">미확인</Badge>
+                <Button size="xs" onClick={() => setAcknowledged(true)} disabled={acknowledge.isPending} title="이 이슈를 확인했다고 표시합니다. 작업 흐름에는 영향이 없습니다.">
+                  <CheckIcon />
+                  확인
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setAcknowledged(false)}
+                disabled={acknowledge.isPending}
+                title={`${issue.acknowledged_by ?? '마이그레이션'}이 ${formatKst(issue.acknowledged_at)} KST에 확인함`}
+              >
+                확인 취소
+              </Button>
+            )}
+            <span className="font-mono text-[0.625rem] text-muted-foreground">v{issue.version}</span>
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
