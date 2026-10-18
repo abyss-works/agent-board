@@ -38,9 +38,21 @@ export function describeChanges(a: Activity): ChangeLine[] {
   })
 }
 
-/** 피드 한 줄에 들어갈 요약 문구 */
+/** 요약이 없는 댓글을 한 줄로 보일 때 남기는 본문 앞부분의 글자 수(코드 포인트) */
+const EXCERPT_MAX = 20
+
+/**
+ * 댓글 본문의 앞부분. 공백과 줄바꿈을 한 칸 공백으로 합치고 앞뒤 공백을 뗀 뒤 앞 20자(코드 포인트 기준)만 남긴다.
+ * 잘렸으면 끝에 `…`를 붙인다.
+ */
+export function bodyExcerpt(body: string): string {
+  const chars = Array.from(body.replace(/\s+/g, ' ').trim())
+  return chars.length > EXCERPT_MAX ? `${chars.slice(0, EXCERPT_MAX).join('')}…` : chars.join('')
+}
+
+/** 피드 한 줄에 들어갈 요약 문구. 댓글은 요약(summary)이 있으면 요약, 없으면 본문 앞부분이다. */
 export function summarizeActivity(a: Activity): string {
-  if (a.kind === 'commented') return a.body?.split('\n')[0] ?? ''
+  if (a.kind === 'commented') return a.summary || bodyExcerpt(a.body ?? '')
   const lines = describeChanges(a)
   if (a.kind === 'created') return lines[0]?.to ?? ''
   return lines.map((l) => (l.to === null ? `${l.label} 수정` : `${l.label}: ${l.from} → ${l.to}`)).join(' · ')
