@@ -293,6 +293,15 @@ func TestMigrateAddsTopicAckAndReasonToVersion2Database(t *testing.T) {
 	if n != 2 {
 		t.Errorf("issues after migration = %d, want 2", n)
 	}
+
+	// The store reads the new columns: old issues are acknowledged with no actor.
+	old, err := s.GetIssue(context.Background(), "AGB-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.AcknowledgedAt == nil || old.AcknowledgedBy != nil || old.StatusReason != nil || old.Title != "첫 이슈" || old.Version != 1 {
+		t.Errorf("migrated issue = %+v", old)
+	}
 }
 
 func TestEnsureActors(t *testing.T) {

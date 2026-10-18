@@ -61,6 +61,7 @@ type IssueFilter struct {
 	CreatedBy       []string
 	UpdatedBy       []string
 	StatusChangedBy []string
+	Acknowledged    *bool // true: acknowledged by the user, false: not yet
 	Query           string
 	Sort            []Sort // priority, created_at, updated_at, key, relevance
 	Limit           int
@@ -86,7 +87,7 @@ func issueCols(withBody bool) string {
 		body = "''"
 	}
 	return `i.id, i.project_id, p.key, p.status, i.number, i.key, i.title, ` + body + `, i.type, i.status, i.priority,
-		i.parent_id, par.key, i.recheck_condition, i.status_reason, i.version, i.created_at, i.updated_at, i.closed_at,
+		i.parent_id, par.key, i.recheck_condition, i.status_reason, i.acknowledged_at, i.acknowledged_by, i.version, i.created_at, i.updated_at, i.closed_at,
 		i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by`
 }
 
@@ -96,6 +97,7 @@ type rowScanner interface{ Scan(...any) error }
 // scan.
 type issueScan struct {
 	parentKey, recheck, reason, closedAt sql.NullString
+	ackAt, ackBy                         sql.NullString
 	created, updated, statusChanged      string
 }
 
@@ -105,7 +107,7 @@ func scanIssue(sc rowScanner, extra ...any) (*issueRow, error) {
 	var r issueRow
 	var raw issueScan
 	dest := []any{&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &raw.parentKey, &raw.recheck, &raw.reason, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
+		&r.parentID, &raw.parentKey, &raw.recheck, &raw.reason, &raw.ackAt, &raw.ackBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
 		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy}
 	if err := sc.Scan(append(dest, extra...)...); err != nil {
 		return nil, err
@@ -126,6 +128,16 @@ func (r *issueRow) finishScan(raw issueScan) error {
 	}
 	if raw.reason.Valid {
 		r.StatusReason = &raw.reason.String
+	}
+	if raw.ackBy.Valid {
+		r.AcknowledgedBy = &raw.ackBy.String
+	}
+	if raw.ackAt.Valid {
+		t, err := model.ParseTime(raw.ackAt.String)
+		if err != nil {
+			return err
+		}
+		r.AcknowledgedAt = &t
 	}
 	var err error
 	if r.CreatedAt, err = model.ParseTime(raw.created); err != nil {
@@ -214,6 +226,10 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*model.Issue, error) 
 // CreateIssue validates, issues the next number in the project and inserts
 // the issue with its created activity record, all in one transaction.
 func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) (*model.Issue, error) {
+	kind, err := actorKind(ctx, s.db, tr.Actor)
+	if err != nil {
+		return nil, err
+	}
 	now := s.stamp()
 	issue := model.Issue{
 		Project: in.Project, Title: in.Title, Body: in.Body,
@@ -240,7 +256,7 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 	}
 
 	var key string
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err = s.write(ctx, func(tx *sql.Tx) error {
 		var projectID int64
 		var status string
 		err := tx.QueryRowContext(ctx, `select id, status from project where key = ?`, in.Project).Scan(&projectID, &status)
@@ -262,11 +278,16 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 			return err
 		}
 		key = model.IssueKey(in.Project, number)
+		// What the user creates the user already knows; what an agent creates waits for the user.
+		var ackAt, ackBy any
+		if kind == model.ActorUser {
+			ackAt, ackBy = now.String(), tr.Actor
+		}
 		res, err := tx.ExecContext(ctx, `insert into issue(project_id, number, key, title, body, type, status, priority, parent_id, recheck_condition,
-			version, created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
-			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+			acknowledged_at, acknowledged_by, version, created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
+			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
 			projectID, number, key, issue.Title, issue.Body, string(issue.Type), string(issue.Status), string(issue.Priority), parentID, issue.RecheckCondition,
-			now.String(), now.String(), timePtr(issue.ClosedAt), now.String(), tr.Actor, tr.Actor, tr.Actor)
+			ackAt, ackBy, now.String(), now.String(), timePtr(issue.ClosedAt), now.String(), tr.Actor, tr.Actor, tr.Actor)
 		if err != nil {
 			return err
 		}
@@ -584,6 +605,13 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 		} else {
 			where = append(where, "par.key = ?")
 			args = append(args, *f.Parent)
+		}
+	}
+	if f.Acknowledged != nil {
+		if *f.Acknowledged {
+			where = append(where, "i.acknowledged_at is not null")
+		} else {
+			where = append(where, "i.acknowledged_at is null")
 		}
 	}
 	if f.closedSince != nil {

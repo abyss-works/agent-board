@@ -42,6 +42,8 @@ type Issue struct {
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
 	StatusReason     *string     `json:"status_reason"`
+	AcknowledgedAt   *Time       `json:"acknowledged_at"`
+	AcknowledgedBy   *string     `json:"acknowledged_by"`
 	Version          int64       `json:"version"`
 	CreatedAt        Time        `json:"created_at"`
 	UpdatedAt        Time        `json:"updated_at"`
@@ -68,6 +70,8 @@ type IssueSummary struct {
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
 	StatusReason     *string     `json:"status_reason"`
+	AcknowledgedAt   *Time       `json:"acknowledged_at"`
+	AcknowledgedBy   *string     `json:"acknowledged_by"`
 	Version          int64       `json:"version"`
 	CreatedAt        Time        `json:"created_at"`
 	UpdatedAt        Time        `json:"updated_at"`
@@ -85,7 +89,8 @@ func (i *Issue) Summary() IssueSummary {
 		Key: i.Key, Project: i.Project, Number: i.Number, Title: i.Title,
 		Type: i.Type, Status: i.Status, Priority: i.Priority,
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
-		RecheckCondition: i.RecheckCondition, StatusReason: i.StatusReason, Version: i.Version,
+		RecheckCondition: i.RecheckCondition, StatusReason: i.StatusReason,
+		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
 		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,
 		CreatedBy: i.CreatedBy, UpdatedBy: i.UpdatedBy,
