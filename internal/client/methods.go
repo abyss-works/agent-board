@@ -230,9 +230,14 @@ func (c *Client) DeleteIssue(ctx context.Context, key, version string) (*Respons
 	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key), nil, ifMatch(version))
 }
 
-// AddComment adds a comment to an issue.
-func (c *Client) AddComment(ctx context.Context, key, body string) (*Response, error) {
-	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/comments", map[string]any{"body": body}, nil)
+// AddComment adds a comment to an issue. A non-empty summary is sent as the
+// comment's one-line summary.
+func (c *Client) AddComment(ctx context.Context, key, body, summary string) (*Response, error) {
+	in := map[string]any{"body": body}
+	if summary != "" {
+		in["summary"] = summary
+	}
+	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/comments", in, nil)
 }
 
 // IssueActivity lists one issue's activity, newest first.

@@ -16,6 +16,7 @@ const (
 	MaxDependsOn        = 20
 	MaxRefs             = 50
 	MaxRecheckRunes     = 500
+	MaxSummaryRunes     = 30
 	MaxSearchTerms      = 10
 	DefaultIssueType    = TypeFeature
 	DefaultIssueStatus  = StatusBacklog
@@ -163,11 +164,21 @@ func ValidateProjectName(name string) error {
 	return e.orNil()
 }
 
-// ValidateCommentBody checks a comment body.
-func ValidateCommentBody(body string) error {
+// ValidateComment checks a comment body and its optional one-line summary.
+// A nil summary is valid; a present one must be 1 to MaxSummaryRunes runes
+// without a line break.
+func ValidateComment(body string, summary *string) error {
 	var e ValidationError
 	if len(body) < 1 || len(body) > MaxBodyBytes {
 		e.add("body", "1바이트 이상 %d바이트 이하여야 합니다.", MaxBodyBytes)
+	}
+	if summary != nil {
+		if n := utf8.RuneCountInString(*summary); n < 1 || n > MaxSummaryRunes {
+			e.add("summary", "1~%d자여야 합니다.", MaxSummaryRunes)
+		}
+		if strings.ContainsAny(*summary, "\r\n") {
+			e.add("summary", "줄바꿈을 넣을 수 없습니다.")
+		}
 	}
 	return e.orNil()
 }

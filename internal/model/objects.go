@@ -114,5 +114,6 @@ type Activity struct {
 	ClientHost string            `json:"client_host"`
 	At         Time              `json:"at"`
 	Changes    map[string]Change `json:"changes"`
+	Summary    *string           `json:"summary"`
 	Body       *string           `json:"body"`
 }

@@ -162,7 +162,7 @@ func TestOverview(t *testing.T) {
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "review", Status: model.StatusReview, Type: model.TypeBug})
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "gone", Status: model.StatusDeleted})
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "other", Project: "OTH", Status: model.StatusDoing})
-	s.AddComment(ctx, trClaude, dep.Key, "hi")
+	s.AddComment(ctx, trClaude, dep.Key, "hi", nil)
 
 	o, err := s.Overview(ctx, "AGB", 10)
 	if err != nil {

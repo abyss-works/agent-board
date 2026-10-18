@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -355,4 +357,117 @@ func TestCommentsAndActivity(t *testing.T) {
 	if rec := e.do(t, "POST", "/v1/issues/ARC-1/comments", `{"body":"x"}`, nil); rec.Code != 409 || decodeErr(t, rec).Error.Details[0].Reason != "project_not_active" {
 		t.Errorf("comment on archived project: %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestCommentSummary(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createIssue(t, `{"project":"AGB","title":"a"}`)
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		return e.do(t, "POST", "/v1/issues/AGB-1/comments", body, nil)
+	}
+
+	rec := post(`{"summary":"선행 이슈 완료로 착수","body":"선행 이슈 AGB-10이 끝나 착수한다."}`)
+	if rec.Code != 201 {
+		t.Fatalf("comment with summary: %d %s", rec.Code, rec.Body.String())
+	}
+	var a model.Activity
+	decodeJSON(t, rec, &a)
+	if a.Kind != model.ActivityCommented || a.Summary == nil || *a.Summary != "선행 이슈 완료로 착수" || a.Body == nil || *a.Body != "선행 이슈 AGB-10이 끝나 착수한다." {
+		t.Errorf("comment = %+v", a)
+	}
+	if !strings.Contains(rec.Body.String(), `"summary":"선행 이슈 완료로 착수"`) {
+		t.Errorf("response lacks the summary: %s", rec.Body.String())
+	}
+
+	// A missing key and an explicit null both store no summary, and the key
+	// is still present in the response.
+	for _, body := range []string{`{"body":"x"}`, `{"summary":null,"body":"x"}`} {
+		rec = post(body)
+		if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"summary":null`) {
+			t.Errorf("comment %s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	// 30 runes pass even though they take 90 bytes.
+	if rec = post(`{"summary":"` + strings.Repeat("가", 30) + `","body":"x"}`); rec.Code != 201 {
+		t.Errorf("30 runes: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rejected := map[string]string{
+		"empty":     `{"summary":"","body":"x"}`,
+		"31 runes":  `{"summary":"` + strings.Repeat("가", 31) + `","body":"x"}`,
+		"line feed": `{"summary":"서버\n랭킹","body":"x"}`,
+		"carriage":  `{"summary":"서버\r랭킹","body":"x"}`,
+	}
+	for name, body := range rejected {
+		rec = post(body)
+		got := decodeErr(t, rec)
+		if rec.Code != 422 || got.Error.Code != "validation_failed" || len(got.Error.Details) != 1 || got.Error.Details[0].Field != "summary" {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	// Every violation is reported at once.
+	rec = post(`{"summary":"","body":""}`)
+	if got := decodeErr(t, rec); rec.Code != 422 || len(got.Error.Details) != 2 || got.Error.Details[0].Field != "body" || got.Error.Details[1].Field != "summary" {
+		t.Errorf("body and summary: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = post(`{"summary":"요약만"}`); rec.Code != 422 || decodeErr(t, rec).Error.Details[0].Field != "body" {
+		t.Errorf("summary without body: %d %s", rec.Code, rec.Body.String())
+	}
+
+	for _, body := range []string{`{"summary":5,"body":"x"}`, `{"summary":["a"],"body":"x"}`, `{"summary":true,"body":"x"}`} {
+		rec = post(body)
+		got := decodeErr(t, rec)
+		if rec.Code != 400 || got.Error.Code != "bad_request" || len(got.Error.Details) != 1 || got.Error.Details[0].Field != "summary" || got.Error.Details[0].Reason != "type_mismatch" {
+			t.Errorf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec = post(`{"summary":"a","body":"x","extra":1}`); rec.Code != 400 {
+		t.Errorf("unknown field next to summary: %d", rec.Code)
+	}
+}
+
+// Every activity object carries the summary key: a string for a comment that
+// has one, null for everything else.
+func TestActivityResponsesAlwaysCarrySummary(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createIssue(t, `{"project":"AGB","title":"a"}`)
+	e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"doing"}`, nil)
+	e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"요약 없는 댓글"}`, nil)
+	e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"summary":"서버 랭킹 함수 구현","body":"랭킹 함수를 추가했다."}`, nil)
+
+	// Newest first: the summarized comment, the plain comment, the update, the creation.
+	want := []string{`"서버 랭킹 함수 구현"`, `null`, `null`, `null`}
+	type items struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	check := func(label string, got []map[string]json.RawMessage) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s: %d items, want %d", label, len(got), len(want))
+		}
+		for n, it := range got {
+			raw, ok := it["summary"]
+			if !ok {
+				t.Errorf("%s: item %d has no summary key: %v", label, n, it)
+			} else if string(raw) != want[n] {
+				t.Errorf("%s: item %d summary = %s, want %s", label, n, raw, want[n])
+			}
+		}
+	}
+	for _, target := range []string{"/v1/issues/AGB-1/activity", "/v1/activity"} {
+		rec := e.do(t, "GET", target, "", nil)
+		var l items
+		decodeJSON(t, rec, &l)
+		check(target, l.Items)
+	}
+	rec := e.do(t, "GET", "/v1/projects/AGB/overview", "", nil)
+	var o struct {
+		RecentActivity items `json:"recent_activity"`
+	}
+	decodeJSON(t, rec, &o)
+	check("overview recent_activity", o.RecentActivity.Items)
 }

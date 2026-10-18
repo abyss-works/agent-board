@@ -2,6 +2,9 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,6 +109,50 @@ func repeat(s string, n int) string {
 		out += s
 	}
 	return out
+}
+
+func TestValidateComment(t *testing.T) {
+	text := func(s string) *string { return &s }
+	cases := []struct {
+		name    string
+		body    string
+		summary *string
+		want    []string // field of each violation, in order
+	}{
+		{"body without summary", "x", nil, nil},
+		{"one character summary", "x", text("a"), nil},
+		{"30 runes of 3 bytes each", "x", text(strings.Repeat("가", MaxSummaryRunes)), nil},
+		{"31 runes", "x", text(strings.Repeat("가", MaxSummaryRunes+1)), []string{"summary"}},
+		{"empty summary", "x", text(""), []string{"summary"}},
+		{"line feed", "x", text("서버\n랭킹"), []string{"summary"}},
+		{"carriage return", "x", text("서버\r랭킹"), []string{"summary"}},
+		{"too long and multi-line reports both", "x", text(strings.Repeat("a", MaxSummaryRunes) + "\n"), []string{"summary", "summary"}},
+		{"empty body", "", nil, []string{"body"}},
+		{"body at the byte limit", strings.Repeat("x", MaxBodyBytes), nil, nil},
+		{"body over the byte limit", strings.Repeat("x", MaxBodyBytes+1), nil, []string{"body"}},
+		{"body and summary both invalid", "", text(""), []string{"body", "summary"}},
+	}
+	for _, c := range cases {
+		err := ValidateComment(c.body, c.summary)
+		if len(c.want) == 0 {
+			if err != nil {
+				t.Errorf("%s: unexpected error %v", c.name, err)
+			}
+			continue
+		}
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Errorf("%s: err = %v, want *ValidationError", c.name, err)
+			continue
+		}
+		got := make([]string, len(ve.Fields))
+		for i, f := range ve.Fields {
+			got[i] = f.Field
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: fields = %v, want %v", c.name, got, c.want)
+		}
+	}
 }
 
 func TestParseRef(t *testing.T) {

@@ -22,7 +22,7 @@ func TestSnapshotAndFingerprint(t *testing.T) {
 	if f1 != f2 {
 		t.Errorf("fingerprint changed without writes: %q -> %q", f1, f2)
 	}
-	s.AddComment(ctx, trOwner, "AGB-1", "c")
+	s.AddComment(ctx, trOwner, "AGB-1", "c", nil)
 	f3, _ := s.FingerprintNow(ctx)
 	if f3 == f2 {
 		t.Error("fingerprint unchanged after an issue write")

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Activity } from '@/api/types'
-import { describeChanges, formatValue, summarizeActivity } from './activity'
+import { bodyExcerpt, describeChanges, formatValue, summarizeActivity } from './activity'
 
 function activity(partial: Partial<Activity>): Activity {
   return {
@@ -13,6 +13,7 @@ function activity(partial: Partial<Activity>): Activity {
     client_host: 'desk',
     at: '2026-10-17T07:10:21.000Z',
     changes: null,
+    summary: null,
     body: null,
     ...partial,
   }
@@ -66,12 +67,53 @@ describe('describeChanges', () => {
   })
 })
 
+describe('bodyExcerpt', () => {
+  it('20자 이하 본문은 그대로 두고 말줄임표를 붙이지 않는다', () => {
+    expect(bodyExcerpt('랭킹 UI 위치를 옮겼다.')).toBe('랭킹 UI 위치를 옮겼다.')
+    expect(bodyExcerpt('가'.repeat(20))).toBe('가'.repeat(20))
+  })
+  it('20자를 넘으면 앞 20자만 남기고 끝에 …를 붙인다', () => {
+    expect(bodyExcerpt('가'.repeat(21))).toBe(`${'가'.repeat(20)}…`)
+    expect(bodyExcerpt('서버 랭킹 함수를 구현하고 단위 테스트를 추가했다.')).toBe('서버 랭킹 함수를 구현하고 단위 테스…')
+  })
+  it('공백과 줄바꿈은 한 칸 공백으로 합치고 앞뒤 공백은 뗀다', () => {
+    expect(bodyExcerpt('첫 줄\n둘째 줄')).toBe('첫 줄 둘째 줄')
+    expect(bodyExcerpt('첫 줄\r\n\r\n  둘째\t\t줄\n')).toBe('첫 줄 둘째 줄')
+    expect(bodyExcerpt('\n\n  본문  \n')).toBe('본문')
+  })
+  it('합친 뒤의 길이로 자른다', () => {
+    expect(bodyExcerpt(`${'가'.repeat(20)}\n\n`)).toBe('가'.repeat(20))
+    expect(bodyExcerpt(`${'가'.repeat(10)}\n\n\n${'나'.repeat(9)}\n다`)).toBe(`${'가'.repeat(10)} ${'나'.repeat(9)}…`)
+  })
+  it('코드 포인트 단위로 센다', () => {
+    const astral = '\u{1F600}' // UTF-16으로 두 칸을 차지하는 한 글자
+    expect(bodyExcerpt(astral.repeat(20))).toBe(astral.repeat(20))
+    expect(bodyExcerpt(astral.repeat(21))).toBe(`${astral.repeat(20)}…`)
+  })
+  it('빈 본문과 공백뿐인 본문은 빈 문자열이다', () => {
+    expect(bodyExcerpt('')).toBe('')
+    expect(bodyExcerpt(' \n\t ')).toBe('')
+  })
+})
+
 describe('summarizeActivity', () => {
-  it('댓글은 첫 줄, 생성은 제목, 수정은 필드 요약이다', () => {
-    expect(summarizeActivity(activity({ kind: 'commented', body: '첫 줄\n둘째 줄' }))).toBe('첫 줄')
+  it('생성은 제목, 수정은 필드 요약이다', () => {
     expect(summarizeActivity(activity({ kind: 'created', changes: { title: { to: '새 이슈' } } }))).toBe('새 이슈')
     expect(
       summarizeActivity(activity({ changes: { status: { from: 'todo', to: 'doing' }, body: { from: 'a', to: 'b' } } })),
     ).toBe('상태: 할 일 → 진행 · 본문 수정')
+  })
+  it('요약이 있는 댓글은 본문과 무관하게 요약이다', () => {
+    expect(summarizeActivity(activity({ kind: 'commented', summary: '서버 랭킹 함수 구현', body: '긴 본문\n둘째 줄' }))).toBe('서버 랭킹 함수 구현')
+  })
+  it('요약이 없는 댓글은 본문 앞부분이다', () => {
+    expect(summarizeActivity(activity({ kind: 'commented', body: '첫 줄\n둘째 줄' }))).toBe('첫 줄 둘째 줄')
+    expect(summarizeActivity(activity({ kind: 'commented', body: '가'.repeat(25) }))).toBe(`${'가'.repeat(20)}…`)
+  })
+  it('요약도 본문도 없는 댓글은 빈 문자열이다', () => {
+    expect(summarizeActivity(activity({ kind: 'commented' }))).toBe('')
+  })
+  it('댓글이 아닌 기록은 summary가 있어도 쓰지 않는다', () => {
+    expect(summarizeActivity(activity({ kind: 'created', summary: '무시', changes: { title: { to: '새 이슈' } } }))).toBe('새 이슈')
   })
 })

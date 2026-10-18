@@ -358,7 +358,7 @@ func TestStatusAndViewCommands(t *testing.T) {
 	srv.on("GET", "/v1/board", canned{body: `{"project":"CLI","columns":[{"status":"backlog","total":0,"issues":[]},{"status":"todo","total":1,"issues":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"todo","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}]}]}`})
 	srv.on("GET", "/v1/queue", canned{body: `{"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"todo","priority":"P1","labels":[],"parent":null,"depends_on":["CLI-2"],"refs":[],"recheck_condition":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"owner","created_by":"owner","updated_by":"owner","ready":false,"blocked_by":["CLI-2"]}],"total":1,"limit":1,"offset":0}`})
 	srv.on("GET", "/v1/labels", canned{body: `{"items":[{"label":"api","count":9},{"label":"cli","count":4}]}`})
-	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":501,"issue":"CLI-1","project":"CLI","kind":"updated","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:10:21.000Z","changes":{"status":{"from":"todo","to":"doing"}},"body":null},{"id":502,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"codex","session_id":"s","client_host":"h","at":"2026-10-17T07:11:21.000Z","changes":null,"body":"댓글 본문\n둘째 줄"}],"total":2,"limit":50,"offset":0}`})
+	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":501,"issue":"CLI-1","project":"CLI","kind":"updated","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:10:21.000Z","changes":{"status":{"from":"todo","to":"doing"}},"summary":null,"body":null},{"id":502,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"codex","session_id":"s","client_host":"h","at":"2026-10-17T07:11:21.000Z","changes":null,"summary":null,"body":"댓글 본문\n둘째 줄"},{"id":503,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:12:21.000Z","changes":null,"summary":"서버 랭킹 함수 구현","body":"랭킹 상세 본문"}],"total":3,"limit":50,"offset":0}`})
 	srv.on("GET", "/v1/issues", canned{body: listJSON})
 	h := newHarness(t, srv, true)
 
@@ -374,7 +374,7 @@ func TestStatusAndViewCommands(t *testing.T) {
 		{[]string{"board"}, "/v1/board", "", []string{"backlog"}},
 		{[]string{"queue", "--project", "CLI", "--status", "todo,backlog", "--limit", "1"}, "/v1/queue", "limit=1&project=CLI&status=todo%2Cbacklog", []string{"CLI-1", "CLI-2"}},
 		{[]string{"labels", "--project", "CLI"}, "/v1/labels", "project=CLI", []string{"api", "9", "cli", "4"}},
-		{[]string{"activity", "--project", "CLI", "--kind", "updated", "--field", "status", "--since", "2026-10-17T00:00:00Z", "--sort", "at"}, "/v1/activity", "field=status&kind=updated&project=CLI&since=2026-10-17T00%3A00%3A00Z&sort=at", []string{"claude", "todo", "doing", "댓글 본문"}},
+		{[]string{"activity", "--project", "CLI", "--kind", "updated", "--field", "status", "--since", "2026-10-17T00:00:00Z", "--sort", "at"}, "/v1/activity", "field=status&kind=updated&project=CLI&since=2026-10-17T00%3A00%3A00Z&sort=at", []string{"claude", "todo", "doing", "댓글 본문", "서버 랭킹 함수 구현"}},
 		{[]string{"search", "설계", "api", "--project", "CLI", "--status", "all"}, "/v1/issues", "project=CLI&q=%EC%84%A4%EA%B3%84+api&status=all", []string{"CLI-1"}},
 	}
 	for _, tc := range cases {
@@ -447,7 +447,7 @@ func TestProjectCommands(t *testing.T) {
 
 func TestIssueCommentDeleteActivity(t *testing.T) {
 	srv := newFakeServer(t)
-	srv.on("POST", "/v1/issues/CLI-1/comments", canned{status: 201, body: `{"id":7,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"sess-1","client_host":"desk","at":"2026-10-17T07:11:21.000Z","changes":null,"body":"댓글"}`})
+	srv.on("POST", "/v1/issues/CLI-1/comments", canned{status: 201, body: `{"id":7,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"sess-1","client_host":"desk","at":"2026-10-17T07:11:21.000Z","changes":null,"summary":null,"body":"댓글"}`})
 	srv.on("DELETE", "/v1/issues/CLI-1", canned{body: issueJSON, etag: `"4"`})
 	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: `{"items":[],"total":0,"limit":10,"offset":0}`})
 	h := newHarness(t, srv, true)
@@ -460,11 +460,56 @@ func TestIssueCommentDeleteActivity(t *testing.T) {
 	if code := h.run("issue", "comment", "CLI-1"); code != 2 {
 		t.Errorf("comment without body: code=%d", code)
 	}
+	if code := h.run("issue", "comment", "CLI-1", "--summary", "요약만"); code != 2 {
+		t.Errorf("comment with summary but no body: code=%d", code)
+	}
 	if code := h.run("issue", "delete", "CLI-1", "--if-match", `"3"`); code != 0 || srv.last().Method != "DELETE" || srv.last().Header.Get("If-Match") != `"3"` {
 		t.Errorf("delete: code=%d req=%+v", code, srv.last())
 	}
 	if code := h.run("issue", "activity", "CLI-1", "--limit", "10"); code != 0 || srv.last().Query.Get("limit") != "10" {
 		t.Errorf("activity: code=%d req=%+v", code, srv.last())
+	}
+}
+
+func TestIssueCommentSendsSummaryOnlyWhenGiven(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("POST", "/v1/issues/CLI-1/comments", canned{status: 201, body: `{"id":7,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"sess-1","client_host":"desk","at":"2026-10-17T07:11:21.000Z","changes":null,"summary":"서버 랭킹 함수 구현","body":"댓글"}`})
+	h := newHarness(t, srv, true)
+
+	if code := h.run("issue", "comment", "CLI-1", "--summary", "서버 랭킹 함수 구현", "--body", "댓글"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if got := strings.TrimSpace(srv.last().Body); got != `{"body":"댓글","summary":"서버 랭킹 함수 구현"}` {
+		t.Errorf("request body = %s", got)
+	}
+	for _, want := range []string{"summary:", "서버 랭킹 함수 구현", "댓글"} {
+		if !strings.Contains(h.stdout.String(), want) {
+			t.Errorf("stdout lacks %q:\n%s", want, h.stdout.String())
+		}
+	}
+
+	h.app.Stdin = strings.NewReader("본문 첫 줄\n둘째 줄\n")
+	if code := h.run("issue", "comment", "CLI-1", "--summary", "랭킹 UI 위치 변경", "--body-file", "-"); code != 0 {
+		t.Fatalf("stdin body: code=%d stderr=%s", code, h.stderr)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(srv.last().Body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["summary"] != "랭킹 UI 위치 변경" || got["body"] != "본문 첫 줄\n둘째 줄\n" || len(got) != 2 {
+		t.Errorf("request fields = %v", got)
+	}
+
+	for _, args := range [][]string{
+		{"issue", "comment", "CLI-1", "--body", "댓글"},
+		{"issue", "comment", "CLI-1", "--summary", "", "--body", "댓글"},
+	} {
+		if code := h.run(args...); code != 0 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, h.stderr)
+		}
+		if got := strings.TrimSpace(srv.last().Body); got != `{"body":"댓글"}` {
+			t.Errorf("%v: request body = %s, want no summary key", args, got)
+		}
 	}
 }
 
@@ -570,6 +615,9 @@ func TestHelpAndUnknownCommands(t *testing.T) {
 	}
 	if code := h.run("issue", "create", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "--body-file") {
 		t.Errorf("issue create --help: code=%d out=%s", code, h.stdout)
+	}
+	if code := h.run("issue", "comment", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "--summary") || !strings.Contains(h.stdout.String(), "--body-file") {
+		t.Errorf("issue comment --help: code=%d out=%s", code, h.stdout)
 	}
 	if code := h.run("help", "issue", "update"); code != 0 || !strings.Contains(h.stdout.String(), "--add-label") {
 		t.Errorf("help issue update: code=%d out=%s", code, h.stdout)

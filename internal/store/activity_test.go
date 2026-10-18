@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -14,20 +15,20 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	a := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "a"})
 	b := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "b", Project: "OTH"})
 
-	c, err := s.AddComment(ctx, trClaude, a.Key, "착수한다.")
+	c, err := s.AddComment(ctx, trClaude, a.Key, "착수한다.", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Kind != model.ActivityCommented || c.Body == nil || *c.Body != "착수한다." || c.Changes != nil || c.Actor != "claude" || c.Issue != a.Key || c.ID == 0 {
 		t.Errorf("comment = %+v", c)
 	}
-	if _, err := s.AddComment(ctx, trClaude, "AGB-9", "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.AddComment(ctx, trClaude, "AGB-9", "x", nil); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing issue err = %v", err)
 	}
 	// Comments are writes to the issue, so a non-active project rejects them.
 	archived := model.ProjectArchived
 	s.UpdateProject(ctx, trOwner, "OTH", ProjectPatch{Status: &archived})
-	if _, err := s.AddComment(ctx, trClaude, b.Key, "x"); !errors.Is(err, ErrProjectNotActive) {
+	if _, err := s.AddComment(ctx, trClaude, b.Key, "x", nil); !errors.Is(err, ErrProjectNotActive) {
 		t.Errorf("archived project comment err = %v", err)
 	}
 	active := model.ProjectActive
@@ -38,7 +39,7 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	// Comments are allowed on deleted issues.
 	del := model.StatusDeleted
 	s.UpdateIssue(ctx, trOwner, b.Key, IssuePatch{Status: &del}, nil)
-	if _, err := s.AddComment(ctx, trOwner, b.Key, "deleted comment"); err != nil {
+	if _, err := s.AddComment(ctx, trOwner, b.Key, "deleted comment", nil); err != nil {
 		t.Errorf("comment on deleted issue: %v", err)
 	}
 
@@ -102,5 +103,102 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	page, total, _ := s.ListActivity(ctx, ActivityFilter{Limit: 2, Offset: 5})
 	if total != 7 || len(page) != 2 {
 		t.Errorf("paging = %d items, total %d", len(page), total)
+	}
+}
+
+func TestCommentSummaryRoundTrip(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	a := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "a"})
+
+	with, err := s.AddComment(ctx, trClaude, a.Key, "랭킹 함수를 추가했다.", str("서버 랭킹 함수 구현"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with.Summary == nil || *with.Summary != "서버 랭킹 함수 구현" || with.Body == nil || *with.Body != "랭킹 함수를 추가했다." {
+		t.Errorf("comment with summary = %+v", with)
+	}
+	without, err := s.AddComment(ctx, trClaude, a.Key, "요약 없는 댓글", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.Summary != nil {
+		t.Errorf("comment without summary has Summary %q", *without.Summary)
+	}
+	doing := model.StatusDoing
+	if _, _, err := s.UpdateIssue(ctx, trOwner, a.Key, IssuePatch{Status: &doing}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Every read path returns the stored summary: created and updated records
+	// and comments without one carry nil.
+	items, total, err := s.ListActivity(ctx, ActivityFilter{Issues: []string{a.Key}, Asc: true, Limit: 50})
+	if err != nil || total != 4 {
+		t.Fatalf("ListActivity = %d items, total %d, err %v", len(items), total, err)
+	}
+	wantKinds := []model.ActivityKind{model.ActivityCreated, model.ActivityCommented, model.ActivityCommented, model.ActivityUpdated}
+	for n, it := range items {
+		if it.Kind != wantKinds[n] {
+			t.Fatalf("item %d kind = %s, want %s", n, it.Kind, wantKinds[n])
+		}
+		if n == 1 {
+			if it.Summary == nil || *it.Summary != "서버 랭킹 함수 구현" {
+				t.Errorf("listed comment summary = %v", it.Summary)
+			}
+		} else if it.Summary != nil {
+			t.Errorf("item %d (%s) has Summary %q, want nil", n, it.Kind, *it.Summary)
+		}
+	}
+	// The absent summary is stored as NULL, never as an empty string.
+	var nulls, stored int
+	if err := s.db.QueryRow(`select count(*) filter (where summary is null), count(*) filter (where summary is not null) from activity`).Scan(&nulls, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if nulls != 3 || stored != 1 {
+		t.Errorf("summary NULL rows = %d, stored rows = %d, want 3 and 1", nulls, stored)
+	}
+}
+
+func TestCommentSummaryValidation(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	a := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "a"})
+
+	ok := map[string]string{
+		"one rune":        "가",
+		"30 runes":        strings.Repeat("가", 30),
+		"inner spaces":    "서버  랭킹 함수",
+		"surrounding tab": "\t랭킹\t",
+	}
+	for name, summary := range ok {
+		c, err := s.AddComment(ctx, trClaude, a.Key, "본문", &summary)
+		if err != nil || c.Summary == nil || *c.Summary != summary {
+			t.Errorf("%s: comment = %+v, err %v", name, c, err)
+		}
+	}
+	rejected := map[string]string{
+		"empty":       "",
+		"31 runes":    strings.Repeat("가", 31),
+		"line feed":   "서버\n랭킹",
+		"carriage":    "서버\r랭킹",
+		"only breaks": "\r\n",
+	}
+	var before int
+	if err := s.db.QueryRow(`select count(*) from activity`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	for name, summary := range rejected {
+		_, err := s.AddComment(ctx, trClaude, a.Key, "본문", &summary)
+		var verr *model.ValidationError
+		if !errors.As(err, &verr) || len(verr.Fields) == 0 || verr.Fields[0].Field != "summary" {
+			t.Errorf("%s: err = %v, want a summary validation error", name, err)
+		}
+	}
+	var after int
+	if err := s.db.QueryRow(`select count(*) from activity`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("rejected comments wrote %d records", after-before)
 	}
 }

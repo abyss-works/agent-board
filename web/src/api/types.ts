@@ -74,6 +74,8 @@ export interface Activity {
   client_host: string
   at: string
   changes: Record<string, Change> | null
+  /** 댓글의 한 줄 요약. 요약 없는 댓글과 댓글이 아닌 기록은 null이다. */
+  summary: string | null
   body: string | null
 }
 

@@ -149,7 +149,8 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 			return c.PatchIssue(ctx, "CLI-1", map[string]any{"status": "doing"}, `"2"`)
 		}, "PATCH", "/v1/issues/CLI-1", "", `{"status":"doing"}`},
 		{"delete issue", func() (*Response, error) { return c.DeleteIssue(ctx, "CLI-1", "") }, "DELETE", "/v1/issues/CLI-1", "", ""},
-		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
+		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
+		{"comment with summary", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "서버 랭킹 함수 구현") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글","summary":"서버 랭킹 함수 구현"}`},
 		{"issue activity", func() (*Response, error) { return c.IssueActivity(ctx, "CLI-1", Page{Limit: 10, Offset: 2}) }, "GET", "/v1/issues/CLI-1/activity", "limit=10&offset=2", ""},
 		{"activity", func() (*Response, error) {
 			return c.ListActivity(ctx, ActivityFilter{Project: "CLI", Kind: "updated", Field: "status", Since: "2026-10-17T00:00:00Z", Sort: "at"})

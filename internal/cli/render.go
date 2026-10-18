@@ -122,6 +122,9 @@ func rawString(r json.RawMessage) string {
 func describeActivity(act model.Activity) string {
 	switch act.Kind {
 	case model.ActivityCommented:
+		if act.Summary != nil {
+			return *act.Summary
+		}
 		body := deref(act.Body, "")
 		if i := strings.IndexByte(body, '\n'); i >= 0 {
 			body = body[:i] + " …"
@@ -173,13 +176,17 @@ func (a *App) renderActivity(w io.Writer, resp *client.Response) error {
 	if err != nil {
 		return err
 	}
-	fields(w, [][2]string{
+	pairs := [][2]string{
 		{"id", strconv.FormatInt(act.ID, 10)},
 		{"issue", act.Issue},
 		{"kind", string(act.Kind)},
 		{"actor", act.Actor + " (" + act.SessionID + ", " + act.ClientHost + ")"},
 		{"at", formatTime(act.At, a.Location)},
-	})
+	}
+	if act.Summary != nil {
+		pairs = append(pairs, [2]string{"summary", *act.Summary})
+	}
+	fields(w, pairs)
 	if act.Body != nil {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, strings.TrimRight(*act.Body, "\n"))

@@ -85,10 +85,14 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 - 상태가 실제로 바뀔 때만 댓글을 단다. 예: 중간 결과, 범위 변경, 막힘. 같은 내용을 되풀이하지 않는다.
   ```
-  agb issue comment <ISSUE> --body-file - <<'EOF'
+  agb issue comment <ISSUE> --summary "<요약>" --body-file - <<'EOF'
   <내용>
   EOF
   ```
+- 댓글에는 `--summary`를 반드시 붙인다. 요약은 목록에 한 줄로 보이는 색인이다.
+  - 무엇을 했는지 떠올리게 하는 명사구로 쓴다. 예: `서버 랭킹 함수 구현`, `랭킹 UI 위치 변경`
+  - 15자 안팎으로 쓴다. 서버 한도는 30자이고, 줄바꿈을 넣을 수 없다.
+  - 상세는 본문에 쓴다.
 - 막혔다고 판단하면 원인을 확인한 근거(실행한 명령과 결과)를 댓글에 쓴다.
 - 라벨, 선행 이슈, 참조를 하나씩 더하거나 뺄 때는 `--add-*`, `--remove-*`를 쓴다. 현재 값을 읽고 `If-Match`로 보내므로 다른 세션의 변경을 덮어쓰지 않는다. 412로 실패하면 `agb issue get <ISSUE>`로 다시 읽고 고친다.
 
@@ -97,7 +101,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 1. 끝난 이슈를 닫고 결과를 댓글로 남긴다. 결과에는 커밋 해시와 검증 명령의 결과를 쓴다.
    ```
    agb issue update <ISSUE> --status done
-   agb issue comment <ISSUE> --body-file - <<'EOF'
+   agb issue comment <ISSUE> --summary "<요약>" --body-file - <<'EOF'
    <결과와 증거>
    EOF
    ```
