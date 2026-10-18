@@ -50,6 +50,7 @@ func New(o Options) http.Handler {
 	route(protected, "/v1/actors/me", methods{"GET": h.me})
 	h.registerProjects(protected)
 	h.registerIssues(protected)
+	h.registerTopics(protected)
 	h.registerViews(protected)
 	protected.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, notFound("경로가 없습니다."))

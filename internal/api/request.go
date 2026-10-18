@@ -235,7 +235,12 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	case errors.Is(err, store.ErrDuplicateKey):
 		return conflict("duplicate_key", "같은 키가 이미 있습니다.")
 	case errors.Is(err, store.ErrProjectNotActive):
-		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈는 쓸 수 없습니다.")
+		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈와 주제는 쓸 수 없습니다.")
+	case errors.Is(err, store.ErrDuplicateName):
+		return &apiError{Status: 409, Code: "conflict", Message: "같은 상위 주제 아래에 같은 이름의 활성 주제가 이미 있습니다.",
+			Details: []Detail{{Field: "name", Reason: "duplicate"}}}
+	case errors.Is(err, store.ErrTopicHasChildren):
+		return conflict("topic_has_children", "활성 하위 주제가 있는 대주제는 삭제할 수 없습니다.")
 	case errors.Is(err, store.ErrCycle):
 		return conflict("cycle", "상위 이슈나 선행 이슈가 순환합니다.")
 	case errors.Is(err, store.ErrVersionMismatch):

@@ -282,6 +282,8 @@ type issue struct {
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
 	ClosedAt         *string  `json:"closed_at"`
+	Topic            *int64   `json:"topic"`
+	TopicPath        *string  `json:"topic_path"`
 	StatusReason     *string  `json:"status_reason"`
 	AcknowledgedAt   *string  `json:"acknowledged_at"`
 	AcknowledgedBy   *string  `json:"acknowledged_by"`
