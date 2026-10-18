@@ -10,6 +10,7 @@ import (
 func (h *handler) registerIssues(mux *http.ServeMux) {
 	route(mux, "/v1/issues", methods{"GET": h.listIssues, "POST": h.createIssue})
 	route(mux, "/v1/issues/{key}", methods{"GET": h.getIssue, "PATCH": h.patchIssue, "DELETE": h.deleteIssue})
+	route(mux, "/v1/issues/{key}/acknowledge", methods{"POST": h.acknowledge, "DELETE": h.unacknowledge})
 	route(mux, "/v1/issues/{key}/comments", methods{"POST": h.createComment})
 	route(mux, "/v1/issues/{key}/activity", methods{"GET": h.issueActivity})
 	route(mux, "/v1/activity", methods{"GET": h.listActivity})
@@ -26,7 +27,7 @@ var issueWriteFields = map[string]bool{
 var issuePatchFields = withFields(issueWriteFields, "status_reason")
 
 // issueFields are the activity change fields accepted by the field filter.
-var issueFields = withFields(issuePatchFields)
+var issueFields = withFields(issuePatchFields, "acknowledged")
 
 func withFields(base map[string]bool, extra ...string) map[string]bool {
 	out := make(map[string]bool, len(base)+len(extra))
@@ -245,6 +246,32 @@ func (h *handler) applyIssuePatch(w http.ResponseWriter, r *http.Request, patch 
 	writeJSON(w, http.StatusOK, issue)
 }
 
+func (h *handler) acknowledge(w http.ResponseWriter, r *http.Request) { h.setAcknowledged(w, r, true) }
+func (h *handler) unacknowledge(w http.ResponseWriter, r *http.Request) {
+	h.setAcknowledged(w, r, false)
+}
+
+// setAcknowledged marks or unmarks an issue as acknowledged by the user. A
+// request that changes nothing answers 200 without a record.
+func (h *handler) setAcknowledged(w http.ResponseWriter, r *http.Request, acknowledged bool) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	version, aerr := ifMatch(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	issue, _, err := h.store.SetAcknowledged(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), acknowledged, version)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	w.Header().Set("ETag", etag(issue.Version))
+	writeJSON(w, http.StatusOK, issue)
+}
+
 // issueListFilter parses the shared issue filters of /v1/issues and the
 // views. statusDefault is used when the status parameter is absent.
 func issueListFilter(q *query, statusDefault string) store.IssueFilter {
@@ -276,6 +303,14 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 		q.add("status", "상태 또는 open, closed, all이어야 합니다.")
 	}
 	f.Statuses = statuses
+	switch v := q.one("acknowledged"); v {
+	case "":
+	case "true", "false":
+		acknowledged := v == "true"
+		f.Acknowledged = &acknowledged
+	default:
+		q.add("acknowledged", "true 또는 false여야 합니다.")
+	}
 	if p := q.one("parent"); p != "" {
 		if _, _, ok := model.ParseIssueKey(p); !ok && p != "none" {
 			q.add("parent", "이슈 키 또는 none이어야 합니다.")

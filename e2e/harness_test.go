@@ -283,6 +283,8 @@ type issue struct {
 	UpdatedAt        string   `json:"updated_at"`
 	ClosedAt         *string  `json:"closed_at"`
 	StatusReason     *string  `json:"status_reason"`
+	AcknowledgedAt   *string  `json:"acknowledged_at"`
+	AcknowledgedBy   *string  `json:"acknowledged_by"`
 	StatusChangedAt  string   `json:"status_changed_at"`
 	StatusChangedBy  string   `json:"status_changed_by"`
 	CreatedBy        string   `json:"created_by"`
@@ -342,6 +344,7 @@ type overview struct {
 	Blocked        section[issue]    `json:"blocked"`
 	Decisions      section[issue]    `json:"decisions"`
 	Next           section[issue]    `json:"next"`
+	Unacknowledged section[issue]    `json:"unacknowledged"`
 	RecentActivity section[activity] `json:"recent_activity"`
 }
 
