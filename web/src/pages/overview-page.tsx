@@ -111,13 +111,18 @@ function Section({
   )
 }
 
+// 칸 높이를 이슈 행(h-8) 5개와 행 사이 구분선 높이로 고정하고, 넘치면 칸 안에서 스크롤한다.
+const LIST_ROWS = 5
+const LIST_HEIGHT = `calc(${LIST_ROWS} * 2rem + ${LIST_ROWS - 1}px)`
+
 function IssueList({ items, flash, showReady }: { items: (IssueSummary | QueueItem)[]; flash: Set<string>; showReady?: boolean }) {
-  if (items.length === 0) return <EmptyState className="py-6">없음</EmptyState>
   return (
-    <div>
-      {items.map((i) => (
-        <IssueRow key={i.key} issue={i} compact flash={flash.has(i.key)} showReady={showReady} />
-      ))}
+    <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
+      {items.length === 0 ? (
+        <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
+      ) : (
+        items.map((i) => <IssueRow key={i.key} issue={i} compact flash={flash.has(i.key)} showReady={showReady} />)
+      )}
     </div>
   )
 }
