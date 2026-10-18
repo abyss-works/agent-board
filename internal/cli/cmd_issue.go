@@ -14,13 +14,14 @@ var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*comman
 }}
 
 // issueFilterFlags registers the shared list filters.
-func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels *stringList) {
+func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics *stringList) {
 	fs.StringVar(&f.Project, "project", "", "")
 	fs.StringVar(&f.Project, "p", "", "")
 	fs.StringVar(&f.Status, "status", "", "")
 	fs.StringVar(&f.Type, "type", "", "")
 	fs.StringVar(&f.Priority, "priority", "", "")
 	fs.Var(labels, "label", "")
+	fs.Var(topics, "topic", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
 	fs.StringVar(&f.Acknowledged, "acknowledged", "", "")
 	fs.StringVar(&f.CreatedBy, "created-by", "", "")
@@ -37,6 +38,8 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
   --type <T>              feature, bug, design, decision, idea, observation. 쉼표 OR
   --priority <P>          P0, P1, P2, P3. 쉼표 OR
   --label <L>             라벨. 반복하면 AND
+  --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
+                          대주제를 주면 그 아래 주제의 이슈도 포함. 반복하면 OR. 경로는 --project 하나가 필요
   --parent <KEY|none>     상위 이슈. none 이면 상위가 없는 이슈
   --acknowledged <true|false>  사용자가 확인한 이슈(true)나 아직 확인하지 않은 이슈(false)만
   --created-by, --updated-by, --status-changed-by <행위자>   쉼표 OR
@@ -55,8 +58,8 @@ var issueListCmd = &command{
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue list", g)
 		var f client.IssueFilter
-		var labels stringList
-		issueFilterFlags(fs, &f, &labels)
+		var labels, topics stringList
+		issueFilterFlags(fs, &f, &labels, &topics)
 		fs.StringVar(&f.Query, "q", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -69,6 +72,11 @@ var issueListCmd = &command{
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
+		}
+		if len(topics) > 0 {
+			if f.Topic, err = a.topicFilterValue(ctx, c, f.Project, topics); err != nil {
+				return err
+			}
 		}
 		resp, err := c.ListIssues(ctx, f)
 		if err != nil {
@@ -91,8 +99,8 @@ var searchCmd = &command{
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("search", g)
 		var f client.IssueFilter
-		var labels stringList
-		issueFilterFlags(fs, &f, &labels)
+		var labels, topics stringList
+		issueFilterFlags(fs, &f, &labels, &topics)
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -105,6 +113,11 @@ var searchCmd = &command{
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
+		}
+		if len(topics) > 0 {
+			if f.Topic, err = a.topicFilterValue(ctx, c, f.Project, topics); err != nil {
+				return err
+			}
 		}
 		resp, err := c.ListIssues(ctx, f)
 		if err != nil {
@@ -158,10 +171,11 @@ var issueCreateCmd = &command{
   --depends-on <KEY>      선행 이슈. 반복 가능
   --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc. 반복 가능
   --recheck <조건>        observation 의 재검토 조건 (observation 이면 필수)
+  --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue create", g)
-		var project, title, typ, priority, status, body, bodyFile, parent, recheck string
+		var project, title, typ, priority, status, body, bodyFile, parent, recheck, topic string
 		var labels, deps, refs stringList
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
@@ -177,6 +191,7 @@ var issueCreateCmd = &command{
 		fs.Var(&deps, "depends-on", "")
 		fs.Var(&refs, "ref", "")
 		fs.StringVar(&recheck, "recheck", "", "")
+		fs.StringVar(&topic, "topic", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -211,6 +226,13 @@ var issueCreateCmd = &command{
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
+		}
+		if isSet(fs, "topic") && topic != "none" {
+			id, err := a.topicID(ctx, c, project, topic, false)
+			if err != nil {
+				return err
+			}
+			in["topic"] = id
 		}
 		resp, err := c.CreateIssue(ctx, in)
 		if err != nil {
@@ -281,11 +303,12 @@ var issueUpdateCmd = &command{
   --add-ref <R>, --remove-ref <R>
   --recheck <조건>        재검토 조건 설정
   --no-recheck            재검토 조건 제거 (type 을 observation 에서 바꿀 때)
+  --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). none 이면 주제를 지움
   --if-match <버전>       이 버전일 때만 수정. 숫자만 주어도 됩니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue update", g)
-		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, ifMatch string
+		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, topic, ifMatch string
 		var noParent, noRecheck bool
 		fs.StringVar(&title, "title", "", "")
 		fs.StringVar(&typ, "type", "", "")
@@ -298,6 +321,7 @@ var issueUpdateCmd = &command{
 		fs.BoolVar(&noParent, "no-parent", false, "")
 		fs.StringVar(&recheck, "recheck", "", "")
 		fs.BoolVar(&noRecheck, "no-recheck", false, "")
+		fs.StringVar(&topic, "topic", "", "")
 		fs.StringVar(&ifMatch, "if-match", "", "")
 		arrays := []*arrayEdit{{field: "labels", flag: "label"}, {field: "depends_on", flag: "depends-on"}, {field: "refs", flag: "ref"}}
 		for _, e := range arrays {
@@ -356,13 +380,25 @@ var issueUpdateCmd = &command{
 				needRead = true
 			}
 		}
-		if len(patch) == 0 && !needRead {
+		if len(patch) == 0 && !needRead && !isSet(fs, "topic") {
 			return usageErrorf("바꿀 필드가 없습니다.")
 		}
 
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
+		}
+		if isSet(fs, "topic") {
+			if topic == "none" {
+				patch["topic"] = nil
+			} else {
+				keyProject, _, _ := model.ParseIssueKey(key)
+				id, err := a.topicID(ctx, c, keyProject, topic, false)
+				if err != nil {
+					return err
+				}
+				patch["topic"] = id
+			}
 		}
 		version := quoteETag(ifMatch)
 		if needRead {

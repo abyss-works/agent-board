@@ -90,6 +90,7 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"depends_on", joinOr(i.DependsOn, "-")},
 		{"refs", joinOr(i.Refs, "-")},
 		{"recheck_condition", deref(i.RecheckCondition, "-")},
+		{"topic", topicText(i.Topic, i.TopicPath)},
 		{"version", strconv.FormatInt(i.Version, 10)},
 		{"created", formatTime(i.CreatedAt, a.Location) + " (" + i.CreatedBy + ")"},
 		{"updated", formatTime(i.UpdatedAt, a.Location) + " (" + i.UpdatedBy + ")"},
@@ -101,6 +102,14 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, strings.TrimRight(i.Body, "\n"))
 	}
 	return nil
+}
+
+// topicText shows the topic path of an issue with its id, or "-".
+func topicText(id *int64, path *string) string {
+	if id == nil || path == nil {
+		return "-"
+	}
+	return *path + " (" + strconv.FormatInt(*id, 10) + ")"
 }
 
 // acknowledgedText says whether the user has seen an issue: "no", or "yes"

@@ -62,6 +62,7 @@ type IssueFilter struct {
 	Priority        string
 	Labels          []string
 	Parent          string
+	Topic           string // topic ids and none, comma separated (OR)
 	Acknowledged    string // "true" or "false"; empty sends no filter
 	CreatedBy       string
 	UpdatedBy       string
@@ -83,6 +84,7 @@ func (f IssueFilter) Values() url.Values {
 		v.Add("label", l)
 	}
 	set(v, "parent", f.Parent)
+	set(v, "topic", f.Topic)
 	set(v, "acknowledged", f.Acknowledged)
 	set(v, "created_by", f.CreatedBy)
 	set(v, "updated_by", f.UpdatedBy)
@@ -233,6 +235,33 @@ func (c *Client) DeleteIssue(ctx context.Context, key, reason, version string) (
 	v := url.Values{}
 	set(v, "reason", reason)
 	return c.Request(ctx, http.MethodDelete, withQuery("/v1/issues/"+url.PathEscape(key), v), nil, ifMatch(version))
+}
+
+// ListTopics lists the topics of a project. status is active (the server
+// default when empty), deleted or all.
+func (c *Client) ListTopics(ctx context.Context, project, status string) (*Response, error) {
+	v := url.Values{}
+	set(v, "status", status)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/topics", v), nil, nil)
+}
+
+// CreateTopic adds a topic to a project. A nil parent makes a top-level topic.
+func (c *Client) CreateTopic(ctx context.Context, project, name string, parent *int64) (*Response, error) {
+	in := map[string]any{"name": name}
+	if parent != nil {
+		in["parent"] = *parent
+	}
+	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/topics", in, nil)
+}
+
+// PatchTopic applies a JSON Merge Patch to a topic.
+func (c *Client) PatchTopic(ctx context.Context, id int64, patch map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPatch, "/v1/topics/"+strconv.FormatInt(id, 10), patch, nil)
+}
+
+// DeleteTopic soft deletes a topic.
+func (c *Client) DeleteTopic(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/topics/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
 // Acknowledge marks an issue as acknowledged by the actor of the request.

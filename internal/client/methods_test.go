@@ -150,6 +150,20 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		}, "PATCH", "/v1/issues/CLI-1", "", `{"status":"doing"}`},
 		{"delete issue", func() (*Response, error) { return c.DeleteIssue(ctx, "CLI-1", "잘못 만든 이슈", "") }, "DELETE", "/v1/issues/CLI-1", url.Values{"reason": {"잘못 만든 이슈"}}.Encode(), ""},
 		{"delete issue without a reason", func() (*Response, error) { return c.DeleteIssue(ctx, "CLI-1", "", `"3"`) }, "DELETE", "/v1/issues/CLI-1", "", ""},
+		{"list topics", func() (*Response, error) { return c.ListTopics(ctx, "CLI", "all") }, "GET", "/v1/projects/CLI/topics", "status=all", ""},
+		{"list active topics", func() (*Response, error) { return c.ListTopics(ctx, "CLI", "") }, "GET", "/v1/projects/CLI/topics", "", ""},
+		{"create top-level topic", func() (*Response, error) { return c.CreateTopic(ctx, "CLI", "이슈 흐름", nil) }, "POST", "/v1/projects/CLI/topics", "", `{"name":"이슈 흐름"}`},
+		{"create child topic", func() (*Response, error) {
+			parent := int64(3)
+			return c.CreateTopic(ctx, "CLI", "트리아지", &parent)
+		}, "POST", "/v1/projects/CLI/topics", "", `{"name":"트리아지","parent":3}`},
+		{"patch topic", func() (*Response, error) {
+			return c.PatchTopic(ctx, 7, map[string]any{"parent": nil})
+		}, "PATCH", "/v1/topics/7", "", `{"parent":null}`},
+		{"delete topic", func() (*Response, error) { return c.DeleteTopic(ctx, 7) }, "DELETE", "/v1/topics/7", "", ""},
+		{"list by topic", func() (*Response, error) {
+			return c.ListIssues(ctx, IssueFilter{Topic: "3,none"})
+		}, "GET", "/v1/issues", "topic=3%2Cnone", ""},
 		{"acknowledge", func() (*Response, error) { return c.Acknowledge(ctx, "CLI-1") }, "POST", "/v1/issues/CLI-1/acknowledge", "", ""},
 		{"unacknowledge", func() (*Response, error) { return c.Unacknowledge(ctx, "CLI-1") }, "DELETE", "/v1/issues/CLI-1/acknowledge", "", ""},
 		{"list unacknowledged", func() (*Response, error) {
