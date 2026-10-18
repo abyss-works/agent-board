@@ -160,11 +160,11 @@ func TestGetPatchDeleteIssue(t *testing.T) {
 		t.Errorf("patch missing = %d", rec.Code)
 	}
 
-	rec = e.do(t, "DELETE", "/v1/issues/AGB-2", "", map[string]string{"If-Match": `"1"`})
+	rec = e.do(t, "DELETE", "/v1/issues/AGB-2?reason=시험", "", map[string]string{"If-Match": `"1"`})
 	if rec.Code != 412 {
 		t.Errorf("delete stale if-match: %d", rec.Code)
 	}
-	rec = e.do(t, "DELETE", "/v1/issues/AGB-2", "", nil)
+	rec = e.do(t, "DELETE", "/v1/issues/AGB-2?reason=시험", "", nil)
 	decodeJSON(t, rec, &i)
 	if rec.Code != 200 || i.Status != model.StatusDeleted || i.ClosedAt == nil {
 		t.Errorf("delete: %d %+v", rec.Code, i)
@@ -178,7 +178,7 @@ func TestGetPatchDeleteIssue(t *testing.T) {
 	if acts.Total != 4 || acts.Items[0].Kind != model.ActivityUpdated || string(acts.Items[0].Changes["status"].To) != `"deleted"` {
 		t.Errorf("delete activity = %+v", acts)
 	}
-	if rec = e.do(t, "DELETE", "/v1/issues/AGB-9", "", nil); rec.Code != 404 {
+	if rec = e.do(t, "DELETE", "/v1/issues/AGB-9?reason=x", "", nil); rec.Code != 404 {
 		t.Errorf("delete missing = %d", rec.Code)
 	}
 }

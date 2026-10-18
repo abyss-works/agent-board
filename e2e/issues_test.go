@@ -117,7 +117,7 @@ func TestIssueCreate(t *testing.T) {
 	})
 	t.Run("parent and depends_on may point at a deleted issue", func(t *testing.T) {
 		gone := newIssue(t, p.Key, "to delete", nil)
-		decodeAs[issue](t, owner.do(t, "DELETE", "/v1/issues/"+gone.Key, nil), 200)
+		deleteIssue(t, owner, gone.Key)
 		iss := newIssue(t, p.Key, "child of deleted", map[string]any{"parent": gone.Key, "depends_on": strs(gone.Key)})
 		if iss.Parent == nil || *iss.Parent != gone.Key || !equalStrings(iss.DependsOn, []string{gone.Key}) {
 			t.Errorf("links = parent %v depends_on %v", iss.Parent, iss.DependsOn)
@@ -309,7 +309,7 @@ func TestIssuePatch(t *testing.T) {
 		cur := getIssue(t, iss.Key)
 		stale := http.Header{"If-Match": {fmt.Sprintf(`"%d"`, cur.Version-1)}}
 		wantError(t, owner.do(t, "PATCH", "/v1/issues/"+iss.Key, map[string]any{"title": "stale"}, stale), 412, "precondition_failed")
-		wantError(t, owner.do(t, "DELETE", "/v1/issues/"+iss.Key, nil, stale), 412, "precondition_failed")
+		wantError(t, owner.do(t, "DELETE", deletePath(iss.Key), nil, stale), 412, "precondition_failed")
 		if getIssue(t, iss.Key).Title == "stale" {
 			t.Errorf("stale patch was applied")
 		}
@@ -353,11 +353,18 @@ func TestIssueStatusTransitions(t *testing.T) {
 				}
 				cur := getIssue(t, iss.Key)
 				if cur.Status != from {
-					cur = patchIssue(t, owner, iss.Key, map[string]any{"status": from})
+					cur = patchIssue(t, owner, iss.Key, statusPatch(from))
 				}
-				got := patchIssue(t, as("hermes"), iss.Key, map[string]any{"status": to})
+				got := patchIssue(t, as("hermes"), iss.Key, statusPatch(to))
 				if got.Status != to {
 					t.Fatalf("%s -> %s: status = %s", from, to, got.Status)
+				}
+				wantReason := statusLabel(from) + " → " + statusLabel(to)
+				if to == "cancelled" || to == "deleted" {
+					wantReason = "e2e 시험"
+				}
+				if got.StatusReason == nil || *got.StatusReason != wantReason {
+					t.Errorf("%s -> %s: status_reason = %v, want %q", from, to, got.StatusReason, wantReason)
 				}
 				if got.StatusChangedBy != "hermes" || got.Version != cur.Version+1 {
 					t.Errorf("%s -> %s: status_changed_by %s version %d (was %d)", from, to, got.StatusChangedBy, got.Version, cur.Version)
@@ -390,6 +397,58 @@ func TestIssueStatusTransitions(t *testing.T) {
 		again := patchIssue(t, as("gemini"), iss.Key, map[string]any{"priority": "P0"})
 		if again.StatusChangedAt != got.StatusChangedAt || again.StatusChangedBy != "codex" {
 			t.Errorf("non-status patch moved status_changed_*: %s %s", again.StatusChangedAt, again.StatusChangedBy)
+		}
+	})
+}
+
+// statusLabel is the Korean status name the server uses in default reasons.
+func statusLabel(s string) string {
+	return map[string]string{"backlog": "백로그", "todo": "할 일", "doing": "진행", "review": "검토", "done": "완료", "cancelled": "취소", "deleted": "삭제"}[s]
+}
+
+func TestIssueStatusReason(t *testing.T) {
+	p := createProject(t, "IR")
+	iss := newIssue(t, p.Key, "reason", map[string]any{"status": "todo"})
+	path := "/v1/issues/" + iss.Key
+	t.Run("cancelling and deleting need a reason", func(t *testing.T) {
+		for _, st := range []string{"cancelled", "deleted"} {
+			e := wantError(t, owner.do(t, "PATCH", path, map[string]any{"status": st}), 422, "validation_failed")
+			if !e.hasField("status_reason") {
+				t.Errorf("%s: details = %+v", st, e.Error.Details)
+			}
+		}
+		e := wantError(t, owner.do(t, "DELETE", "/v1/issues/"+iss.Key, nil), 422, "validation_failed")
+		if !e.hasField("status_reason") {
+			t.Errorf("DELETE without a reason: details = %+v", e.Error.Details)
+		}
+		if got := getIssue(t, iss.Key); got.Status != "todo" || got.Version != 1 {
+			t.Errorf("refused requests changed the issue: %+v", got)
+		}
+	})
+	t.Run("a reason is only for a status change", func(t *testing.T) {
+		for _, body := range []map[string]any{{"status_reason": "x"}, {"status": "todo", "status_reason": "x"}, {"status": "doing", "status_reason": ""}} {
+			e := wantError(t, owner.do(t, "PATCH", path, body), 422, "validation_failed")
+			if !e.hasField("status_reason") {
+				t.Errorf("%v: details = %+v", body, e.Error.Details)
+			}
+		}
+	})
+	t.Run("the reason is stored and recorded", func(t *testing.T) {
+		got := patchIssue(t, owner, iss.Key, map[string]any{"status": "doing"})
+		if got.StatusReason == nil || *got.StatusReason != "할 일 → 진행" {
+			t.Errorf("default reason = %v", got.StatusReason)
+		}
+		got = patchIssue(t, owner, iss.Key, map[string]any{"status": "cancelled", "status_reason": "AGB-20과 중복"})
+		if got.StatusReason == nil || *got.StatusReason != "AGB-20과 중복" {
+			t.Errorf("reason = %v", got.StatusReason)
+		}
+		acts := decodeAs[list[activity]](t, owner.do(t, "GET", path+"/activity", nil), 200)
+		ch := (*acts.Items[0].Changes)["status_reason"]
+		if string(ch.To) != `"AGB-20과 중복"` || string(ch.From) != `"할 일 → 진행"` {
+			t.Errorf("status_reason change = %s -> %s", ch.From, ch.To)
+		}
+		if got := decodeAs[list[issue]](t, owner.do(t, "GET", "/v1/issues?project="+p.Key+"&status=cancelled", nil), 200); len(got.Items) != 1 || got.Items[0].StatusReason == nil {
+			t.Errorf("list does not carry status_reason: %+v", got.Items)
 		}
 	})
 }
@@ -440,10 +499,13 @@ func TestIssueSoftDelete(t *testing.T) {
 	iss := newIssue(t, p.Key, "delete me", map[string]any{"status": "todo"})
 	tick()
 	t.Run("DELETE sets status deleted and answers with the issue", func(t *testing.T) {
-		r := as("opencode").do(t, "DELETE", "/v1/issues/"+iss.Key, nil)
+		r := as("opencode").do(t, "DELETE", "/v1/issues/"+iss.Key+"?reason="+url.QueryEscape("잘못 만든 이슈"), nil)
 		got := decodeAs[issue](t, r, 200)
 		if got.Status != "deleted" || got.Version != 2 || got.ClosedAt == nil || got.StatusChangedBy != "opencode" || got.UpdatedBy != "opencode" {
 			t.Errorf("deleted = %+v", got)
+		}
+		if got.StatusReason == nil || *got.StatusReason != "잘못 만든 이슈" {
+			t.Errorf("status_reason = %v", got.StatusReason)
 		}
 		if r.header.Get("ETag") != `"2"` {
 			t.Errorf("ETag = %q", r.header.Get("ETag"))
@@ -474,9 +536,12 @@ func TestIssueSoftDelete(t *testing.T) {
 			}
 		}
 	})
-	t.Run("deleting a deleted issue is a no-op 200", func(t *testing.T) {
-		got := decodeAs[issue](t, owner.do(t, "DELETE", "/v1/issues/"+iss.Key, nil), 200)
-		if got.Version != 2 {
+	t.Run("deleting a deleted issue is refused because the status does not change", func(t *testing.T) {
+		e := wantError(t, owner.do(t, "DELETE", deletePath(iss.Key), nil), 422, "validation_failed")
+		if !e.hasField("status_reason") {
+			t.Errorf("details = %+v", e.Error.Details)
+		}
+		if got := getIssue(t, iss.Key); got.Version != 2 {
 			t.Errorf("version = %d", got.Version)
 		}
 	})
@@ -511,7 +576,7 @@ func TestIssueList(t *testing.T) {
 	tick()
 	patchIssue(t, as("gemini"), i6.Key, map[string]any{"status": "todo"}) // status changed by gemini, updated last
 	tick()
-	decodeAs[issue](t, owner.do(t, "DELETE", "/v1/issues/"+i5.Key, nil), 200)
+	deleteIssue(t, owner, i5.Key)
 
 	get := func(t *testing.T, q string) list[issue] {
 		t.Helper()

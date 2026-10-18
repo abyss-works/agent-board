@@ -185,7 +185,8 @@ func TestUpdateIssue(t *testing.T) {
 		t.Fatalf("activity = %+v", acts)
 	}
 	ch := acts[0].Changes
-	if len(ch) != 3 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` {
+	if len(ch) != 4 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` ||
+		string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` {
 		t.Errorf("changes = %+v", ch)
 	}
 
@@ -218,7 +219,11 @@ func TestUpdateIssueStatusLifecycle(t *testing.T) {
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t"})
 	set := func(st model.IssueStatus) *model.Issue {
 		t.Helper()
-		got, _, err := s.UpdateIssue(ctx, trClaude, "AGB-1", IssuePatch{Status: &st}, nil)
+		patch := IssuePatch{Status: &st}
+		if st.ReasonRequired() {
+			patch.StatusReason = str("사유")
+		}
+		got, _, err := s.UpdateIssue(ctx, trClaude, "AGB-1", patch, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

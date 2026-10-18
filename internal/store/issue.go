@@ -47,6 +47,7 @@ type IssuePatch struct {
 	DependsOn        *[]string
 	Refs             *[]string
 	RecheckCondition Optional[string]
+	StatusReason     *string // only valid together with a status change
 }
 
 // IssueFilter selects, searches and orders issues.
@@ -85,45 +86,59 @@ func issueCols(withBody bool) string {
 		body = "''"
 	}
 	return `i.id, i.project_id, p.key, p.status, i.number, i.key, i.title, ` + body + `, i.type, i.status, i.priority,
-		i.parent_id, par.key, i.recheck_condition, i.version, i.created_at, i.updated_at, i.closed_at,
+		i.parent_id, par.key, i.recheck_condition, i.status_reason, i.version, i.created_at, i.updated_at, i.closed_at,
 		i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by`
 }
 
-func scanIssue(sc interface{ Scan(...any) error }) (*issueRow, error) {
+type rowScanner interface{ Scan(...any) error }
+
+// issueScan holds the columns of issueCols that need conversion after the
+// scan.
+type issueScan struct {
+	parentKey, recheck, reason, closedAt sql.NullString
+	created, updated, statusChanged      string
+}
+
+// scanIssue scans the columns of issueCols followed by the extra
+// destinations of columns a query appended.
+func scanIssue(sc rowScanner, extra ...any) (*issueRow, error) {
 	var r issueRow
-	var parentKey, recheck, closedAt sql.NullString
-	var created, updated, statusChanged string
-	if err := sc.Scan(&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &parentKey, &recheck, &r.Version, &created, &updated, &closedAt,
-		&statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy); err != nil {
+	var raw issueScan
+	dest := []any{&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
+		&r.parentID, &raw.parentKey, &raw.recheck, &raw.reason, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
+		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy}
+	if err := sc.Scan(append(dest, extra...)...); err != nil {
 		return nil, err
 	}
-	if err := r.finishScan(parentKey, recheck, closedAt, created, updated, statusChanged); err != nil {
+	if err := r.finishScan(raw); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 // finishScan converts the nullable and timestamp columns of a scanned row.
-func (r *issueRow) finishScan(parentKey, recheck, closedAt sql.NullString, created, updated, statusChanged string) error {
-	if parentKey.Valid {
-		r.Parent = &parentKey.String
+func (r *issueRow) finishScan(raw issueScan) error {
+	if raw.parentKey.Valid {
+		r.Parent = &raw.parentKey.String
 	}
-	if recheck.Valid {
-		r.RecheckCondition = &recheck.String
+	if raw.recheck.Valid {
+		r.RecheckCondition = &raw.recheck.String
+	}
+	if raw.reason.Valid {
+		r.StatusReason = &raw.reason.String
 	}
 	var err error
-	if r.CreatedAt, err = model.ParseTime(created); err != nil {
+	if r.CreatedAt, err = model.ParseTime(raw.created); err != nil {
 		return err
 	}
-	if r.UpdatedAt, err = model.ParseTime(updated); err != nil {
+	if r.UpdatedAt, err = model.ParseTime(raw.updated); err != nil {
 		return err
 	}
-	if r.StatusChangedAt, err = model.ParseTime(statusChanged); err != nil {
+	if r.StatusChangedAt, err = model.ParseTime(raw.statusChanged); err != nil {
 		return err
 	}
-	if closedAt.Valid {
-		t, err := model.ParseTime(closedAt.String)
+	if raw.closedAt.Valid {
+		t, err := model.ParseTime(raw.closedAt.String)
 		if err != nil {
 			return err
 		}
@@ -321,12 +336,21 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			next.RecheckCondition = patch.RecheckCondition.Value
 		}
 		model.NormalizeIssue(&next)
-		if err := model.ValidateIssue(&next); err != nil {
+		reason, reasonErr := model.ResolveStatusReason(cur.Status, next.Status, patch.StatusReason)
+		if err := model.MergeValidation(model.ValidateIssue(&next), reasonErr); err != nil {
 			return err
+		}
+		statusChanged := next.Status != cur.Status
+		if statusChanged {
+			next.StatusReason = reason
 		}
 		changes := diff(&cur.Issue, &next)
 		if len(changes) == 0 {
 			return nil
+		}
+		if statusChanged {
+			// Always listed with the status, even when the text repeats.
+			changes["status_reason"] = model.Change{From: rawJSON(cur.StatusReason), To: rawJSON(next.StatusReason)}
 		}
 		if cur.projectStatus != model.ProjectActive {
 			return ErrProjectNotActive
@@ -342,7 +366,7 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		next.Version = cur.Version + 1
 		next.UpdatedAt = now
 		next.UpdatedBy = tr.Actor
-		if next.Status != cur.Status {
+		if statusChanged {
 			next.StatusChangedAt = now
 			next.StatusChangedBy = tr.Actor
 			switch {
@@ -353,9 +377,9 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `update issue set title = ?, body = ?, type = ?, status = ?, priority = ?, parent_id = ?, recheck_condition = ?,
-			version = ?, updated_at = ?, updated_by = ?, closed_at = ?, status_changed_at = ?, status_changed_by = ? where id = ?`,
+			status_reason = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?, status_changed_at = ?, status_changed_by = ? where id = ?`,
 			next.Title, next.Body, string(next.Type), string(next.Status), string(next.Priority), parentID, next.RecheckCondition,
-			next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt), next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
+			next.StatusReason, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt), next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
 			return err
 		}
 		for _, table := range []string{"issue_label", "issue_dependency", "issue_ref"} {
@@ -384,6 +408,12 @@ func timePtr(t *model.Time) any {
 		return nil
 	}
 	return t.String()
+}
+
+// rawJSON encodes a value for an activity change.
+func rawJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 // fieldValues lists the user-facing fields recorded in activity changes.
@@ -614,19 +644,13 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 
 // scanIssueWithSnippet scans an issue row followed by a snippet column.
 func scanIssueWithSnippet(rows *sql.Rows, snippets *[]string) (*issueRow, error) {
-	var r issueRow
-	var parentKey, recheck, closedAt sql.NullString
-	var created, updated, statusChanged, snippet string
-	if err := rows.Scan(&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &parentKey, &recheck, &r.Version, &created, &updated, &closedAt,
-		&statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy, &snippet); err != nil {
-		return nil, err
-	}
-	if err := r.finishScan(parentKey, recheck, closedAt, created, updated, statusChanged); err != nil {
+	var snippet string
+	r, err := scanIssue(rows, &snippet)
+	if err != nil {
 		return nil, err
 	}
 	*snippets = append(*snippets, snippet)
-	return &r, nil
+	return r, nil
 }
 
 func enumStrings[T ~string](vals []T) []string {

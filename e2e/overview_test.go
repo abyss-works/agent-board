@@ -31,7 +31,7 @@ func TestOverview(t *testing.T) {
 	tick()
 	i10 := newIssue(t, p.Key, "I10 backlog P0 bug after I2", map[string]any{"priority": "P0", "type": "bug", "depends_on": strs(i2.Key)}) // blocked
 	tick()
-	decodeAs[issue](t, owner.do(t, "DELETE", "/v1/issues/"+i8.Key, nil), 200)
+	deleteIssue(t, owner, i8.Key)
 	tick()
 	comment := decodeAs[activity](t, as("claude").do(t, "POST", "/v1/issues/"+i3.Key+"/comments", map[string]any{"body": "진행 중"}), 201)
 	// Another project's issue depending on ours must not leak in.

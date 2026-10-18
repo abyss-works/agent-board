@@ -21,7 +21,7 @@ func TestBoard(t *testing.T) {
 	b6 := newIssue(t, p.Key, "done", map[string]any{"status": "done"})
 	b7 := newIssue(t, p.Key, "cancelled", map[string]any{"status": "cancelled"})
 	b8 := newIssue(t, p.Key, "deleted", nil)
-	decodeAs[issue](t, owner.do(t, "DELETE", "/v1/issues/"+b8.Key, nil), 200)
+	deleteIssue(t, owner, b8.Key)
 	other := newIssue(t, q.Key, "other backlog", nil)
 
 	columns := func(b board) map[string]boardColumn {

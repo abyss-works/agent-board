@@ -155,6 +155,92 @@ func TestValidateComment(t *testing.T) {
 	}
 }
 
+func TestResolveStatusReason(t *testing.T) {
+	text := func(s string) *string { return &s }
+	cases := []struct {
+		name     string
+		from, to IssueStatus
+		reason   *string
+		want     *string // resolved reason when the request is valid
+		field    string  // field of the single violation, empty when valid
+	}{
+		{"default message names both statuses", StatusTodo, StatusDoing, nil, text("할 일 → 진행"), ""},
+		{"default message for every ordinary target", StatusBacklog, StatusReview, nil, text("백로그 → 검토"), ""},
+		{"default message when leaving a closed status", StatusDeleted, StatusDone, nil, text("삭제 → 완료"), ""},
+		{"given reason replaces the default", StatusTodo, StatusDoing, text("선행 이슈 완료"), text("선행 이슈 완료"), ""},
+		{"cancelling needs a reason", StatusDoing, StatusCancelled, nil, nil, "status_reason"},
+		{"deleting needs a reason", StatusBacklog, StatusDeleted, nil, nil, "status_reason"},
+		{"cancelling with a reason", StatusDoing, StatusCancelled, text("AGB-20과 중복"), text("AGB-20과 중복"), ""},
+		{"deleting with a reason", StatusDone, StatusDeleted, text("잘못 만든 이슈"), text("잘못 만든 이슈"), ""},
+		{"one rune", StatusTodo, StatusDoing, text("가"), text("가"), ""},
+		{"500 runes of 3 bytes each", StatusTodo, StatusDoing, text(strings.Repeat("가", 500)), text(strings.Repeat("가", 500)), ""},
+		{"501 runes", StatusTodo, StatusDoing, text(strings.Repeat("가", 501)), nil, "status_reason"},
+		{"empty reason", StatusTodo, StatusDoing, text(""), nil, "status_reason"},
+		{"empty reason on cancel", StatusTodo, StatusCancelled, text(""), nil, "status_reason"},
+		{"reason without a status change", StatusTodo, StatusTodo, text("이유"), nil, "status_reason"},
+		{"empty reason without a status change", StatusTodo, StatusTodo, text(""), nil, "status_reason"},
+		{"no change and no reason leaves it alone", StatusTodo, StatusTodo, nil, nil, ""},
+		{"no change to a reason-required status is fine", StatusCancelled, StatusCancelled, nil, nil, ""},
+		{"unknown target is left to the status check", StatusTodo, IssueStatus("gone"), nil, nil, ""},
+	}
+	for _, c := range cases {
+		got, err := ResolveStatusReason(c.from, c.to, c.reason)
+		if c.field == "" {
+			if err != nil {
+				t.Errorf("%s: unexpected error %v", c.name, err)
+			} else if (got == nil) != (c.want == nil) || (got != nil && *got != *c.want) {
+				t.Errorf("%s: reason = %v, want %v", c.name, got, c.want)
+			}
+			continue
+		}
+		var ve *ValidationError
+		if !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != c.field {
+			t.Errorf("%s: err = %v, want one %s violation", c.name, err, c.field)
+		}
+		if got != nil {
+			t.Errorf("%s: reason = %q alongside an error", c.name, *got)
+		}
+	}
+}
+
+func TestMergeValidation(t *testing.T) {
+	a := &ValidationError{Fields: []FieldError{{Field: "title", Message: "a"}}}
+	b := &ValidationError{Fields: []FieldError{{Field: "body", Message: "b"}, {Field: "status_reason", Message: "c"}}}
+	if err := MergeValidation(nil, nil); err != nil {
+		t.Errorf("nothing to merge = %v, want nil", err)
+	}
+	var ve *ValidationError
+	if err := MergeValidation(nil, a); !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0] != a.Fields[0] {
+		t.Errorf("one error = %v, want its violation back", err)
+	}
+	err := MergeValidation(a, nil, b)
+	if !errors.As(err, &ve) || len(ve.Fields) != 3 || ve.Fields[0].Field != "title" || ve.Fields[1].Field != "body" || ve.Fields[2].Field != "status_reason" {
+		t.Errorf("merged = %v", err)
+	}
+	other := errors.New("boom")
+	if err := MergeValidation(a, other); err != other {
+		t.Errorf("a non-validation error must win: %v", err)
+	}
+}
+
+func TestIssueStatusLabel(t *testing.T) {
+	want := map[IssueStatus]string{
+		StatusBacklog: "백로그", StatusTodo: "할 일", StatusDoing: "진행", StatusReview: "검토",
+		StatusDone: "완료", StatusCancelled: "취소", StatusDeleted: "삭제",
+	}
+	for _, s := range IssueStatuses {
+		if s.Label() != want[s] {
+			t.Errorf("%s label = %q, want %q", s, s.Label(), want[s])
+		}
+		if got := s == StatusCancelled || s == StatusDeleted; s.ReasonRequired() != got {
+			t.Errorf("%s.ReasonRequired() = %v", s, s.ReasonRequired())
+		}
+	}
+	if IssueStatus("x").Label() != "x" {
+		t.Error("unknown status keeps its identifier")
+	}
+}
+
 func TestParseRef(t *testing.T) {
 	kind, val, ok := ParseRef("repo:wsk0715/agent-board")
 	if !ok || kind != "repo" || val != "wsk0715/agent-board" {

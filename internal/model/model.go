@@ -51,6 +51,25 @@ func (s IssueStatus) Closed() bool {
 	return s == StatusDone || s == StatusCancelled || s == StatusDeleted
 }
 
+// ReasonRequired reports whether changing an issue to this status must come
+// with a status reason.
+func (s IssueStatus) ReasonRequired() bool {
+	return s == StatusCancelled || s == StatusDeleted
+}
+
+var statusLabels = map[IssueStatus]string{
+	StatusBacklog: "백로그", StatusTodo: "할 일", StatusDoing: "진행", StatusReview: "검토",
+	StatusDone: "완료", StatusCancelled: "취소", StatusDeleted: "삭제",
+}
+
+// Label is the Korean name of the status.
+func (s IssueStatus) Label() string {
+	if l, ok := statusLabels[s]; ok {
+		return l
+	}
+	return string(s)
+}
+
 // ProjectStatus is the lifecycle state of a project. Deletion is a status.
 type ProjectStatus string
 

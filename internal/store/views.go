@@ -164,19 +164,12 @@ func (s *Store) openDependencies(ctx context.Context, rows []*issueRow) (map[int
 
 // scanIssueExtraInt scans an issue row followed by one integer column.
 func scanIssueExtraInt(rows *sql.Rows) (*issueRow, int, error) {
-	var r issueRow
-	var parentKey, recheck, closedAt sql.NullString
-	var created, updated, statusChanged string
 	var extra int
-	if err := rows.Scan(&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &parentKey, &recheck, &r.Version, &created, &updated, &closedAt,
-		&statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy, &extra); err != nil {
+	r, err := scanIssue(rows, &extra)
+	if err != nil {
 		return nil, 0, err
 	}
-	if err := r.finishScan(parentKey, recheck, closedAt, created, updated, statusChanged); err != nil {
-		return nil, 0, err
-	}
-	return &r, extra, nil
+	return r, extra, nil
 }
 
 // LabelCount is a label and the number of open issues carrying it.
