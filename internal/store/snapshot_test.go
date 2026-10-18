@@ -64,3 +64,40 @@ func TestSnapshotAndFingerprint(t *testing.T) {
 	}
 	_ = model.StatusTodo
 }
+
+// A snapshot is a complete copy of the schema version 3 data: topics, the
+// topic of an issue, its status reason and its acknowledgement.
+func TestSnapshotCarriesTopicsReasonsAndAcknowledgements(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	flow := mustTopic(t, s, "AGB", "이슈 흐름", nil)
+	triage := mustTopic(t, s, "AGB", "트리아지", &flow.ID)
+	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "agent work", Topic: &triage.ID})
+	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "user work"})
+	cancelled := model.StatusCancelled
+	if _, _, err := s.UpdateIssue(ctx, trOwner, "AGB-2", IssuePatch{Status: &cancelled, StatusReason: str("정리")}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "snap.db")
+	if err := s.Snapshot(ctx, dst); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dst))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, topics, topicIssues, acked, reasons int
+	if err := db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`select (select count(*) from topic), (select count(*) from issue where topic_id is not null),
+		(select count(*) from issue where acknowledged_at is not null), (select count(*) from issue where status_reason is not null)`).
+		Scan(&topics, &topicIssues, &acked, &reasons); err != nil {
+		t.Fatal(err)
+	}
+	if version != SchemaVersion || topics != 2 || topicIssues != 1 || acked != 1 || reasons != 1 {
+		t.Errorf("snapshot: version %d, topics %d, issues with a topic %d, acknowledged %d, with a reason %d", version, topics, topicIssues, acked, reasons)
+	}
+}
