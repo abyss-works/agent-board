@@ -117,6 +117,19 @@ describe('확인 표시의 변경', () => {
   })
 })
 
+describe('주제 변경', () => {
+  const change = activity({ changes: { topic: { from: null, to: 7 } } })
+  it('주제 ID를 이름으로 바꾸는 조회가 있으면 경로를 보인다', () => {
+    const topicName = (id: number) => (id === 7 ? '이슈 흐름/트리아지' : undefined)
+    expect(describeChanges(change, { topicName })).toEqual([{ field: 'topic', label: '주제', from: '없음', to: '이슈 흐름/트리아지' }])
+    expect(summarizeActivity(change, { topicName })).toBe('주제: 없음 → 이슈 흐름/트리아지')
+  })
+  it('이름을 모르면 ID를 보인다', () => {
+    expect(describeChanges(change)[0].to).toBe('주제 #7')
+    expect(describeChanges(change, { topicName: () => undefined })[0].to).toBe('주제 #7')
+  })
+})
+
 describe('bodyExcerpt', () => {
   it('20자 이하 본문은 그대로 두고 말줄임표를 붙이지 않는다', () => {
     expect(bodyExcerpt('랭킹 UI 위치를 옮겼다.')).toBe('랭킹 UI 위치를 옮겼다.')

@@ -66,6 +66,11 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
           </div>
         ) : null}
       </div>
+      {!compact && issue.topic_path ? (
+        <span className="hidden max-w-44 shrink-0 truncate text-[0.625rem] text-muted-foreground lg:inline" title={`주제 ${issue.topic_path}`}>
+          {issue.topic_path}
+        </span>
+      ) : null}
       {labels.length > 0 ? (
         <div className="hidden shrink-0 items-center gap-1 md:flex">
           {labels.map((l) => (

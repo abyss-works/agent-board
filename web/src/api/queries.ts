@@ -16,6 +16,10 @@ import type {
   ProjectCreate,
   ProjectPatch,
   QueueItem,
+  Topic,
+  TopicCreate,
+  TopicPatch,
+  TopicStatus,
 } from './types'
 
 /** 모든 질의 키는 인스턴스 ID로 시작한다. 인스턴스를 바꾸면 캐시가 섞이지 않는다. */
@@ -113,6 +117,17 @@ export function useLabels(projectKey: string | null) {
   return useQuery({
     queryKey: [inst, 'labels', projectKey],
     queryFn: ({ signal }) => api.get<{ items: LabelCount[] }>('/labels', { project: projectKey }, signal),
+  })
+}
+
+/** 프로젝트의 주제 목록. 대주제 이름순, 그 아래 주제 이름순이다. 프로젝트를 고르지 않으면 부르지 않는다. */
+export function useTopics(projectKey: string | null, status: TopicStatus | 'all' = 'active') {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: [inst, 'topics', projectKey, status],
+    queryFn: ({ signal }) => api.get<{ items: Topic[] }>(`/projects/${projectKey}/topics`, { status: status === 'active' ? undefined : status }, signal),
+    enabled: projectKey !== null,
   })
 }
 
@@ -222,6 +237,33 @@ export function useCreateComment() {
   const invalidate = useInvalidateInstance()
   return useMutation({
     mutationFn: ({ key, body }: { key: string; body: string }) => api.post<Activity>(`/issues/${key}/comments`, { body }),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useCreateTopic() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ project, body }: { project: string; body: TopicCreate }) => api.post<Topic>(`/projects/${project}/topics`, body),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function usePatchTopic() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: TopicPatch }) => api.patch<Topic>(`/topics/${id}`, patch),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useDeleteTopic() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<Topic>(`/topics/${id}`),
     onSuccess: () => invalidate(),
   })
 }

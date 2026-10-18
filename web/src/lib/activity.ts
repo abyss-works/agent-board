@@ -13,10 +13,16 @@ export interface ChangeLine {
 
 const MAX = 60
 
+/** 기록의 값을 사람이 읽는 말로 바꾸는 데 쓰는 조회. 주제 ID는 이름을 아는 쪽에서 알려 준다. */
+export interface DescribeOptions {
+  topicName?: (id: number) => string | undefined
+}
+
 /** 활동 기록의 값 하나를 한 줄 문자열로 만든다. */
-export function formatValue(value: unknown, field?: string): string {
+export function formatValue(value: unknown, field?: string, opts?: DescribeOptions): string {
   if (value === null || value === undefined) return '없음'
   if (Array.isArray(value)) return value.length ? value.map((v) => formatValue(v)).join(', ') : '없음'
+  if (field === 'topic' && typeof value === 'number') return opts?.topicName?.(value) ?? `주제 #${value}`
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   if (field === 'acknowledged') return value === true ? '확인됨' : '미확인'
   if (field === 'status') return statusLabel(text)
@@ -25,7 +31,7 @@ export function formatValue(value: unknown, field?: string): string {
 }
 
 /** 기록 한 건의 변경 내용을 줄 목록으로 만든다. created는 제목만, commented는 빈 목록이다. */
-export function describeChanges(a: Activity): ChangeLine[] {
+export function describeChanges(a: Activity, opts?: DescribeOptions): ChangeLine[] {
   if (a.kind === 'commented' || !a.changes) return []
   if (a.kind === 'created') {
     return [{ field: 'title', label: fieldLabel('title'), from: null, to: formatValue(a.changes.title?.to) }]
@@ -40,8 +46,8 @@ export function describeChanges(a: Activity): ChangeLine[] {
       const line: ChangeLine = {
         field,
         label: fieldLabel(field),
-        from: formatValue(change.from, field),
-        to: formatValue(change.to, field),
+        from: formatValue(change.from, field, opts),
+        to: formatValue(change.to, field, opts),
       }
       if (field === 'status' && reason) line.reason = reason
       return line
@@ -61,9 +67,9 @@ export function bodyExcerpt(body: string): string {
 }
 
 /** 피드 한 줄에 들어갈 요약 문구. 댓글은 요약(summary)이 있으면 요약, 없으면 본문 앞부분이다. */
-export function summarizeActivity(a: Activity): string {
+export function summarizeActivity(a: Activity, opts?: DescribeOptions): string {
   if (a.kind === 'commented') return a.summary || bodyExcerpt(a.body ?? '')
-  const lines = describeChanges(a)
+  const lines = describeChanges(a, opts)
   if (a.kind === 'created') return lines[0]?.to ?? ''
   return lines
     .map((l) => {

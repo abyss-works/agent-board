@@ -2,7 +2,7 @@ import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'luci
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue, useSetAcknowledged } from '@/api/queries'
+import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
 import type { Issue, IssuePatch, IssueStatus, IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -13,6 +13,7 @@ import { ActorChip, LabelChip } from '@/components/issue/meta'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from '@/components/issue/options'
 import { PropertySelect } from '@/components/issue/property-select'
 import { ReasonDialog } from '@/components/issue/reason-dialog'
+import { TopicSelect } from '@/components/issue/topic-select'
 import { Markdown } from '@/components/markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,7 @@ import { ISSUES_PATH, openedFromScreen } from '@/lib/overlay'
 import { isEditableTarget } from '@/lib/shortcuts'
 import { reasonRequired, statusChangePatch } from '@/lib/status'
 import { formatKst, formatRelative } from '@/lib/time'
+import { topicNameMap } from '@/lib/topics'
 import { toastError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -58,6 +60,10 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const acknowledge = useSetAcknowledged()
   const comment = useCreateComment()
   const activity = useIssueActivity(issue.key)
+  // 고를 수 있는 주제는 활성 주제, 활동 기록의 주제 이름은 삭제된 주제까지 포함한 전체에서 찾는다.
+  const topics = useTopics(issue.project)
+  const allTopics = useTopics(issue.project, 'all')
+  const topicNames = topicNameMap(allTopics.data?.items ?? [])
   const [editingBody, setEditingBody] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -217,7 +223,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
                 {items && items.length > 0 ? (
                   <ul>
                     {items.map((a) => (
-                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} />
+                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} topicName={(id) => topicNames.get(id)} />
                     ))}
                   </ul>
                 ) : null}
@@ -264,6 +270,15 @@ function IssueDetail({ issue }: { issue: Issue }) {
             <InlineInput value={issue.recheck_condition ?? ''} onCommit={(v) => v && save({ recheck_condition: v }, '재검토 조건')} placeholder="필수" />
           </Property>
         ) : null}
+        <Property label="주제">
+          <TopicSelect
+            topics={topics.data?.items ?? []}
+            value={issue.topic}
+            fallbackLabel={issue.topic_path}
+            onChange={(id) => id !== issue.topic && save({ topic: id }, '주제')}
+            className="-ml-1.5"
+          />
+        </Property>
         <Property label="라벨">
           <InlineInput
             value={issue.labels.join(' ')}

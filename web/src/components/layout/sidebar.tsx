@@ -1,4 +1,4 @@
-import { ActivityIcon, ChevronsUpDownIcon, FolderIcon, KanbanIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
+import { ActivityIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
 import { useProjects } from '@/api/queries'
@@ -8,6 +8,7 @@ import { ACTOR, POLL_MS, useAppState } from '@/app/state'
 import { IssueCreateDialog } from '@/components/issue/issue-create-dialog'
 import { ProjectDeleteDialog } from '@/components/project/project-delete-dialog'
 import { ProjectDialog } from '@/components/project/project-dialog'
+import { TopicManageDialog } from '@/components/project/topic-manage-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -74,10 +75,12 @@ function InstanceSwitcher() {
 function ProjectSwitcher({
   onCreate,
   onEdit,
+  onTopics,
   onDelete,
 }: {
   onCreate: () => void
   onEdit: (p: Project) => void
+  onTopics: (p: Project) => void
   onDelete: (p: Project) => void
 }) {
   const { project, selectProject } = useAppState()
@@ -135,6 +138,10 @@ function ProjectSwitcher({
               <SettingsIcon />
               {current.key} 설정
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onTopics(current)}>
+              <FolderTreeIcon />
+              {current.key} 주제 관리
+            </DropdownMenuItem>
             {current.status !== 'deleted' ? (
               <DropdownMenuItem variant="destructive" onSelect={() => onDelete(current)}>
                 <Trash2Icon />
@@ -175,6 +182,7 @@ export function Sidebar() {
   const [newIssue, setNewIssue] = useState(false)
   const [createProject, setCreateProject] = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
+  const [topicProject, setTopicProject] = useState<Project | null>(null)
   const [deleteProject, setDeleteProject] = useState<Project | null>(null)
 
   return (
@@ -183,7 +191,7 @@ export function Sidebar() {
         <InstanceSwitcher />
       </div>
       <div className="space-y-2 px-3">
-        <ProjectSwitcher onCreate={() => setCreateProject(true)} onEdit={setEditProject} onDelete={setDeleteProject} />
+        <ProjectSwitcher onCreate={() => setCreateProject(true)} onEdit={setEditProject} onTopics={setTopicProject} onDelete={setDeleteProject} />
         <Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => setNewIssue(true)}>
           <PlusIcon />새 이슈
         </Button>
@@ -226,6 +234,7 @@ export function Sidebar() {
       <IssueCreateDialog open={newIssue} onOpenChange={setNewIssue} />
       <ProjectDialog open={createProject} onOpenChange={setCreateProject} onCreated={(p) => selectProject(p.key)} />
       <ProjectDialog open={editProject !== null} onOpenChange={(o) => !o && setEditProject(null)} project={editProject ?? undefined} />
+      <TopicManageDialog open={topicProject !== null} onOpenChange={(o) => !o && setTopicProject(null)} project={topicProject} />
       <ProjectDeleteDialog
         open={deleteProject !== null}
         onOpenChange={(o) => !o && setDeleteProject(null)}

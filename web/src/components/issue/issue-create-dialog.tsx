@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useCreateIssue, useProjects } from '@/api/queries'
+import { useCreateIssue, useProjects, useTopics } from '@/api/queries'
 import type { IssueCreate, IssueStatus, IssueType, Priority, Project } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { FieldError } from '@/components/feedback'
@@ -15,6 +15,7 @@ import { parseLabels } from '@/lib/parse'
 import { toastError } from '@/lib/toast'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from './options'
 import { PropertySelect, type SelectOption } from './property-select'
+import { TopicSelect } from './topic-select'
 
 interface Props {
   open: boolean
@@ -36,6 +37,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
   const [priority, setPriority] = useState<Priority>('P2')
   const [labels, setLabels] = useState('')
   const [recheck, setRecheck] = useState('')
+  const [topic, setTopic] = useState<number | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const activeProjects = projects.filter((p) => p.status === 'active')
@@ -45,6 +47,10 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
     project && activeProjects.some((p) => p.key === project)
       ? project
       : (activeProjects.find((p) => p.key === selectedProject)?.key ?? activeProjects[0]?.key ?? '')
+  // 주제는 고른 프로젝트의 활성 주제만 붙일 수 있다. 프로젝트를 바꾸면 고른 주제를 비우고, 목록에 없는 값은 보내지 않는다.
+  const topics = useTopics(effectiveProject || null)
+  const topicItems = topics.data?.items ?? []
+  const validTopic = topic !== null && topicItems.some((t) => t.id === topic) ? topic : null
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -68,6 +74,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
       ...(bodyText ? { body: bodyText } : {}),
       ...(labelList.length ? { labels: labelList } : {}),
       ...(type === 'observation' ? { recheck_condition: recheck.trim() } : {}),
+      ...(validTopic !== null ? { topic: validTopic } : {}),
     }
     create.mutate(payload, {
       onSuccess: (issue) => {
@@ -103,7 +110,10 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
           <PropertySelect
             value={effectiveProject}
             options={projectOptions}
-            onChange={setProject}
+            onChange={(v) => {
+              setProject(v)
+              setTopic(null)
+            }}
             title="프로젝트"
             className="border-border font-mono text-xs"
             disabled={projectOptions.length === 0}
@@ -111,8 +121,9 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
           <PropertySelect value={type} options={TYPE_OPTIONS} onChange={setType} title="종류" className="border-border" />
           <PropertySelect value={status} options={STATUS_OPTIONS} onChange={setStatus} title="상태" className="border-border" />
           <PropertySelect value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} title="우선순위" className="border-border" />
+          <TopicSelect topics={topicItems} value={validTopic} emptyLabel="주제 없음" onChange={setTopic} className="border-border" disabled={!effectiveProject} />
         </div>
-        <FieldError message={errors.project ?? errors.type ?? errors.status ?? errors.priority} />
+        <FieldError message={errors.project ?? errors.type ?? errors.status ?? errors.priority ?? errors.topic} />
         {projectOptions.length === 0 && projectsLoaded ? (
           <p className="text-[0.6875rem] text-destructive">활성 프로젝트가 없습니다. 먼저 프로젝트를 만드세요.</p>
         ) : null}

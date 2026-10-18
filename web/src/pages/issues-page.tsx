@@ -1,9 +1,9 @@
-import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
+import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, FolderTreeIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { IssueListFilters } from '@/api/client'
-import { useAcknowledgeMany, useIssues, useLabels } from '@/api/queries'
+import { useAcknowledgeMany, useIssues, useLabels, useTopics } from '@/api/queries'
 import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type IssueStatus, type IssueType, type Priority } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -27,6 +27,7 @@ import { useFlash } from '@/hooks/use-flash'
 import { unacknowledgedKeys } from '@/lib/acknowledge'
 import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
 import { toastError } from '@/lib/toast'
+import { flattenTopics, groupTopics } from '@/lib/topics'
 import { cn } from '@/lib/utils'
 
 const LIMIT = 200
@@ -112,12 +113,15 @@ export function IssuesPage() {
   const { project } = useAppState()
   const [params, setParams] = useSearchParams()
   const labels = useLabels(project)
+  const topics = useTopics(project)
+  const topicOptions = flattenTopics(groupTopics(topics.data?.items ?? []))
   const [create, setCreate] = useState(false)
 
   const status = csv(params.get('status'))
   const type = csv(params.get('type'))
   const priority = csv(params.get('priority'))
   const label = params.getAll('label')
+  const topic = csv(params.get('topic'))
   const acknowledgedParam = params.get('acknowledged')
   const acknowledged = acknowledgedParam === 'false' || acknowledgedParam === 'true' ? acknowledgedParam : undefined
   const q = params.get('q') ?? ''
@@ -145,7 +149,7 @@ export function IssuesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const toggle = (name: 'status' | 'type' | 'priority' | 'label', current: readonly string[]) => (v: string, on: boolean) => {
+  const toggle = (name: 'status' | 'type' | 'priority' | 'label' | 'topic', current: readonly string[]) => (v: string, on: boolean) => {
     const set = new Set(current.filter((x) => x !== 'all' && x !== 'closed'))
     if (on) set.add(v)
     else set.delete(v)
@@ -154,13 +158,13 @@ export function IssuesPage() {
   }
 
   const filters = useMemo<IssueListFilters>(
-    () => ({ project, status, type, priority, label, acknowledged, q, sort, limit: LIMIT }),
+    () => ({ project, status, type, priority, label, topic, acknowledged, q, sort, limit: LIMIT }),
     // 배열은 URL 문자열에서 매번 새로 만들어지므로 문자열로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, paramsKey],
   )
   const filterKey = `${project ?? '*'}|${paramsKey}`
-  const hasFilter = status.length + type.length + priority.length + label.length > 0 || q !== '' || acknowledged !== undefined
+  const hasFilter = status.length + type.length + priority.length + label.length + topic.length > 0 || q !== '' || acknowledged !== undefined
   const statusPreset = status.length === 1 && (status[0] === 'all' || status[0] === 'closed') ? status[0] : status.length === 0 ? '' : null
   const list = useIssues(filters).data
   const total = list?.total
@@ -229,9 +233,6 @@ export function IssuesPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant={acknowledged === 'false' ? 'secondary' : 'ghost'} size="xs" className={cn(acknowledged === 'false' && 'text-sky-300')} onClick={() => update({ acknowledged: acknowledged === 'false' ? null : 'false' })}>
-          미확인
-        </Button>
         <FilterMenu label="종류" icon={<TypeIcon type="feature" className="size-3.5 text-muted-foreground" />} values={ISSUE_TYPES} selected={type} onToggle={toggle('type', type)} render={(t: IssueType) => (<><TypeIcon type={t} />{TYPE_LABEL[t]}</>)} />
         <FilterMenu label="우선순위" icon={<PriorityIcon priority="P2" className="size-3.5 text-muted-foreground" />} values={PRIORITIES} selected={priority} onToggle={toggle('priority', priority)} render={(p: Priority) => (<><PriorityIcon priority={p} />{PRIORITY_LABEL[p]}</>)} />
         <FilterMenu
@@ -247,6 +248,24 @@ export function IssuesPage() {
             </>
           )}
         />
+
+        {project ? (
+          <FilterMenu
+            label="주제"
+            icon={<FolderTreeIcon className="size-3.5 text-muted-foreground" />}
+            values={['none', ...topicOptions.map((f) => String(f.topic.id))]}
+            selected={topic}
+            onToggle={toggle('topic', topic)}
+            render={(id: string) => {
+              if (id === 'none') return <span className="text-muted-foreground">주제 없음</span>
+              const f = topicOptions.find((o) => String(o.topic.id) === id)
+              return <span className={cn(f?.depth === 1 ? 'pl-3' : 'font-medium')}>{f?.topic.name ?? `#${id}`}</span>
+            }}
+          />
+        ) : null}
+        <Button variant={acknowledged === 'false' ? 'secondary' : 'ghost'} size="xs" className={cn(acknowledged === 'false' && 'text-sky-300')} onClick={() => update({ acknowledged: acknowledged === 'false' ? null : 'false' })}>
+          미확인
+        </Button>
 
         <div className="ml-auto flex items-center gap-1">
           {hasFilter ? (
