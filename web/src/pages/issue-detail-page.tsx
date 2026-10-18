@@ -2,7 +2,7 @@ import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'luci
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
+import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilestones, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
 import type { Issue, IssuePatch, IssueStatus, IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -10,6 +10,7 @@ import { InlineInput, MarkdownArea } from '@/components/issue/inline-edit'
 import { IssueLink } from '@/components/issue/issue-link'
 import { parseIssueKeys, parseLabels, parseRefs } from '@/lib/parse'
 import { ActorChip, LabelChip } from '@/components/issue/meta'
+import { MilestoneSelect } from '@/components/issue/milestone-select'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from '@/components/issue/options'
 import { PropertySelect } from '@/components/issue/property-select'
 import { ReasonDialog } from '@/components/issue/reason-dialog'
@@ -64,6 +65,8 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const topics = useTopics(issue.project)
   const allTopics = useTopics(issue.project, 'all')
   const topicNames = topicNameMap(allTopics.data?.items ?? [])
+  // 고를 수 있는 마일스톤은 열린 것만이다.
+  const milestones = useMilestones(issue.project)
   const [editingBody, setEditingBody] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -276,6 +279,15 @@ function IssueDetail({ issue }: { issue: Issue }) {
             value={issue.topic}
             fallbackLabel={issue.topic_path}
             onChange={(id) => id !== issue.topic && save({ topic: id }, '주제')}
+            className="-ml-1.5"
+          />
+        </Property>
+        <Property label="마일스톤">
+          <MilestoneSelect
+            milestones={milestones.data?.items ?? []}
+            value={issue.milestone}
+            fallbackLabel={issue.milestone_name}
+            onChange={(id) => id !== issue.milestone && save({ milestone: id }, '마일스톤')}
             className="-ml-1.5"
           />
         </Property>
