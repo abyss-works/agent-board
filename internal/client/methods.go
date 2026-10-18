@@ -224,10 +224,13 @@ func (c *Client) PatchIssue(ctx context.Context, key string, patch map[string]an
 	return c.Request(ctx, http.MethodPatch, "/v1/issues/"+url.PathEscape(key), patch, ifMatch(version))
 }
 
-// DeleteIssue soft deletes an issue. A non-empty version is sent as
+// DeleteIssue soft deletes an issue. The reason is sent as the reason query
+// parameter, which the server requires. A non-empty version is sent as
 // If-Match.
-func (c *Client) DeleteIssue(ctx context.Context, key, version string) (*Response, error) {
-	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key), nil, ifMatch(version))
+func (c *Client) DeleteIssue(ctx context.Context, key, reason, version string) (*Response, error) {
+	v := url.Values{}
+	set(v, "reason", reason)
+	return c.Request(ctx, http.MethodDelete, withQuery("/v1/issues/"+url.PathEscape(key), v), nil, ifMatch(version))
 }
 
 // AddComment adds a comment to an issue. A non-empty summary is sent as the

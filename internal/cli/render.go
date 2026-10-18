@@ -82,6 +82,7 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"project", i.Project},
 		{"type", string(i.Type)},
 		{"status", string(i.Status)},
+		{"status_reason", deref(i.StatusReason, "-")},
 		{"priority", string(i.Priority)},
 		{"labels", joinOr(i.Labels, "-")},
 		{"parent", deref(i.Parent, "-")},

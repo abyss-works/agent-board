@@ -266,6 +266,9 @@ var issueUpdateCmd = &command{
   --type <T>              observation 으로 바꾸면 --recheck 를 함께 줍니다
   --priority <P>
   --status <S>            backlog, todo, doing, review, done, cancelled, deleted
+  --reason <사유>         상태 변경의 사유. 1~500자. cancelled, deleted 로 바꿀 때는 필수이고,
+                          다른 상태로 바꿀 때 생략하면 서버가 "이전 상태 → 새 상태"를 적습니다.
+                          상태를 바꾸지 않는 요청에는 쓸 수 없습니다
 ` + bodyUsage + `  --label <L>             라벨 전체를 이 값들로 바꿈. 반복 가능
   --add-label <L>, --remove-label <L>
   --parent <KEY>          상위 이슈 설정
@@ -280,12 +283,13 @@ var issueUpdateCmd = &command{
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue update", g)
-		var title, typ, priority, status, body, bodyFile, parent, recheck, ifMatch string
+		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, ifMatch string
 		var noParent, noRecheck bool
 		fs.StringVar(&title, "title", "", "")
 		fs.StringVar(&typ, "type", "", "")
 		fs.StringVar(&priority, "priority", "", "")
 		fs.StringVar(&status, "status", "", "")
+		fs.StringVar(&reason, "reason", "", "")
 		fs.StringVar(&body, "body", "", "")
 		fs.StringVar(&bodyFile, "body-file", "", "")
 		fs.StringVar(&parent, "parent", "", "")
@@ -311,6 +315,9 @@ var issueUpdateCmd = &command{
 			if isSet(fs, name) {
 				patch[name] = *v
 			}
+		}
+		if isSet(fs, "reason") {
+			patch["status_reason"] = reason
 		}
 		text, present, err := a.readBody(fs, body, bodyFile)
 		if err != nil {
@@ -385,13 +392,18 @@ var issueUpdateCmd = &command{
 
 var issueDeleteCmd = &command{
 	name: "delete", summary: "이슈 소프트 삭제",
-	usage: `사용법: agb issue delete <KEY> [--if-match <버전>]
+	usage: `사용법: agb issue delete <KEY> --reason <사유> [--if-match <버전>]
 
 상태를 deleted 로 바꿉니다. 되살리려면 agb issue update <KEY> --status <상태>.
+
+옵션:
+  --reason <사유>         삭제 사유. 1~500자 (필수)
+  --if-match <버전>       이 버전일 때만 삭제. 숫자만 주어도 됩니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue delete", g)
-		var ifMatch string
+		var reason, ifMatch string
+		fs.StringVar(&reason, "reason", "", "")
 		fs.StringVar(&ifMatch, "if-match", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -401,11 +413,14 @@ var issueDeleteCmd = &command{
 		if err != nil {
 			return err
 		}
+		if !isSet(fs, "reason") {
+			return usageErrorf("--reason 이 필요합니다.")
+		}
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
 		}
-		resp, err := c.DeleteIssue(ctx, key, quoteETag(ifMatch))
+		resp, err := c.DeleteIssue(ctx, key, reason, quoteETag(ifMatch))
 		if err != nil {
 			return err
 		}

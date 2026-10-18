@@ -148,7 +148,8 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		{"patch issue", func() (*Response, error) {
 			return c.PatchIssue(ctx, "CLI-1", map[string]any{"status": "doing"}, `"2"`)
 		}, "PATCH", "/v1/issues/CLI-1", "", `{"status":"doing"}`},
-		{"delete issue", func() (*Response, error) { return c.DeleteIssue(ctx, "CLI-1", "") }, "DELETE", "/v1/issues/CLI-1", "", ""},
+		{"delete issue", func() (*Response, error) { return c.DeleteIssue(ctx, "CLI-1", "잘못 만든 이슈", "") }, "DELETE", "/v1/issues/CLI-1", url.Values{"reason": {"잘못 만든 이슈"}}.Encode(), ""},
+		{"delete issue without a reason", func() (*Response, error) { return c.DeleteIssue(ctx, "CLI-1", "", `"3"`) }, "DELETE", "/v1/issues/CLI-1", "", ""},
 		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
 		{"comment with summary", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "서버 랭킹 함수 구현") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글","summary":"서버 랭킹 함수 구현"}`},
 		{"issue activity", func() (*Response, error) { return c.IssueActivity(ctx, "CLI-1", Page{Limit: 10, Offset: 2}) }, "GET", "/v1/issues/CLI-1/activity", "limit=10&offset=2", ""},
@@ -179,6 +180,9 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 			}
 			if tc.name == "delete issue" && rec.header.Get("If-Match") != "" {
 				t.Errorf("If-Match sent without a version: %q", rec.header.Get("If-Match"))
+			}
+			if tc.name == "delete issue without a reason" && rec.header.Get("If-Match") != `"3"` {
+				t.Errorf("If-Match = %q", rec.header.Get("If-Match"))
 			}
 		})
 	}

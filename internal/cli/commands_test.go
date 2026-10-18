@@ -463,7 +463,7 @@ func TestIssueCommentDeleteActivity(t *testing.T) {
 	if code := h.run("issue", "comment", "CLI-1", "--summary", "요약만"); code != 2 {
 		t.Errorf("comment with summary but no body: code=%d", code)
 	}
-	if code := h.run("issue", "delete", "CLI-1", "--if-match", `"3"`); code != 0 || srv.last().Method != "DELETE" || srv.last().Header.Get("If-Match") != `"3"` {
+	if code := h.run("issue", "delete", "CLI-1", "--reason", "시험", "--if-match", `"3"`); code != 0 || srv.last().Method != "DELETE" || srv.last().Header.Get("If-Match") != `"3"` {
 		t.Errorf("delete: code=%d req=%+v", code, srv.last())
 	}
 	if code := h.run("issue", "activity", "CLI-1", "--limit", "10"); code != 0 || srv.last().Query.Get("limit") != "10" {
