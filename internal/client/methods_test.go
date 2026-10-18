@@ -98,13 +98,13 @@ func TestRequestErrorKeepsServerBody(t *testing.T) {
 func TestIssueFilterQuery(t *testing.T) {
 	f := IssueFilter{
 		Project: "AGB,WEB", Status: "todo,doing", Type: "bug", Priority: "P0,P1",
-		Labels: []string{"api", "cli"}, Parent: "none", CreatedBy: "claude",
+		Labels: []string{"api", "cli"}, Parent: "none", Milestone: "2,none", CreatedBy: "claude",
 		Query: "설계 api", Sort: "-updated_at", Limit: 20, Offset: 40,
 	}
 	q := f.Values()
 	want := url.Values{
 		"project": {"AGB,WEB"}, "status": {"todo,doing"}, "type": {"bug"}, "priority": {"P0,P1"},
-		"label": {"api", "cli"}, "parent": {"none"}, "created_by": {"claude"},
+		"label": {"api", "cli"}, "parent": {"none"}, "milestone": {"2,none"}, "created_by": {"claude"},
 		"q": {"설계 api"}, "sort": {"-updated_at"}, "limit": {"20"}, "offset": {"40"},
 	}
 	if q.Encode() != want.Encode() {
@@ -165,6 +165,20 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		{"list by topic", func() (*Response, error) {
 			return c.ListIssues(ctx, IssueFilter{Topic: "3,none"})
 		}, "GET", "/v1/issues", "topic=3%2Cnone", ""},
+		{"list milestones", func() (*Response, error) { return c.ListMilestones(ctx, "CLI", "all") }, "GET", "/v1/projects/CLI/milestones", "status=all", ""},
+		{"list open milestones", func() (*Response, error) { return c.ListMilestones(ctx, "CLI", "") }, "GET", "/v1/projects/CLI/milestones", "", ""},
+		{"create milestone", func() (*Response, error) { return c.CreateMilestone(ctx, "CLI", "v0.2.0", "", "") }, "POST", "/v1/projects/CLI/milestones", "", `{"name":"v0.2.0"}`},
+		{"create milestone with every field", func() (*Response, error) {
+			return c.CreateMilestone(ctx, "CLI", "v0.2.0", "운영 안정화와 릴리즈 관리", "2026-11-01")
+		}, "POST", "/v1/projects/CLI/milestones", "", `{"description":"운영 안정화와 릴리즈 관리","name":"v0.2.0","target_date":"2026-11-01"}`},
+		{"get milestone", func() (*Response, error) { return c.GetMilestone(ctx, 7) }, "GET", "/v1/milestones/7", "", ""},
+		{"patch milestone", func() (*Response, error) {
+			return c.PatchMilestone(ctx, 7, map[string]any{"target_date": nil, "status": "closed"})
+		}, "PATCH", "/v1/milestones/7", "", `{"status":"closed","target_date":null}`},
+		{"delete milestone", func() (*Response, error) { return c.DeleteMilestone(ctx, 7) }, "DELETE", "/v1/milestones/7", "", ""},
+		{"list by milestone", func() (*Response, error) {
+			return c.ListIssues(ctx, IssueFilter{Milestone: "3,none"})
+		}, "GET", "/v1/issues", "milestone=3%2Cnone", ""},
 		{"acknowledge", func() (*Response, error) { return c.Acknowledge(ctx, "CLI-1") }, "POST", "/v1/issues/CLI-1/acknowledge", "", ""},
 		{"unacknowledge", func() (*Response, error) { return c.Unacknowledge(ctx, "CLI-1") }, "DELETE", "/v1/issues/CLI-1/acknowledge", "", ""},
 		{"list unacknowledged", func() (*Response, error) {

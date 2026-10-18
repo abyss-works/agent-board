@@ -93,6 +93,18 @@ const (
 // TopicStatuses lists every topic status.
 var TopicStatuses = []TopicStatus{TopicActive, TopicDeleted}
 
+// MilestoneStatus is the lifecycle state of a milestone. Deletion is a status.
+type MilestoneStatus string
+
+const (
+	MilestoneOpen    MilestoneStatus = "open"
+	MilestoneClosed  MilestoneStatus = "closed"
+	MilestoneDeleted MilestoneStatus = "deleted"
+)
+
+// MilestoneStatuses lists every milestone status.
+var MilestoneStatuses = []MilestoneStatus{MilestoneOpen, MilestoneClosed, MilestoneDeleted}
+
 // Priority orders issues in the queue. P0 is the most urgent.
 type Priority string
 
@@ -151,6 +163,12 @@ func ParseProjectStatus(v string) (ProjectStatus, bool) { return parseEnum(v, Pr
 // ParseTopicStatus returns the topic status named v.
 func ParseTopicStatus(v string) (TopicStatus, bool) { return parseEnum(v, TopicStatuses) }
 
+// ParseMilestoneStatus returns the milestone status named v. The alias "all"
+// is not a status.
+func ParseMilestoneStatus(v string) (MilestoneStatus, bool) {
+	return parseEnum(v, MilestoneStatuses)
+}
+
 // ParsePriority returns the priority named v.
 func ParsePriority(v string) (Priority, bool) { return parseEnum(v, Priorities) }
 
@@ -190,6 +208,33 @@ func ExpandIssueStatuses(filter string) ([]IssueStatus, error) {
 			}
 			add(s)
 		}
+	}
+	return out, nil
+}
+
+// ExpandMilestoneStatuses turns a comma separated status filter into
+// statuses. "all" is an alias for every status. Duplicates are removed.
+func ExpandMilestoneStatuses(filter string) ([]MilestoneStatus, error) {
+	var out []MilestoneStatus
+	seen := map[MilestoneStatus]bool{}
+	add := func(list ...MilestoneStatus) {
+		for _, s := range list {
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+	}
+	for _, part := range strings.Split(filter, ",") {
+		if part == "all" {
+			add(MilestoneStatuses...)
+			continue
+		}
+		s, ok := ParseMilestoneStatus(part)
+		if !ok {
+			return nil, fmt.Errorf("unknown status %q", part)
+		}
+		add(s)
 	}
 	return out, nil
 }
