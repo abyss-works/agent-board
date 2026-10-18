@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wsk0715/agent-board/internal/backup"
 	"github.com/wsk0715/agent-board/internal/cli"
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/server"
@@ -50,7 +51,16 @@ func serve(stderr io.Writer, getenv func(string) string) int {
 		return 1
 	}
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
-	srv, err := server.New(cfg, server.Options{Version: version, Logger: logger})
+	opts := server.Options{Version: version, Logger: logger}
+	if cfg.Backup.Enabled() {
+		store, err := backup.NewS3(cfg.Backup.Endpoint, cfg.Backup.Bucket, cfg.Backup.AccessKeyID, cfg.Backup.SecretAccessKey)
+		if err != nil {
+			fmt.Fprintf(stderr, "agb serve: configuration error:\n%v\n", err)
+			return 1
+		}
+		opts.BackupStore = store
+	}
+	srv, err := server.New(cfg, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "agb serve: %v\n", err)
 		return 1
