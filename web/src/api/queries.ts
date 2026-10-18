@@ -42,7 +42,7 @@ export function useOverview(projectKey: string | null) {
   const inst = useKeyPrefix()
   return useQuery({
     queryKey: [inst, 'overview', projectKey],
-    queryFn: ({ signal }) => api.get<Overview>(`/projects/${projectKey}/overview`, { limit: 10 }, signal),
+    queryFn: ({ signal }) => api.get<Overview>(`/projects/${projectKey}/overview`, { limit: 50 }, signal),
     enabled: projectKey !== null,
   })
 }
