@@ -1,4 +1,4 @@
-import { ArrowRightIcon, FolderIcon } from 'lucide-react'
+import { ArrowRightIcon, FolderIcon, LockIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useOverview, useProjects } from '@/api/queries'
@@ -34,7 +34,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: str
   )
 }
 
-// 사용자 확인이 필요한 칸. 항목이 있을 때만 강조한다.
+// 사용자가 볼 칸. 항목이 있을 때만 강조한다.
 const ACCENT = {
   review: {
     section: 'border-emerald-500/40 bg-emerald-500/[0.04]',
@@ -47,6 +47,12 @@ const ACCENT = {
     header: 'border-amber-500/30 bg-amber-500/10',
     title: 'text-amber-300',
     badge: 'warning',
+  },
+  blocked: {
+    section: 'border-rose-500/40 bg-rose-500/[0.04]',
+    header: 'border-rose-500/30 bg-rose-500/10',
+    title: 'text-rose-300',
+    badge: 'destructive',
   },
 } as const
 
@@ -188,6 +194,9 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
         </span>
       </PageHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+        <Group title="분포">
+          <Counts overview={o} />
+        </Group>
         <div className="grid grid-cols-3 gap-3 lg:grid-cols-6">
           <Stat label="전체" value={o.counts.total} />
           <Stat label="열린 이슈" value={o.counts.open} />
@@ -197,7 +206,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           <Stat label="막힘" value={o.blocked.total} tone={o.blocked.total > 0 ? 'text-rose-400' : undefined} />
         </div>
         <Group title="내 차례">
-          <div className="grid gap-3 xl:grid-cols-2">
+          <div className="grid gap-3 xl:grid-cols-3">
             <Section
               title="결정 대기"
               total={o.decisions.total}
@@ -216,23 +225,16 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
             >
               <IssueList items={o.review.items} flash={flash} />
             </Section>
-          </div>
-        </Group>
-        <Group title="지켜볼 것">
-          <div className="grid gap-3 xl:grid-cols-2">
-            <Section title="막힘(선행 이슈 열림)" total={o.blocked.total}>
+            <Section title="막힘(선행 이슈 열림)" total={o.blocked.total} icon={<LockIcon className="size-3.5" />} accent="blocked">
               <IssueList items={o.blocked.items} flash={flash} showReady />
             </Section>
+          </div>
+        </Group>
+        <Group title="흐름">
+          <div className="grid gap-3 xl:grid-cols-3">
             <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
               <IssueList items={o.doing.items} flash={flash} />
             </Section>
-          </div>
-        </Group>
-        <Group title="분포">
-          <Counts overview={o} />
-        </Group>
-        <Group title="흐름">
-          <div className="grid gap-3 xl:grid-cols-2">
             <Section title="다음 할 일" total={o.next.total} to="/issues?status=todo">
               <IssueList items={o.next.items} flash={flash} showReady />
             </Section>
