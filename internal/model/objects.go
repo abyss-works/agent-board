@@ -42,6 +42,31 @@ type Topic struct {
 	UpdatedBy string      `json:"updated_by"`
 }
 
+// MilestoneProgress counts the issues of a milestone: Total leaves out
+// cancelled and deleted issues, Done is the part of Total that is done.
+type MilestoneProgress struct {
+	Total int `json:"total"`
+	Done  int `json:"done"`
+}
+
+// Milestone groups the issues of a project into a release or a goal. The
+// target date is a calendar date written YYYY-MM-DD. ClosedAt is set while the
+// milestone is closed. Progress is computed whenever a milestone is read.
+type Milestone struct {
+	ID          int64             `json:"id"`
+	Project     string            `json:"project"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	TargetDate  *string           `json:"target_date"`
+	Status      MilestoneStatus   `json:"status"`
+	Progress    MilestoneProgress `json:"progress"`
+	ClosedAt    *Time             `json:"closed_at"`
+	CreatedAt   Time              `json:"created_at"`
+	UpdatedAt   Time              `json:"updated_at"`
+	CreatedBy   string            `json:"created_by"`
+	UpdatedBy   string            `json:"updated_by"`
+}
+
 // Issue is a full issue resource including the body.
 type Issue struct {
 	Key              string      `json:"key"`
@@ -59,6 +84,8 @@ type Issue struct {
 	RecheckCondition *string     `json:"recheck_condition"`
 	Topic            *int64      `json:"topic"`
 	TopicPath        *string     `json:"topic_path"`
+	Milestone        *int64      `json:"milestone"`
+	MilestoneName    *string     `json:"milestone_name"`
 	StatusReason     *string     `json:"status_reason"`
 	AcknowledgedAt   *Time       `json:"acknowledged_at"`
 	AcknowledgedBy   *string     `json:"acknowledged_by"`
@@ -89,6 +116,8 @@ type IssueSummary struct {
 	RecheckCondition *string     `json:"recheck_condition"`
 	Topic            *int64      `json:"topic"`
 	TopicPath        *string     `json:"topic_path"`
+	Milestone        *int64      `json:"milestone"`
+	MilestoneName    *string     `json:"milestone_name"`
 	StatusReason     *string     `json:"status_reason"`
 	AcknowledgedAt   *Time       `json:"acknowledged_at"`
 	AcknowledgedBy   *string     `json:"acknowledged_by"`
@@ -109,7 +138,8 @@ func (i *Issue) Summary() IssueSummary {
 		Key: i.Key, Project: i.Project, Number: i.Number, Title: i.Title,
 		Type: i.Type, Status: i.Status, Priority: i.Priority,
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
-		RecheckCondition: i.RecheckCondition, Topic: i.Topic, TopicPath: i.TopicPath, StatusReason: i.StatusReason,
+		RecheckCondition: i.RecheckCondition, Topic: i.Topic, TopicPath: i.TopicPath,
+		Milestone: i.Milestone, MilestoneName: i.MilestoneName, StatusReason: i.StatusReason,
 		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
 		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,

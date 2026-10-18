@@ -53,7 +53,7 @@ func TestOpenAppliesPragmasAndMigrations(t *testing.T) {
 	if version != SchemaVersion {
 		t.Errorf("user_version = %d, want %d", version, SchemaVersion)
 	}
-	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic"} {
+	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic", "milestone"} {
 		var n int
 		if err := s.db.QueryRow("select count(*) from sqlite_master where name = ?", table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -230,8 +230,8 @@ func TestMigrateAddsTopicAckAndReasonToVersion2Database(t *testing.T) {
 	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 || SchemaVersion != 3 {
-		t.Errorf("user_version = %d, SchemaVersion = %d, want 3", version, SchemaVersion)
+	if version != SchemaVersion || SchemaVersion < 3 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, want the current version, at least 3", version, SchemaVersion)
 	}
 
 	columns := func(table string) map[string]string {
@@ -301,6 +301,144 @@ func TestMigrateAddsTopicAckAndReasonToVersion2Database(t *testing.T) {
 	}
 	if old.AcknowledgedAt == nil || old.AcknowledgedBy != nil || old.StatusReason != nil || old.Title != "첫 이슈" || old.Version != 1 {
 		t.Errorf("migrated issue = %+v", old)
+	}
+}
+
+// TestMigrateAddsMilestoneToVersion3Database upgrades a database written under
+// schema version 3. Migration 0004 adds the milestone table and the
+// issue.milestone_id column; every existing issue ends up without a milestone
+// and nothing else about it changes.
+func TestMigrateAddsMilestoneToVersion3Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-10-17T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"migrations/0001_init.sql", "migrations/0002_activity_summary.sql", "migrations/0003_topic_ack_reason.sql"} {
+		body, err := migrationFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 3`,
+		`insert into actor(id, kind, created_at) values ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 3, `+at+`, `+at+`, 'claude', 'claude')`,
+		`insert into topic(id, project_id, name, parent_id, status, created_at, updated_at, created_by, updated_by)
+		 values (1, 1, '이슈 흐름', null, 'active', `+at+`, `+at+`, 'claude', 'claude')`,
+		`insert into issue(id, project_id, number, key, title, type, status, priority, topic_id, status_reason, acknowledged_at, acknowledged_by, version,
+		                   created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '주제가 붙은 이슈', 'feature', 'todo', 'P2', 1, '백로그 → 할 일', `+at+`, 'claude', 4, `+at+`, `+at+`, null, `+at+`, 'claude', 'claude', 'claude'),
+		        (2, 1, 2, 'AGB-2', '닫힌 이슈', 'bug', 'done', 'P1', null, null, `+at+`, null, 1, `+at+`, `+at+`, `+at+`, `+at+`, 'claude', 'claude', 'claude')`,
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes)
+		 values (1, 'created', 'claude', 's1', 'desk', `+at+`, '{"title":{"to":"주제가 붙은 이슈"}}')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 3 database: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 4 || SchemaVersion != 4 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, want 4", version, SchemaVersion)
+	}
+
+	columns := func(table string) map[string]string {
+		rows, err := s.db.Query(`select name, type || ':' || "notnull" || ':' || coalesce(dflt_value, '') from pragma_table_info(?)`, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var name, kind string
+			if err := rows.Scan(&name, &kind); err != nil {
+				t.Fatal(err)
+			}
+			out[name] = kind
+		}
+		return out
+	}
+	if got := columns("issue")["milestone_id"]; got != "INTEGER:0:" {
+		t.Errorf("issue.milestone_id = %q, want a nullable INTEGER without a default", got)
+	}
+	milestoneCols := columns("milestone")
+	wantCols := map[string]string{
+		"id": "INTEGER:0:", "project_id": "INTEGER:1:", "name": "TEXT:1:", "description": "TEXT:1:''", "target_date": "TEXT:0:",
+		"status": "TEXT:1:'open'", "closed_at": "TEXT:0:", "created_at": "TEXT:1:", "updated_at": "TEXT:1:", "created_by": "TEXT:1:", "updated_by": "TEXT:1:",
+	}
+	for name, want := range wantCols {
+		if got := milestoneCols[name]; got != want {
+			t.Errorf("milestone.%s = %q, want %q", name, got, want)
+		}
+	}
+	if len(milestoneCols) != len(wantCols) {
+		t.Errorf("milestone has %d columns, want %d: %v", len(milestoneCols), len(wantCols), milestoneCols)
+	}
+	var indexes int
+	if err := s.db.QueryRow(`select count(*) from sqlite_master where type = 'index' and name in ('milestone_project', 'issue_milestone')`).Scan(&indexes); err != nil || indexes != 2 {
+		t.Errorf("milestone indexes = %d, %v; want milestone_project and issue_milestone", indexes, err)
+	}
+	// The table checks its status values and the foreign keys hold.
+	if _, err := s.db.Exec(`insert into milestone(project_id, name, status, created_at, updated_at, created_by, updated_by) values (1, 'x', 'bogus', ` + at + `, ` + at + `, 'claude', 'claude')`); err == nil {
+		t.Error("a milestone with an unknown status was accepted")
+	}
+	rows, err := s.db.Query(`pragma foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows.Next() {
+		t.Error("foreign_key_check reports a violation after the migration")
+	}
+	rows.Close()
+
+	// Old issues keep every value and have no milestone.
+	old, err := s.GetIssue(ctx, "AGB-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Milestone != nil || old.MilestoneName != nil || old.Topic == nil || *old.Topic != 1 || old.Title != "주제가 붙은 이슈" || old.Version != 4 ||
+		old.StatusReason == nil || *old.StatusReason != "백로그 → 할 일" || old.AcknowledgedBy == nil || *old.AcknowledgedBy != "claude" {
+		t.Errorf("migrated issue = %+v", old)
+	}
+	var withMilestone int
+	if err := s.db.QueryRow(`select count(*) from issue where milestone_id is not null`).Scan(&withMilestone); err != nil || withMilestone != 0 {
+		t.Errorf("issues with a milestone after the migration = %d, %v", withMilestone, err)
+	}
+
+	// The new feature works on the migrated data.
+	tr := model.Trace{Actor: "claude", SessionID: "s2", ClientHost: "desk"}
+	m, err := s.CreateMilestone(ctx, tr, "AGB", MilestoneInput{Name: "v0.2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.UpdateIssue(ctx, tr, "AGB-1", IssuePatch{Milestone: Optional[int64]{Set: true, Value: &m.ID}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.UpdateIssue(ctx, tr, "AGB-2", IssuePatch{Milestone: Optional[int64]{Set: true, Value: &m.ID}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetMilestone(ctx, m.ID)
+	if err != nil || got.Progress != (model.MilestoneProgress{Total: 2, Done: 1}) {
+		t.Errorf("milestone after attaching the old issues = %+v, %v", got, err)
 	}
 }
 

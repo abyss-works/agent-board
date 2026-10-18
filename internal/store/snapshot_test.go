@@ -101,3 +101,41 @@ func TestSnapshotCarriesTopicsReasonsAndAcknowledgements(t *testing.T) {
 		t.Errorf("snapshot: version %d, topics %d, issues with a topic %d, acknowledged %d, with a reason %d", version, topics, topicIssues, acked, reasons)
 	}
 }
+
+// A snapshot is a complete copy of the schema version 4 data: milestones
+// of every status, their closing times, and the milestone of an issue.
+func TestSnapshotCarriesMilestones(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	v1 := mustMilestone(t, s, "AGB", "v1")
+	v2 := mustMilestone(t, s, "AGB", "v2")
+	v3 := mustMilestone(t, s, "AGB", "v3")
+	setMilestoneStatus(t, s, v2.ID, model.MilestoneClosed)
+	setMilestoneStatus(t, s, v3.ID, model.MilestoneDeleted)
+	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "planned", Milestone: &v1.ID})
+	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "unplanned"})
+
+	dst := filepath.Join(t.TempDir(), "snap.db")
+	if err := s.Snapshot(ctx, dst); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dst))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, milestones, closedAt, open, closed, deleted, issues int
+	if err := db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`select (select count(*) from milestone), (select count(*) from milestone where closed_at is not null),
+		(select count(*) from milestone where status = 'open'), (select count(*) from milestone where status = 'closed'),
+		(select count(*) from milestone where status = 'deleted'), (select count(*) from issue where milestone_id = ?)`, v1.ID).
+		Scan(&milestones, &closedAt, &open, &closed, &deleted, &issues); err != nil {
+		t.Fatal(err)
+	}
+	if version != SchemaVersion || milestones != 3 || closedAt != 1 || open != 1 || closed != 1 || deleted != 1 || issues != 1 {
+		t.Errorf("snapshot: version %d, milestones %d (open %d, closed %d, deleted %d), with a closing time %d, issues of v1 %d",
+			version, milestones, open, closed, deleted, closedAt, issues)
+	}
+}
