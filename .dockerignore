@@ -1,0 +1,9 @@
+.git
+bin
+data
+*.db
+*.db-wal
+*.db-shm
+web/node_modules
+web/dist
+.worktrees
