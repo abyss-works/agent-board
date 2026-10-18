@@ -62,6 +62,7 @@ type IssueFilter struct {
 	Priority        string
 	Labels          []string
 	Parent          string
+	Acknowledged    string // "true" or "false"; empty sends no filter
 	CreatedBy       string
 	UpdatedBy       string
 	StatusChangedBy string
@@ -82,6 +83,7 @@ func (f IssueFilter) Values() url.Values {
 		v.Add("label", l)
 	}
 	set(v, "parent", f.Parent)
+	set(v, "acknowledged", f.Acknowledged)
 	set(v, "created_by", f.CreatedBy)
 	set(v, "updated_by", f.UpdatedBy)
 	set(v, "status_changed_by", f.StatusChangedBy)
@@ -231,6 +233,16 @@ func (c *Client) DeleteIssue(ctx context.Context, key, reason, version string) (
 	v := url.Values{}
 	set(v, "reason", reason)
 	return c.Request(ctx, http.MethodDelete, withQuery("/v1/issues/"+url.PathEscape(key), v), nil, ifMatch(version))
+}
+
+// Acknowledge marks an issue as acknowledged by the actor of the request.
+func (c *Client) Acknowledge(ctx context.Context, key string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
+}
+
+// Unacknowledge clears the acknowledgement of an issue.
+func (c *Client) Unacknowledge(ctx context.Context, key string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
 }
 
 // AddComment adds a comment to an issue. A non-empty summary is sent as the

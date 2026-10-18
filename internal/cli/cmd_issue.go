@@ -10,7 +10,7 @@ import (
 )
 
 var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*command{
-	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueCommentCmd, issueActivityCmd,
+	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueAckCmd, issueUnackCmd, issueCommentCmd, issueActivityCmd,
 }}
 
 // issueFilterFlags registers the shared list filters.
@@ -22,6 +22,7 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels *stringLis
 	fs.StringVar(&f.Priority, "priority", "", "")
 	fs.Var(labels, "label", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
+	fs.StringVar(&f.Acknowledged, "acknowledged", "", "")
 	fs.StringVar(&f.CreatedBy, "created-by", "", "")
 	fs.StringVar(&f.UpdatedBy, "updated-by", "", "")
 	fs.StringVar(&f.StatusChangedBy, "status-changed-by", "", "")
@@ -37,6 +38,7 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
   --priority <P>          P0, P1, P2, P3. 쉼표 OR
   --label <L>             라벨. 반복하면 AND
   --parent <KEY|none>     상위 이슈. none 이면 상위가 없는 이슈
+  --acknowledged <true|false>  사용자가 확인한 이슈(true)나 아직 확인하지 않은 이슈(false)만
   --created-by, --updated-by, --status-changed-by <행위자>   쉼표 OR
   --sort <F>              priority, created_at, updated_at, key, relevance. 쉼표로 여러 개, - 는 내림차순
   --limit <N>             최대 200. 기본 50
@@ -421,6 +423,66 @@ var issueDeleteCmd = &command{
 			return err
 		}
 		resp, err := c.DeleteIssue(ctx, key, reason, quoteETag(ifMatch))
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderIssue)
+	},
+}
+
+var issueAckCmd = &command{
+	name: "ack", summary: "사용자 확인 표시 (여러 개 가능)",
+	usage: `사용법: agb issue ack <KEY>...
+
+사용자가 이슈를 확인했다고 표시합니다. 작업 흐름(상태, 큐, 막힘)에는 영향이 없습니다.
+이미 확인된 이슈는 그대로 둡니다. 여러 키를 주면 차례로 처리하고, 처음 실패하는 키에서 멈춥니다.
+JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다. 확인은 사용자의 몫이므로 에이전트는 쓰지 않습니다.
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		pos, err := parseArgs(leafFlags("issue ack", g), args)
+		if err != nil {
+			return err
+		}
+		if len(pos) == 0 {
+			return usageErrorf("<KEY> 인자가 필요합니다.")
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		for _, key := range pos {
+			resp, err := c.Acknowledge(ctx, key)
+			if err != nil {
+				return err
+			}
+			if err := a.emit(g, resp, a.renderIssue); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}
+
+var issueUnackCmd = &command{
+	name: "unack", summary: "사용자 확인 표시 해제",
+	usage: `사용법: agb issue unack <KEY>
+
+이슈의 확인 표시를 지워 미확인으로 되돌립니다. 이미 미확인이면 그대로 둡니다.
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		pos, err := parseArgs(leafFlags("issue unack", g), args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.Unacknowledge(ctx, key)
 		if err != nil {
 			return err
 		}

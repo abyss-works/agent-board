@@ -83,6 +83,7 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"type", string(i.Type)},
 		{"status", string(i.Status)},
 		{"status_reason", deref(i.StatusReason, "-")},
+		{"acknowledged", a.acknowledgedText(i.AcknowledgedAt, i.AcknowledgedBy)},
 		{"priority", string(i.Priority)},
 		{"labels", joinOr(i.Labels, "-")},
 		{"parent", deref(i.Parent, "-")},
@@ -100,6 +101,18 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, strings.TrimRight(i.Body, "\n"))
 	}
 	return nil
+}
+
+// acknowledgedText says whether the user has seen an issue: "no", or "yes"
+// with the time and, when known, who.
+func (a *App) acknowledgedText(at *model.Time, by *string) string {
+	if at == nil {
+		return "no"
+	}
+	if by == nil {
+		return "yes (" + formatTime(*at, a.Location) + ")"
+	}
+	return "yes (" + formatTime(*at, a.Location) + ", " + *by + ")"
 }
 
 // rawString shows a JSON value compactly: strings without quotes, the
