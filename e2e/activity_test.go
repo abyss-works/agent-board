@@ -59,7 +59,7 @@ func TestActivity(t *testing.T) {
 	p := createProject(t, "AC")
 	creator := caller{actor: "claude", session: sessionID + "-ac", host: "desk-win10"}
 	editor := caller{actor: "codex", session: sessionID + "-ac2", host: "ab"}
-	iss := createIssue(t, creator, map[string]any{"project": p.Key, "title": "활동 기록", "labels": strs("api"), "priority": "P1", "status": "todo"})
+	iss := createIssue(t, creator, map[string]any{"project": p.Key, "title": "활동 기록", "labels": strs("api"), "priority": "P1", "status": "todo", "body": templateBody(t, "feature")})
 	tick()
 	upd := patchIssue(t, editor, iss.Key, map[string]any{"status": "doing", "labels": strs("api", "cli"), "title": "활동 기록"})
 	tick()
@@ -120,11 +120,14 @@ func TestActivity(t *testing.T) {
 			t.Errorf("updated = %+v", a)
 		}
 		ch := *a.Changes
-		if len(ch) != 2 {
-			t.Errorf("changes = %v, want status and labels only", ch)
+		if len(ch) != 3 {
+			t.Errorf("changes = %v, want status, status_reason and labels only", ch)
 		}
 		if string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` {
 			t.Errorf("status change = %+v", ch["status"])
+		}
+		if string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` {
+			t.Errorf("status_reason change = %+v", ch["status_reason"])
 		}
 		var from, to []string
 		json.Unmarshal(ch["labels"].From, &from)
