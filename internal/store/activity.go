@@ -27,15 +27,15 @@ type ActivityFilter struct {
 	Offset      int
 }
 
-const activityCols = `a.id, i.key, p.key, a.kind, a.actor_id, a.session_id, a.client_host, a.at, a.changes, a.body`
+const activityCols = `a.id, i.key, p.key, a.kind, a.actor_id, a.session_id, a.client_host, a.at, a.changes, a.summary, a.body`
 
 const activityFrom = ` from activity a join issue i on i.id = a.issue_id join project p on p.id = i.project_id`
 
 func scanActivity(sc interface{ Scan(...any) error }) (*model.Activity, error) {
 	var a model.Activity
 	var at string
-	var changes, body sql.NullString
-	if err := sc.Scan(&a.ID, &a.Issue, &a.Project, &a.Kind, &a.Actor, &a.SessionID, &a.ClientHost, &at, &changes, &body); err != nil {
+	var changes, summary, body sql.NullString
+	if err := sc.Scan(&a.ID, &a.Issue, &a.Project, &a.Kind, &a.Actor, &a.SessionID, &a.ClientHost, &at, &changes, &summary, &body); err != nil {
 		return nil, err
 	}
 	var err error
@@ -47,13 +47,16 @@ func scanActivity(sc interface{ Scan(...any) error }) (*model.Activity, error) {
 			return nil, err
 		}
 	}
+	if summary.Valid {
+		a.Summary = &summary.String
+	}
 	if body.Valid {
 		a.Body = &body.String
 	}
 	return &a, nil
 }
 
-func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.ActivityKind, tr model.Trace, at model.Time, changes map[string]model.Change, body *string) (int64, error) {
+func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.ActivityKind, tr model.Trace, at model.Time, changes map[string]model.Change, summary, body *string) (int64, error) {
 	var changesJSON any
 	if changes != nil {
 		b, err := json.Marshal(changes)
@@ -62,24 +65,29 @@ func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.A
 		}
 		changesJSON = string(b)
 	}
+	var summaryVal any
+	if summary != nil {
+		summaryVal = *summary
+	}
 	var bodyVal any
 	if body != nil {
 		bodyVal = *body
 	}
 	res, err := tx.ExecContext(ctx,
-		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes, body) values (?, ?, ?, ?, ?, ?, ?, ?)`,
-		issueID, string(kind), tr.Actor, tr.SessionID, tr.ClientHost, at.String(), changesJSON, bodyVal)
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes, summary, body) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		issueID, string(kind), tr.Actor, tr.SessionID, tr.ClientHost, at.String(), changesJSON, summaryVal, bodyVal)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// AddComment appends a commented record to an issue. Comments are allowed
-// on issues in any status, including deleted, but not in a project that is
+// AddComment appends a commented record to an issue. summary is the optional
+// one-line index shown in lists; nil stores none. Comments are allowed on
+// issues in any status, including deleted, but not in a project that is
 // archived or deleted.
-func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string) (*model.Activity, error) {
-	if err := model.ValidateCommentBody(body); err != nil {
+func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string, summary *string) (*model.Activity, error) {
+	if err := model.ValidateComment(body, summary); err != nil {
 		return nil, err
 	}
 	var id int64
@@ -96,7 +104,7 @@ func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string
 		if model.ProjectStatus(projectStatus) != model.ProjectActive {
 			return ErrProjectNotActive
 		}
-		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, s.stamp(), nil, &body)
+		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, s.stamp(), nil, summary, &body)
 		return err
 	})
 	if err != nil {

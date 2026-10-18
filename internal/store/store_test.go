@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -82,6 +84,99 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 	if version != SchemaVersion {
 		t.Errorf("user_version = %d after reopen", version)
+	}
+}
+
+// TestMigrateAddsSummaryToVersion1Database upgrades a database that holds
+// records written under schema version 1. Migration 0002 only adds the
+// summary column: existing records stay as they were and read back without a
+// summary.
+func TestMigrateAddsSummaryToVersion1Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := migrationFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-10-17T05:00:00.000Z'"
+	seed := []string{
+		string(first),
+		`pragma user_version = 1`,
+		`insert into actor(id, kind, created_at) values ('claude', 'agent', ` + at + `)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, ` + at + `, ` + at + `, 'claude', 'claude')`,
+		`insert into issue(id, project_id, number, key, title, type, status, priority, created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '기존 이슈', 'feature', 'backlog', 'P2', ` + at + `, ` + at + `, ` + at + `, 'claude', 'claude', 'claude')`,
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes)
+		 values (1, 'created', 'claude', 's1', 'desk', ` + at + `, '{"title":{"to":"기존 이슈"}}')`,
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, body)
+		 values (1, 'commented', 'claude', 's1', 'desk', '2026-10-17T05:01:00.000Z', '요약 열이 없던 시절의 댓글')`,
+	}
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 1 database: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != SchemaVersion {
+		t.Errorf("user_version = %d, want %d", version, SchemaVersion)
+	}
+
+	rows, err := s.db.Query(`select name, type, "notnull" from pragma_table_info('activity')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var columns []string
+	for rows.Next() {
+		var name, typ string
+		var notNull int
+		if err := rows.Scan(&name, &typ, &notNull); err != nil {
+			t.Fatal(err)
+		}
+		if name == "summary" && (typ != "TEXT" || notNull != 0) {
+			t.Errorf("summary column is %s, notnull %d; want nullable TEXT", typ, notNull)
+		}
+		columns = append(columns, name)
+	}
+	rows.Close()
+	want := "id issue_id kind actor_id session_id client_host at changes body summary"
+	if got := strings.Join(columns, " "); got != want {
+		t.Errorf("activity columns = %q, want %q", got, want)
+	}
+
+	items, total, err := s.ListActivity(ctx, ActivityFilter{Asc: true, Limit: 10})
+	if err != nil || total != 2 || len(items) != 2 {
+		t.Fatalf("ListActivity = %d items, total %d, err %v", len(items), total, err)
+	}
+	if items[0].Kind != model.ActivityCreated || items[0].Summary != nil || items[0].Changes["title"].To == nil {
+		t.Errorf("created record = %+v", items[0])
+	}
+	if items[1].Kind != model.ActivityCommented || items[1].Summary != nil || items[1].Body == nil || *items[1].Body != "요약 열이 없던 시절의 댓글" {
+		t.Errorf("commented record = %+v", items[1])
+	}
+
+	c, err := s.AddComment(ctx, model.Trace{Actor: "claude", SessionID: "s2", ClientHost: "desk"}, "AGB-1", "새 본문", str("새 요약"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Summary == nil || *c.Summary != "새 요약" {
+		t.Errorf("comment after migration = %+v", c)
 	}
 }
 

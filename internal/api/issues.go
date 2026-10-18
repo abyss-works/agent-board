@@ -293,7 +293,7 @@ func (h *handler) createComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	a, err := h.store.AddComment(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), text)
+	a, err := h.store.AddComment(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), text, nil)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
