@@ -36,19 +36,32 @@ func footer(w io.Writer, shown, total, offset int) {
 	}
 }
 
+// issueTable lists issues. The MILESTONE column appears only when some issue
+// has a milestone and the SNIPPET column only for search results.
 func (a *App) issueTable(items []model.IssueSummary) *table {
-	snippet := false
+	snippet, milestone := false, false
 	for _, it := range items {
 		if it.Snippet != nil {
 			snippet = true
 		}
+		if it.MilestoneName != nil {
+			milestone = true
+		}
 	}
-	tb := &table{header: []string{"KEY", "STATUS", "PRI", "TYPE", "LABELS", "UPDATED", "TITLE"}}
+	tb := &table{header: []string{"KEY", "STATUS", "PRI", "TYPE", "LABELS"}}
+	if milestone {
+		tb.header = append(tb.header, "MILESTONE")
+	}
+	tb.header = append(tb.header, "UPDATED", "TITLE")
 	if snippet {
 		tb.header = append(tb.header, "SNIPPET")
 	}
 	for _, it := range items {
-		row := []string{it.Key, string(it.Status), string(it.Priority), string(it.Type), joinOr(it.Labels, "-"), formatTime(it.UpdatedAt, a.Location), it.Title}
+		row := []string{it.Key, string(it.Status), string(it.Priority), string(it.Type), joinOr(it.Labels, "-")}
+		if milestone {
+			row = append(row, deref(it.MilestoneName, "-"))
+		}
+		row = append(row, formatTime(it.UpdatedAt, a.Location), it.Title)
 		if snippet {
 			row = append(row, deref(it.Snippet, ""))
 		}
@@ -91,6 +104,7 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"refs", joinOr(i.Refs, "-")},
 		{"recheck_condition", deref(i.RecheckCondition, "-")},
 		{"topic", topicText(i.Topic, i.TopicPath)},
+		{"milestone", milestoneText(i.Milestone, i.MilestoneName)},
 		{"version", strconv.FormatInt(i.Version, 10)},
 		{"created", formatTime(i.CreatedAt, a.Location) + " (" + i.CreatedBy + ")"},
 		{"updated", formatTime(i.UpdatedAt, a.Location) + " (" + i.UpdatedBy + ")"},
@@ -112,6 +126,14 @@ func topicText(id *int64, path *string) string {
 	return *path + " (" + strconv.FormatInt(*id, 10) + ")"
 }
 
+// milestoneText shows the milestone name of an issue with its id, or "-".
+func milestoneText(id *int64, name *string) string {
+	if id == nil || name == nil {
+		return "-"
+	}
+	return *name + " (" + strconv.FormatInt(*id, 10) + ")"
+}
+
 // acknowledgedText says whether the user has seen an issue: "no", or "yes"
 // with the time and, when known, who.
 func (a *App) acknowledgedText(at *model.Time, by *string) string {
@@ -125,9 +147,10 @@ func (a *App) acknowledgedText(at *model.Time, by *string) string {
 }
 
 // rawString shows a JSON value compactly: strings without quotes, the
-// rest as JSON.
+// rest as JSON. An absent value and null, such as the milestone of an issue
+// that has none, show as "-".
 func rawString(r json.RawMessage) string {
-	if len(r) == 0 {
+	if len(r) == 0 || string(r) == "null" {
 		return "-"
 	}
 	var s string

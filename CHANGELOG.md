@@ -2,6 +2,26 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
+## 미출시
+
+### 서버와 API
+
+- 마일스톤: 프로젝트마다 출시나 목표 단위로 이슈를 묶는다. 이름, 설명, 목표일(`YYYY-MM-DD`), 상태(`open`, `closed`, `deleted`)를 가지며 닫으면 `closed_at`을 기록한다. 같은 프로젝트의 삭제되지 않은 마일스톤끼리 이름이 겹치면 409다.
+- 마일스톤 진행(`progress`): 조회할 때 취소·삭제를 뺀 이슈 수(`total`)와 그중 완료 수(`done`)로 계산한다.
+- `/v1/projects/{key}/milestones`(목록, 생성)와 `/v1/milestones/{id}`(단건, 수정, 소프트 삭제). 목록은 `status`(`open` 기본, `closed`, `deleted`, `all`)로 거르고 목표일 순으로 돌려준다.
+- 이슈의 `milestone`(마일스톤 ID 또는 `null`)과 서버가 채우는 `milestone_name`, 이슈 목록의 `milestone` 필터(ID 쉼표 OR, `none`). 이슈의 마일스톤 변경은 활동 기록의 `changes.milestone`에 남는다.
+- 스키마 버전 4(`milestone` 테이블, `issue.milestone_id`). 서버를 시작할 때 자동으로 마이그레이션한다. 마일스톤 변경도 백업 변경 감지에 포함한다.
+
+### CLI
+
+- 마일스톤 명령: `agb milestone list`, `get`, `create`, `update`, `close`, `reopen`, `delete`. 목록 표에 상태, 목표일, 진행(완료 수/전체 수와 비율)을 보인다.
+- 이슈의 마일스톤 지정(`--milestone <ID|이름|none>`)을 `issue create`, `issue update`에 더하고, 같은 옵션으로 `issue list`, `search`를 거른다. 이름은 이슈 프로젝트의 마일스톤(삭제된 것 포함)에서 정확히 같은 이름을 찾고, 없거나 둘 이상이면 사용법 오류(종료 코드 2)다.
+- 이슈 단건 표시에 마일스톤을 보이고, 마일스톤이 있는 이슈가 있으면 이슈 표에 `MILESTONE` 열을 더한다. 활동 기록 표시에서 `null` 값을 `-`로 보인다.
+
+### 에이전트 스킬
+
+- 이슈 등록 절차에 마일스톤 선택 단계를 더한다. 에이전트는 `agb milestone list -p <KEY>`의 열린 마일스톤에만 이슈를 배정한다. 마일스톤을 새로 만들거나 고치거나 닫거나 지우지 않고, 필요하면 최종 보고에 제안한다.
+
 ## v0.1.1 (2026-10-18)
 
 ### 서버와 API
