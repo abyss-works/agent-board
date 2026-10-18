@@ -14,7 +14,7 @@ var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*comman
 }}
 
 // issueFilterFlags registers the shared list filters.
-func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics *stringList) {
+func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, milestones *stringList) {
 	fs.StringVar(&f.Project, "project", "", "")
 	fs.StringVar(&f.Project, "p", "", "")
 	fs.StringVar(&f.Status, "status", "", "")
@@ -22,6 +22,7 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics *s
 	fs.StringVar(&f.Priority, "priority", "", "")
 	fs.Var(labels, "label", "")
 	fs.Var(topics, "topic", "")
+	fs.Var(milestones, "milestone", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
 	fs.StringVar(&f.Acknowledged, "acknowledged", "", "")
 	fs.StringVar(&f.CreatedBy, "created-by", "", "")
@@ -40,6 +41,8 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
   --label <L>             라벨. 반복하면 AND
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
                           대주제를 주면 그 아래 주제의 이슈도 포함. 반복하면 OR. 경로는 --project 하나가 필요
+  --milestone <M>         마일스톤의 ID나 이름, none 이면 마일스톤이 없는 이슈. 반복하면 OR.
+                          이름은 --project 하나가 필요하고, 삭제된 마일스톤을 포함해 정확히 같은 이름을 찾음
   --parent <KEY|none>     상위 이슈. none 이면 상위가 없는 이슈
   --acknowledged <true|false>  사용자가 확인한 이슈(true)나 아직 확인하지 않은 이슈(false)만
   --created-by, --updated-by, --status-changed-by <행위자>   쉼표 OR
@@ -58,8 +61,8 @@ var issueListCmd = &command{
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue list", g)
 		var f client.IssueFilter
-		var labels, topics stringList
-		issueFilterFlags(fs, &f, &labels, &topics)
+		var labels, topics, milestones stringList
+		issueFilterFlags(fs, &f, &labels, &topics, &milestones)
 		fs.StringVar(&f.Query, "q", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -75,6 +78,11 @@ var issueListCmd = &command{
 		}
 		if len(topics) > 0 {
 			if f.Topic, err = a.topicFilterValue(ctx, c, f.Project, topics); err != nil {
+				return err
+			}
+		}
+		if len(milestones) > 0 {
+			if f.Milestone, err = a.milestoneFilterValue(ctx, c, f.Project, milestones); err != nil {
 				return err
 			}
 		}
@@ -99,8 +107,8 @@ var searchCmd = &command{
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("search", g)
 		var f client.IssueFilter
-		var labels, topics stringList
-		issueFilterFlags(fs, &f, &labels, &topics)
+		var labels, topics, milestones stringList
+		issueFilterFlags(fs, &f, &labels, &topics, &milestones)
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -116,6 +124,11 @@ var searchCmd = &command{
 		}
 		if len(topics) > 0 {
 			if f.Topic, err = a.topicFilterValue(ctx, c, f.Project, topics); err != nil {
+				return err
+			}
+		}
+		if len(milestones) > 0 {
+			if f.Milestone, err = a.milestoneFilterValue(ctx, c, f.Project, milestones); err != nil {
 				return err
 			}
 		}
@@ -178,10 +191,12 @@ var issueCreateCmd = &command{
   --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc. 반복 가능
   --recheck <조건>        observation 의 재검토 조건 (observation 이면 필수)
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다
+  --milestone <M>         마일스톤의 ID나 이름. 이름은 프로젝트의 마일스톤(agb milestone list -p <KEY> --status all)에서
+                          정확히 같은 것을 찾고, 없거나 둘 이상이면 오류입니다. 숫자만 있는 값은 ID로 봅니다
 ` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue create", g)
-		var project, title, typ, priority, status, body, bodyFile, parent, recheck, topic string
+		var project, title, typ, priority, status, body, bodyFile, parent, recheck, topic, milestone string
 		var labels, deps, refs stringList
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
@@ -198,6 +213,7 @@ var issueCreateCmd = &command{
 		fs.Var(&refs, "ref", "")
 		fs.StringVar(&recheck, "recheck", "", "")
 		fs.StringVar(&topic, "topic", "", "")
+		fs.StringVar(&milestone, "milestone", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -239,6 +255,13 @@ var issueCreateCmd = &command{
 				return err
 			}
 			in["topic"] = id
+		}
+		if isSet(fs, "milestone") && milestone != "none" {
+			id, err := a.milestoneID(ctx, c, project, milestone)
+			if err != nil {
+				return err
+			}
+			in["milestone"] = id
 		}
 		resp, err := c.CreateIssue(ctx, in)
 		if err != nil {
@@ -310,11 +333,14 @@ var issueUpdateCmd = &command{
   --recheck <조건>        재검토 조건 설정
   --no-recheck            재검토 조건 제거 (type 을 observation 에서 바꿀 때)
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). none 이면 주제를 지움
+  --milestone <M>         마일스톤의 ID나 이름. none 이면 마일스톤을 지움. 이름은 이슈 프로젝트의 마일스톤
+                          (agb milestone list -p <KEY> --status all)에서 정확히 같은 것을 찾고, 없거나 둘 이상이면
+                          오류입니다. 숫자만 있는 값은 ID로 봅니다
   --if-match <버전>       이 버전일 때만 수정. 숫자만 주어도 됩니다
 ` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue update", g)
-		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, topic, ifMatch string
+		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, topic, milestone, ifMatch string
 		var noParent, noRecheck bool
 		fs.StringVar(&title, "title", "", "")
 		fs.StringVar(&typ, "type", "", "")
@@ -328,6 +354,7 @@ var issueUpdateCmd = &command{
 		fs.StringVar(&recheck, "recheck", "", "")
 		fs.BoolVar(&noRecheck, "no-recheck", false, "")
 		fs.StringVar(&topic, "topic", "", "")
+		fs.StringVar(&milestone, "milestone", "", "")
 		fs.StringVar(&ifMatch, "if-match", "", "")
 		arrays := []*arrayEdit{{field: "labels", flag: "label"}, {field: "depends_on", flag: "depends-on"}, {field: "refs", flag: "ref"}}
 		for _, e := range arrays {
@@ -386,7 +413,7 @@ var issueUpdateCmd = &command{
 				needRead = true
 			}
 		}
-		if len(patch) == 0 && !needRead && !isSet(fs, "topic") {
+		if len(patch) == 0 && !needRead && !isSet(fs, "topic") && !isSet(fs, "milestone") {
 			return usageErrorf("바꿀 필드가 없습니다.")
 		}
 
@@ -404,6 +431,18 @@ var issueUpdateCmd = &command{
 					return err
 				}
 				patch["topic"] = id
+			}
+		}
+		if isSet(fs, "milestone") {
+			if milestone == "none" {
+				patch["milestone"] = nil
+			} else {
+				keyProject, _, _ := model.ParseIssueKey(key)
+				id, err := a.milestoneID(ctx, c, keyProject, milestone)
+				if err != nil {
+					return err
+				}
+				patch["milestone"] = id
 			}
 		}
 		version := quoteETag(ifMatch)
