@@ -217,7 +217,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           </div>
         </Group>
         <Group title="내 차례">
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <div className="grid gap-3 xl:grid-cols-3">
             <Section
               title="결정 대기"
               total={o.decisions.total}
@@ -239,6 +239,16 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
             <Section title="막힘(선행 이슈 열림)" total={o.blocked.total} icon={<LockIcon className="size-3.5" />} accent="blocked">
               <IssueList items={o.blocked.items} flash={flash} showReady />
             </Section>
+          </div>
+        </Group>
+        <Group title="에이전트 작업">
+          <div className="grid gap-3 xl:grid-cols-3">
+            <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
+              <IssueList items={o.doing.items} flash={flash} />
+            </Section>
+            <Section title="다음 할 일" total={o.next.total} to="/issues?status=todo">
+              <IssueList items={o.next.items} flash={flash} showReady />
+            </Section>
             <Section
               title="미확인"
               total={o.unacknowledged.total}
@@ -250,26 +260,18 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
             </Section>
           </div>
         </Group>
-        <Group title="흐름">
-          <div className="grid gap-3 xl:grid-cols-3">
-            <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
-              <IssueList items={o.doing.items} flash={flash} />
-            </Section>
-            <Section title="다음 할 일" total={o.next.total} to="/issues?status=todo">
-              <IssueList items={o.next.items} flash={flash} showReady />
-            </Section>
-            <Section title="최근 활동" total={o.recent_activity.total} to="/activity">
-              {o.recent_activity.items.length === 0 ? (
-                <EmptyState className="py-6">없음</EmptyState>
-              ) : (
-                <ul>
-                  {o.recent_activity.items.map((a) => (
-                    <ActivityItem key={a.id} activity={a} compact flash={flashActivity.has(a.id)} />
-                  ))}
-                </ul>
-              )}
-            </Section>
-          </div>
+        <Group title="기록">
+          <Section title="최근 활동" total={o.recent_activity.total} to="/activity">
+            {o.recent_activity.items.length === 0 ? (
+              <EmptyState className="py-6">없음</EmptyState>
+            ) : (
+              <ul className="max-h-[32rem] overflow-y-auto">
+                {o.recent_activity.items.map((a) => (
+                  <ActivityItem key={a.id} activity={a} flash={flashActivity.has(a.id)} />
+                ))}
+              </ul>
+            )}
+          </Section>
         </Group>
       </div>
     </>
