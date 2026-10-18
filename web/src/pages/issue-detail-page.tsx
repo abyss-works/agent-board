@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilestones, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
-import type { Issue, IssuePatch, IssueStatus, IssueType } from '@/api/types'
+import { MILESTONE_STATUSES, type Issue, type IssuePatch, type IssueStatus, type IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { InlineInput, MarkdownArea } from '@/components/issue/inline-edit'
@@ -23,6 +23,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { useFlash } from '@/hooks/use-flash'
 import { STATUS_LABEL } from '@/lib/labels'
+import { milestoneNameMap } from '@/lib/milestones'
 import { ISSUES_PATH, openedFromScreen } from '@/lib/overlay'
 import { isEditableTarget } from '@/lib/shortcuts'
 import { reasonRequired, statusChangePatch } from '@/lib/status'
@@ -65,8 +66,10 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const topics = useTopics(issue.project)
   const allTopics = useTopics(issue.project, 'all')
   const topicNames = topicNameMap(allTopics.data?.items ?? [])
-  // 고를 수 있는 마일스톤은 열린 것만이다.
+  // 고를 수 있는 마일스톤은 열린 것만이고, 활동 기록의 마일스톤 이름은 닫히거나 삭제된 것까지 포함한 전체에서 찾는다.
   const milestones = useMilestones(issue.project)
+  const allMilestones = useMilestones(issue.project, MILESTONE_STATUSES)
+  const milestoneNames = milestoneNameMap(allMilestones.data?.items ?? [])
   const [editingBody, setEditingBody] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -226,7 +229,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
                 {items && items.length > 0 ? (
                   <ul>
                     {items.map((a) => (
-                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} topicName={(id) => topicNames.get(id)} />
+                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} topicName={(id) => topicNames.get(id)} milestoneName={(id) => milestoneNames.get(id)} />
                     ))}
                   </ul>
                 ) : null}

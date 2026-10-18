@@ -57,6 +57,7 @@ export const FIELD_LABEL: Record<string, string> = {
   refs: '참조',
   recheck_condition: '재검토 조건',
   topic: '주제',
+  milestone: '마일스톤',
   status_reason: '상태 사유',
   acknowledged: '확인',
   project: '프로젝트',
