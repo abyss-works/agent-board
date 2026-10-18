@@ -73,6 +73,18 @@ describe('issueListQuery', () => {
     expect(issueListQuery({ ...base, topic: ['4', 'none'] })).toBe('?project=AGB&topic=4%2Cnone')
     expect(issueListQuery({ ...base, topic: [] })).toBe('?project=AGB')
   })
+  it('마일스톤 필터는 쉼표 OR로 만들고 비면 생략한다', () => {
+    const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
+    expect(issueListQuery({ ...base, milestone: ['2'] })).toBe('?project=AGB&milestone=2')
+    expect(issueListQuery({ ...base, milestone: ['2', 'none'] })).toBe('?project=AGB&milestone=2%2Cnone')
+    expect(issueListQuery({ ...base, milestone: ['none'] })).toBe('?project=AGB&milestone=none')
+    expect(issueListQuery({ ...base, milestone: [] })).toBe('?project=AGB')
+    expect(issueListQuery(base)).toBe('?project=AGB')
+  })
+  it('주제와 마일스톤 필터를 함께 쓰면 두 매개변수를 모두 붙인다', () => {
+    const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
+    expect(issueListQuery({ ...base, topic: ['4'], milestone: ['2'] })).toBe('?project=AGB&topic=4&milestone=2')
+  })
   it('확인 여부 필터는 값이 있을 때만 붙인다', () => {
     const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
     expect(issueListQuery({ ...base, acknowledged: 'false' })).toBe('?project=AGB&acknowledged=false')
