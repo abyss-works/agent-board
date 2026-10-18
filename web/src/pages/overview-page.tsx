@@ -197,14 +197,16 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
         <Group title="분포">
           <Counts overview={o} />
         </Group>
-        <div className="grid grid-cols-3 gap-3 lg:grid-cols-6">
-          <Stat label="전체" value={o.counts.total} />
-          <Stat label="열린 이슈" value={o.counts.open} />
-          <Stat label="진행" value={o.doing.total} tone="text-amber-400" />
-          <Stat label="결정 대기" value={o.decisions.total} tone={o.decisions.total > 0 ? 'text-amber-300' : undefined} />
-          <Stat label="검토" value={o.review.total} tone="text-emerald-400" />
-          <Stat label="막힘" value={o.blocked.total} tone={o.blocked.total > 0 ? 'text-rose-400' : undefined} />
-        </div>
+        <Group title="요약">
+          <div className="grid grid-cols-3 gap-3 lg:grid-cols-6">
+            <Stat label="전체" value={o.counts.total} />
+            <Stat label="열린 이슈" value={o.counts.open} />
+            <Stat label="진행" value={o.doing.total} tone="text-amber-400" />
+            <Stat label="결정 대기" value={o.decisions.total} tone={o.decisions.total > 0 ? 'text-amber-300' : undefined} />
+            <Stat label="검토" value={o.review.total} tone="text-emerald-400" />
+            <Stat label="막힘" value={o.blocked.total} tone={o.blocked.total > 0 ? 'text-rose-400' : undefined} />
+          </div>
+        </Group>
         <Group title="내 차례">
           <div className="grid gap-3 xl:grid-cols-3">
             <Section
