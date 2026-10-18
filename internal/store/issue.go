@@ -266,7 +266,12 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		issue.Priority = model.DefaultPriority
 	}
 	model.NormalizeIssue(&issue)
-	if err := model.ValidateIssue(&issue); err != nil {
+	checks := []error{model.ValidateIssue(&issue)}
+	if kind == model.ActorAgent {
+		// An agent writes every body to its type's template; the user writes freely.
+		checks = append(checks, model.CheckTemplate(issue.Type, issue.Body))
+	}
+	if err := model.MergeValidation(checks...); err != nil {
 		return nil, err
 	}
 	if issue.Status.Closed() {
@@ -339,8 +344,12 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 // whether anything changed; an unchanged issue gets no activity record and
 // keeps its version. ifMatch, when non-nil, must equal the current version.
 func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, patch IssuePatch, ifMatch *int64) (*model.Issue, bool, error) {
+	kind, err := actorKind(ctx, s.db, tr.Actor)
+	if err != nil {
+		return nil, false, err
+	}
 	changed := false
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err = s.write(ctx, func(tx *sql.Tx) error {
 		cur, err := getIssueRow(ctx, tx, key)
 		if err != nil {
 			return err
@@ -384,7 +393,12 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		}
 		model.NormalizeIssue(&next)
 		reason, reasonErr := model.ResolveStatusReason(cur.Status, next.Status, patch.StatusReason)
-		if err := model.MergeValidation(model.ValidateIssue(&next), reasonErr); err != nil {
+		checks := []error{model.ValidateIssue(&next), reasonErr}
+		if kind == model.ActorAgent && (next.Body != cur.Body || next.Type != cur.Type) {
+			// A new body or a new type puts the body to the template of the type it ends up with.
+			checks = append(checks, model.CheckTemplate(next.Type, next.Body))
+		}
+		if err := model.MergeValidation(checks...); err != nil {
 			return err
 		}
 		statusChanged := next.Status != cur.Status

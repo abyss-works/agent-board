@@ -79,7 +79,7 @@ func TestStatusReasonOnPatch(t *testing.T) {
 
 	// status_reason is server managed on creation.
 	wantFieldError(t, e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"x","status_reason":"이유"}`, nil), 400, "status_reason")
-	rec = e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"born cancelled","status":"cancelled"}`, nil)
+	rec = e.postIssue(t, `{"project":"AGB","title":"born cancelled","status":"cancelled"}`, nil)
 	if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"status_reason":null`) {
 		t.Errorf("created cancelled: %d %s", rec.Code, rec.Body.String())
 	}

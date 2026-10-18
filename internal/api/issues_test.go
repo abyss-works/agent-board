@@ -9,9 +9,43 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
+// withTemplateBody adds the template body of the request's type to a create
+// request that sets no body. The default test actor is an agent, and the
+// server holds an agent's bodies to the template of their type.
+func withTemplateBody(t *testing.T, body string) string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil || m == nil {
+		return body
+	}
+	if _, has := m["body"]; has {
+		return body
+	}
+	typ := model.DefaultIssueType
+	if v, ok := m["type"].(string); ok {
+		typ = model.IssueType(v)
+	}
+	tpl, ok := model.TemplateFor(typ)
+	if !ok {
+		return body
+	}
+	m["body"] = tpl.Body
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// postIssue creates an issue the way createIssue does but returns the response.
+func (e *env) postIssue(t *testing.T, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	return e.do(t, "POST", "/v1/issues", withTemplateBody(t, body), headers)
+}
+
 func (e *env) createIssue(t *testing.T, body string) model.Issue {
 	t.Helper()
-	rec := e.do(t, "POST", "/v1/issues", body, nil)
+	rec := e.postIssue(t, body, nil)
 	if rec.Code != 201 {
 		t.Fatalf("create issue %s: %d %s", body, rec.Code, rec.Body.String())
 	}
@@ -23,12 +57,15 @@ func (e *env) createIssue(t *testing.T, body string) model.Issue {
 func TestCreateIssue(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
-	rec := e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"첫 이슈"}`, nil)
+	rec := e.postIssue(t, `{"project":"AGB","title":"첫 이슈"}`, nil)
 	if rec.Code != 201 || rec.Header().Get("Location") != "/v1/issues/AGB-1" {
 		t.Fatalf("create: %d %s %q", rec.Code, rec.Body.String(), rec.Header().Get("Location"))
 	}
 	var i model.Issue
 	decodeJSON(t, rec, &i)
+	if tpl, _ := model.TemplateFor(model.TypeFeature); i.Body != tpl.Body {
+		t.Errorf("body = %q, want the feature template", i.Body)
+	}
 	if i.Key != "AGB-1" || i.Title != "첫 이슈" || i.Status != model.StatusBacklog || i.Priority != model.P2 || i.Type != model.TypeFeature || i.CreatedBy != "claude" || i.Version != 1 {
 		t.Errorf("issue = %+v", i)
 	}
@@ -36,9 +73,9 @@ func TestCreateIssue(t *testing.T) {
 		t.Errorf("json shape: %s", rec.Body.String())
 	}
 
-	full := e.createIssue(t, `{"project":"AGB","title":"full","body":"# b","type":"observation","status":"todo","priority":"P0",
+	full := e.createIssue(t, `{"project":"AGB","title":"full","type":"observation","status":"todo","priority":"P0",
 		"labels":["cli","api"],"parent":"AGB-1","depends_on":["AGB-1"],"refs":["repo:wsk0715/agent-board"],"recheck_condition":"later"}`)
-	if full.Key != "AGB-2" || full.Body != "# b" || *full.Parent != "AGB-1" || full.Labels[0] != "api" || *full.RecheckCondition != "later" || full.Priority != model.P0 {
+	if tpl, _ := model.TemplateFor(model.TypeObservation); full.Key != "AGB-2" || full.Body != tpl.Body || *full.Parent != "AGB-1" || full.Labels[0] != "api" || *full.RecheckCondition != "later" || full.Priority != model.P0 {
 		t.Errorf("full = %+v", full)
 	}
 
@@ -67,7 +104,7 @@ func TestCreateIssue(t *testing.T) {
 		{"not an object", `[1]`, 400, ""},
 	}
 	for _, c := range cases {
-		rec := e.do(t, "POST", "/v1/issues", c.body, nil)
+		rec := e.postIssue(t, c.body, nil)
 		if rec.Code != c.code {
 			t.Errorf("%s: status = %d, want %d: %s", c.name, rec.Code, c.code, rec.Body.String())
 			continue
@@ -87,7 +124,7 @@ func TestCreateIssue(t *testing.T) {
 	}
 
 	e.do(t, "PATCH", "/v1/projects/AGB", `{"status":"archived"}`, nil)
-	rec = e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"x"}`, nil)
+	rec = e.postIssue(t, `{"project":"AGB","title":"x"}`, nil)
 	if rec.Code != 409 || decodeErr(t, rec).Error.Details[0].Reason != "project_not_active" {
 		t.Errorf("archived project: %d %s", rec.Code, rec.Body.String())
 	}
@@ -105,7 +142,7 @@ func TestGetPatchDeleteIssue(t *testing.T) {
 	}
 	var i model.Issue
 	decodeJSON(t, rec, &i)
-	if i.Key != "AGB-1" || !strings.Contains(rec.Body.String(), `"body":""`) {
+	if tpl, _ := model.TemplateFor(model.TypeFeature); i.Key != "AGB-1" || i.Body != tpl.Body {
 		t.Errorf("get body = %s", rec.Body.String())
 	}
 	if rec = e.do(t, "GET", "/v1/issues/AGB-9", "", nil); rec.Code != 404 {

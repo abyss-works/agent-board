@@ -10,7 +10,7 @@ import (
 
 func TestIssueAcknowledge(t *testing.T) {
 	p := createProject(t, "AK")
-	byAgent := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "agent made"})
+	byAgent := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "agent made", "body": templateBody(t, "feature")})
 	byUser := newIssue(t, p.Key, "user made", nil)
 
 	t.Run("initial state follows the actor kind", func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestIssueAcknowledge(t *testing.T) {
 		if got.AcknowledgedAt == nil {
 			t.Errorf("a later change must keep the mark: %+v", got)
 		}
-		unmarked := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "still unacknowledged"})
+		unmarked := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "still unacknowledged", "body": templateBody(t, "feature")})
 		moved := patchIssue(t, as("claude"), unmarked.Key, map[string]any{"status": "todo"})
 		if moved.Status != "todo" || moved.AcknowledgedAt != nil {
 			t.Errorf("status change of an unacknowledged issue = %+v", moved)

@@ -261,13 +261,13 @@ func TestIssueTopicOnTheAPI(t *testing.T) {
 	infra := e.createTopic(t, "AGB", `{"name":"인프라"}`)
 	foreign := e.createTopic(t, "OTH", `{"name":"다른 프로젝트"}`)
 
-	rec := e.do(t, "POST", "/v1/issues", fmt.Sprintf(`{"project":"AGB","title":"분류된 이슈","topic":%d}`, triage.ID), nil)
+	rec := e.postIssue(t, fmt.Sprintf(`{"project":"AGB","title":"분류된 이슈","topic":%d}`, triage.ID), nil)
 	var i model.Issue
 	decodeJSON(t, rec, &i)
 	if rec.Code != 201 || i.Topic == nil || *i.Topic != triage.ID || i.TopicPath == nil || *i.TopicPath != "이슈 흐름/트리아지" {
 		t.Fatalf("create with topic: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"주제 없음","topic":null}`, nil)
+	rec = e.postIssue(t, `{"project":"AGB","title":"주제 없음","topic":null}`, nil)
 	if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"topic":null`) || !strings.Contains(rec.Body.String(), `"topic_path":null`) {
 		t.Errorf("create without topic: %d %s", rec.Code, rec.Body.String())
 	}
@@ -275,9 +275,9 @@ func TestIssueTopicOnTheAPI(t *testing.T) {
 	e.createIssue(t, fmt.Sprintf(`{"project":"AGB","title":"인프라","topic":%d}`, infra.ID))
 
 	// Refusals: another project, missing, wrong type.
-	wantFieldError(t, e.do(t, "POST", "/v1/issues", fmt.Sprintf(`{"project":"AGB","title":"x","topic":%d}`, foreign.ID), nil), 422, "topic")
-	wantFieldError(t, e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"x","topic":9999}`, nil), 422, "topic")
-	wantFieldError(t, e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"x","topic":"abc"}`, nil), 400, "topic")
+	wantFieldError(t, e.postIssue(t, fmt.Sprintf(`{"project":"AGB","title":"x","topic":%d}`, foreign.ID), nil), 422, "topic")
+	wantFieldError(t, e.postIssue(t, `{"project":"AGB","title":"x","topic":9999}`, nil), 422, "topic")
+	wantFieldError(t, e.postIssue(t, `{"project":"AGB","title":"x","topic":"abc"}`, nil), 400, "topic")
 
 	// PATCH: move, clear, refuse.
 	rec = e.do(t, "PATCH", "/v1/issues/AGB-2", fmt.Sprintf(`{"topic":%d}`, infra.ID), nil)

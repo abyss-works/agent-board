@@ -15,7 +15,7 @@ func TestIssueCreate(t *testing.T) {
 	other := createProject(t, "IC2")
 
 	t.Run("minimal body takes the defaults", func(t *testing.T) {
-		r := as("codex").do(t, "POST", "/v1/issues", map[string]any{"project": p.Key, "title": "첫 이슈"})
+		r := as("codex").do(t, "POST", "/v1/issues", map[string]any{"project": p.Key, "title": "첫 이슈", "body": templateBody(t, "feature")})
 		iss := decodeAs[issue](t, r, 201)
 		if r.header.Get("Location") != "/v1/issues/"+iss.Key {
 			t.Errorf("Location = %q", r.header.Get("Location"))
@@ -26,8 +26,8 @@ func TestIssueCreate(t *testing.T) {
 		if iss.Key != p.Key+"-1" || iss.Project != p.Key || iss.Number != 1 || iss.Title != "첫 이슈" {
 			t.Errorf("identity = %+v", iss)
 		}
-		if iss.Body == nil || *iss.Body != "" {
-			t.Errorf("body = %v, want empty string", iss.Body)
+		if iss.Body == nil || *iss.Body != templateBody(t, "feature") {
+			t.Errorf("body = %v, want the body that was sent", iss.Body)
 		}
 		if iss.Type != "feature" || iss.Status != "backlog" || iss.Priority != "P2" {
 			t.Errorf("defaults = type %s status %s priority %s", iss.Type, iss.Status, iss.Priority)
@@ -248,12 +248,12 @@ func TestIssuePatch(t *testing.T) {
 
 	t.Run("merge patch changes only the sent fields", func(t *testing.T) {
 		tick()
-		r := as("claude").do(t, "PATCH", "/v1/issues/"+iss.Key, map[string]any{"title": "patched", "labels": strs("api", "cli"), "parent": parent.Key, "body": "본문"})
+		r := as("claude").do(t, "PATCH", "/v1/issues/"+iss.Key, map[string]any{"title": "patched", "labels": strs("api", "cli"), "parent": parent.Key, "body": templateBody(t, "feature")})
 		got := decodeAs[issue](t, r, 200)
 		if r.header.Get("ETag") != `"2"` {
 			t.Errorf("ETag = %q", r.header.Get("ETag"))
 		}
-		if got.Title != "patched" || *got.Body != "본문" || !equalStrings(sortedCopy(got.Labels), []string{"api", "cli"}) || got.Parent == nil || *got.Parent != parent.Key {
+		if got.Title != "patched" || *got.Body != templateBody(t, "feature") || !equalStrings(sortedCopy(got.Labels), []string{"api", "cli"}) || got.Parent == nil || *got.Parent != parent.Key {
 			t.Errorf("patched = %+v", got)
 		}
 		if !equalStrings(got.Refs, []string{"doc:a.md"}) || got.Status != "backlog" || got.Priority != "P2" {
@@ -564,7 +564,7 @@ func TestIssueList(t *testing.T) {
 	tick()
 	i2 := newIssue(t, p.Key, "two", map[string]any{"status": "todo", "type": "bug", "priority": "P0", "labels": strs(la, lb), "parent": i1.Key})
 	tick()
-	i3 := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "three", "status": "doing", "type": "design", "priority": "P1", "labels": strs(lb), "parent": i1.Key})
+	i3 := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "three", "status": "doing", "type": "design", "priority": "P1", "labels": strs(lb), "parent": i1.Key, "body": templateBody(t, "design")})
 	tick()
 	i4 := newIssue(t, p.Key, "four", map[string]any{"status": "done", "type": "feature", "priority": "P0"})
 	tick()
