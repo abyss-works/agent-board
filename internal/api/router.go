@@ -51,6 +51,7 @@ func New(o Options) http.Handler {
 	h.registerProjects(protected)
 	h.registerIssues(protected)
 	h.registerTopics(protected)
+	h.registerTemplates(protected)
 	h.registerViews(protected)
 	protected.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, notFound("경로가 없습니다."))
