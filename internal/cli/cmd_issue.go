@@ -156,6 +156,12 @@ const bodyUsage = `  --body <텍스트>         본문(마크다운). 짧은 본
   --body-file <경로|->    본문을 파일에서 읽습니다. - 는 표준 입력. 긴 본문과 에이전트용
 `
 
+// templateUsage tells where the template check of the server shows up.
+const templateUsage = `
+에이전트가 만드는 이슈는 서버가 본문에 종류별 템플릿의 "## 제목"이 순서대로 모두 있는지 검사합니다
+(생성, 그리고 본문이나 종류를 바꾸는 수정). 템플릿은 agb template show <type> 으로 받습니다.
+`
+
 var issueCreateCmd = &command{
 	name: "create", summary: "이슈 생성",
 	usage: `사용법: agb issue create --project <P> --title <제목> [옵션]
@@ -172,7 +178,7 @@ var issueCreateCmd = &command{
   --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc. 반복 가능
   --recheck <조건>        observation 의 재검토 조건 (observation 이면 필수)
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다
-`,
+` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue create", g)
 		var project, title, typ, priority, status, body, bodyFile, parent, recheck, topic string
@@ -305,7 +311,7 @@ var issueUpdateCmd = &command{
   --no-recheck            재검토 조건 제거 (type 을 observation 에서 바꿀 때)
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). none 이면 주제를 지움
   --if-match <버전>       이 버전일 때만 수정. 숫자만 주어도 됩니다
-`,
+` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue update", g)
 		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, topic, ifMatch string

@@ -115,6 +115,7 @@ const Usage = `사용법: agb <명령> [옵션]
 프로젝트와 이슈:
   project           프로젝트 목록·단건·생성·수정·삭제·현황
   topic             대주제·주제 목록·생성·수정·삭제
+  template          이슈 종류별 본문 템플릿 목록·출력
   issue             이슈 목록·단건·생성·수정·삭제·확인·댓글·활동
 
 조회:
@@ -140,7 +141,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, issueCmd,
+	configCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, templateCmd, issueCmd,
 	activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
 }}
 

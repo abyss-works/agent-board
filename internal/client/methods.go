@@ -237,6 +237,11 @@ func (c *Client) DeleteIssue(ctx context.Context, key, reason, version string) (
 	return c.Request(ctx, http.MethodDelete, withQuery("/v1/issues/"+url.PathEscape(key), v), nil, ifMatch(version))
 }
 
+// Templates lists the body templates of the issue types.
+func (c *Client) Templates(ctx context.Context) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/templates", nil, nil)
+}
+
 // ListTopics lists the topics of a project. status is active (the server
 // default when empty), deleted or all.
 func (c *Client) ListTopics(ctx context.Context, project, status string) (*Response, error) {
