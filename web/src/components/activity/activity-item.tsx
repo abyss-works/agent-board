@@ -105,6 +105,7 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact }: 
                     <span className="truncate text-foreground/90">{l.to}</span>
                   </>
                 )}
+                {l.reason ? <span className="basis-full text-[0.6875rem] break-words text-muted-foreground">사유: {l.reason}</span> : null}
               </li>
             ))}
           </ul>

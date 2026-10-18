@@ -7,6 +7,8 @@ export interface ChangeLine {
   /** 표시용 값. 본문처럼 펼치지 않는 필드는 null. */
   from: string | null
   to: string | null
+  /** 상태 변경 줄에 붙는 사유. 자르지 않은 전체 문장이다. */
+  reason?: string
 }
 
 const MAX = 60
@@ -27,15 +29,22 @@ export function describeChanges(a: Activity): ChangeLine[] {
   if (a.kind === 'created') {
     return [{ field: 'title', label: fieldLabel('title'), from: null, to: formatValue(a.changes.title?.to) }]
   }
-  return Object.entries(a.changes).map(([field, change]) => {
-    if (field === 'body') return { field, label: fieldLabel(field), from: null, to: null }
-    return {
-      field,
-      label: fieldLabel(field),
-      from: formatValue(change.from, field),
-      to: formatValue(change.to, field),
-    }
-  })
+  const changes = a.changes
+  // 상태가 바뀐 기록의 사유는 상태 줄에 붙인다. 상태 변경 없이 사유만 있으면 별도 줄로 둔다.
+  const reason = typeof changes.status_reason?.to === 'string' ? changes.status_reason.to : undefined
+  return Object.entries(changes)
+    .filter(([field]) => !(field === 'status_reason' && 'status' in changes))
+    .map(([field, change]) => {
+      if (field === 'body') return { field, label: fieldLabel(field), from: null, to: null }
+      const line: ChangeLine = {
+        field,
+        label: fieldLabel(field),
+        from: formatValue(change.from, field),
+        to: formatValue(change.to, field),
+      }
+      if (field === 'status' && reason) line.reason = reason
+      return line
+    })
 }
 
 /** 요약이 없는 댓글을 한 줄로 보일 때 남기는 본문 앞부분의 글자 수(코드 포인트) */
@@ -55,5 +64,10 @@ export function summarizeActivity(a: Activity): string {
   if (a.kind === 'commented') return a.summary || bodyExcerpt(a.body ?? '')
   const lines = describeChanges(a)
   if (a.kind === 'created') return lines[0]?.to ?? ''
-  return lines.map((l) => (l.to === null ? `${l.label} 수정` : `${l.label}: ${l.from} → ${l.to}`)).join(' · ')
+  return lines
+    .map((l) => {
+      if (l.to === null) return `${l.label} 수정`
+      return `${l.label}: ${l.from} → ${l.to}${l.reason ? ` (사유: ${formatValue(l.reason)})` : ''}`
+    })
+    .join(' · ')
 }

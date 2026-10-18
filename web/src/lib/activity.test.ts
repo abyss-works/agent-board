@@ -67,6 +67,46 @@ describe('describeChanges', () => {
   })
 })
 
+describe('상태 변경의 사유', () => {
+  const withReason = activity({
+    changes: {
+      status: { from: 'todo', to: 'cancelled' },
+      status_reason: { from: null, to: 'AGB-20과 중복' },
+    },
+  })
+  it('사유를 상태 줄에 붙이고 따로 줄을 만들지 않는다', () => {
+    expect(describeChanges(withReason)).toEqual([{ field: 'status', label: '상태', from: '할 일', to: '취소', reason: 'AGB-20과 중복' }])
+  })
+  it('다른 필드와 함께 바뀌어도 상태 줄에만 붙는다', () => {
+    const lines = describeChanges(
+      activity({
+        changes: {
+          status: { from: 'todo', to: 'doing' },
+          status_reason: { from: null, to: '할 일 → 진행' },
+          labels: { from: [], to: ['api'] },
+        },
+      }),
+    )
+    expect(lines.map((l) => l.field)).toEqual(['status', 'labels'])
+    expect(lines[0].reason).toBe('할 일 → 진행')
+    expect(lines[1].reason).toBeUndefined()
+  })
+  it('상태 변경 없이 사유만 있는 기록은 사유를 별도 줄로 보인다', () => {
+    const lines = describeChanges(activity({ changes: { status_reason: { from: null, to: '이유' } } }))
+    expect(lines).toEqual([{ field: 'status_reason', label: '상태 사유', from: '없음', to: '이유' }])
+  })
+  it('긴 사유도 줄에는 전체를 담는다', () => {
+    const long = '가'.repeat(200)
+    const lines = describeChanges(activity({ changes: { status: { from: 'todo', to: 'deleted' }, status_reason: { from: null, to: long } } }))
+    expect(lines[0].reason).toBe(long)
+  })
+  it('한 줄 요약에는 사유를 괄호로 붙이고 길면 자른다', () => {
+    expect(summarizeActivity(withReason)).toBe('상태: 할 일 → 취소 (사유: AGB-20과 중복)')
+    const long = activity({ changes: { status: { from: 'todo', to: 'deleted' }, status_reason: { from: null, to: '나'.repeat(100) } } })
+    expect(summarizeActivity(long)).toBe(`상태: 할 일 → 삭제 (사유: ${'나'.repeat(60)}…)`)
+  })
+})
+
 describe('bodyExcerpt', () => {
   it('20자 이하 본문은 그대로 두고 말줄임표를 붙이지 않는다', () => {
     expect(bodyExcerpt('랭킹 UI 위치를 옮겼다.')).toBe('랭킹 UI 위치를 옮겼다.')

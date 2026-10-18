@@ -167,7 +167,8 @@ export function useDeleteIssue() {
   const api = useApi()
   const invalidate = useInvalidateInstance()
   return useMutation({
-    mutationFn: ({ key, version }: { key: string; version: number }) => api.delete<Issue>(`/issues/${key}`, { ifMatch: version }),
+    mutationFn: ({ key, version, reason }: { key: string; version: number; reason: string }) =>
+      api.delete<Issue>(`/issues/${key}`, { ifMatch: version, query: { reason } }),
     onSettled: () => invalidate(),
   })
 }

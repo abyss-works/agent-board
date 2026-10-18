@@ -18,11 +18,13 @@ import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { IssueCard, IssueCardBody } from '@/components/issue/issue-card'
 import { IssueCreateDialog } from '@/components/issue/issue-create-dialog'
 import { StatusIcon } from '@/components/issue/meta'
+import { ReasonDialog } from '@/components/issue/reason-dialog'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
 import { useFlash } from '@/hooks/use-flash'
 import { boardColumns, moveIssue } from '@/lib/board'
 import { STATUS_LABEL } from '@/lib/labels'
+import { reasonRequired, statusChangePatch } from '@/lib/status'
 import { toastError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -67,6 +69,8 @@ function BoardView({ projectKey }: { projectKey: string | null }) {
   const [showCancelled, setShowCancelled] = useState(false)
   const [active, setActive] = useState<IssueSummary | null>(null)
   const [addStatus, setAddStatus] = useState<IssueStatus | null>(null)
+  // 취소·삭제 열로 끈 카드. 사유를 받을 때까지 카드를 옮기지 않는다.
+  const [pendingMove, setPendingMove] = useState<{ issue: IssueSummary; to: IssueStatus } | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   const allIssues = board.data?.columns.flatMap((c) => c.issues)
@@ -81,11 +85,16 @@ function BoardView({ projectKey }: { projectKey: string | null }) {
     const issue = (e.active.data.current as { issue: IssueSummary } | undefined)?.issue
     const to = e.over?.id as IssueStatus | undefined
     if (!issue || !to || to === issue.status) return
+    if (reasonRequired(to)) setPendingMove({ issue, to })
+    else move(issue, to)
+  }
+
+  const move = (issue: IssueSummary, to: IssueStatus, reason?: string) => {
     const key = [instance.id, 'board', projectKey]
     // 낙관적으로 카드를 옮기고, 실패하면 onSettled의 invalidate가 서버 상태로 되돌린다.
     qc.setQueryData<Board>(key, (cur) => (cur ? moveIssue(cur, issue.key, to) : cur))
     patch.mutate(
-      { key: issue.key, patch: { status: to }, version: issue.version },
+      { key: issue.key, patch: statusChangePatch(to, reason), version: issue.version },
       { onError: (err) => toastError(err, `${issue.key} 상태를 바꾸지 못했습니다`) },
     )
   }
@@ -117,6 +126,18 @@ function BoardView({ projectKey }: { projectKey: string | null }) {
         </DndContext>
       ) : null}
       <IssueCreateDialog open={addStatus !== null} onOpenChange={(o) => !o && setAddStatus(null)} initialStatus={addStatus ?? undefined} />
+      <ReasonDialog
+        open={pendingMove !== null}
+        onOpenChange={(o) => !o && setPendingMove(null)}
+        title={pendingMove ? `${pendingMove.issue.key}를 ${STATUS_LABEL[pendingMove.to]} 상태로 바꿀까요?` : ''}
+        description="취소와 삭제는 사유가 필요합니다. 사유는 이슈의 상태 사유와 활동 기록에 남습니다."
+        submitLabel="바꾸기"
+        onSubmit={(reason) => {
+          if (!pendingMove) return
+          move(pendingMove.issue, pendingMove.to, reason)
+          setPendingMove(null)
+        }}
+      />
     </>
   )
 }

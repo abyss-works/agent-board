@@ -38,6 +38,8 @@ export interface IssueSummary {
   depends_on: string[]
   refs: string[]
   recheck_condition: string | null
+  /** 마지막 상태 변경의 사유. 상태를 바꾼 적이 없으면 null이다. */
+  status_reason: string | null
   version: number
   created_at: string
   updated_at: string
@@ -163,6 +165,8 @@ export interface IssuePatch {
   body?: string
   type?: IssueType
   status?: IssueStatus
+  /** 상태를 바꿀 때만 쓴다. 취소·삭제로 바꿀 때는 필수다. */
+  status_reason?: string
   priority?: Priority
   labels?: string[]
   parent?: string | null

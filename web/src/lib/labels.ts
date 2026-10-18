@@ -50,6 +50,7 @@ export const FIELD_LABEL: Record<string, string> = {
   depends_on: '선행 이슈',
   refs: '참조',
   recheck_condition: '재검토 조건',
+  status_reason: '상태 사유',
   project: '프로젝트',
 }
 
