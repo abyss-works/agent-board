@@ -30,7 +30,7 @@ EndpointSlice의 주소와 포트는 환경 파일의 `AGB_BIND`, `AGB_PORT`와 
 - `AGB_PORT`: 호스트 포트. 생략하면 8420이다. 워크플로의 헬스 확인과 EndpointSlice가 8420을 쓰므로, 바꾸면 둘도 함께 바꾼다.
 - `AGB_TOKEN`: 공용 토큰. 32자 이상이어야 한다.
 - `AGB_ACTORS`: 행위자 목록. `id:kind`를 쉼표로 잇는다. 예: `owner:user,claude:agent`
-- `AGB_BACKUP_BUCKET`, `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY`: 백업 설정이며 모두 생략할 수 있다. 버킷을 지정하면 나머지 셋도 필요하다. 이 저장소의 `agb serve`는 객체 저장소 어댑터 없이 서버를 만들므로, 버킷을 지정하면 서버가 시작하지 않는다.
+- `AGB_BACKUP_BUCKET`, `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY`: S3 호환 오브젝트 저장소(Cloudflare R2) 백업 설정이다. 모두 생략하면 백업이 꺼진다. 버킷을 지정하면 나머지 셋도 필요하다. 엔드포인트는 `https://<계정 ID>.r2.cloudflarestorage.com` 형식이고, 키는 그 버킷 하나에 객체 읽기·쓰기 권한만 준 R2 API 토큰의 S3 자격 증명이다. 백업이 켜지면 서버 시작 직후와 이후 1시간마다(바뀐 것이 있을 때) 스냅샷을 올린다.
 
 ### 러너
 
@@ -77,6 +77,13 @@ AGB_IMAGE_TAG=git-<이전 sha7> docker compose -f deploy/compose.prod.yaml --env
 ```
 
 데이터는 볼륨 `agb_agb-data`에 있으므로 이미지를 바꿔도 남는다.
+
+## 백업에서 복원
+
+1. 컨테이너를 멈춘다: `docker stop agb-agb-1`
+2. 버킷에서 가장 최근 객체(`agb/agb-<yyyymmdd>T<hhmm>Z.db.gz`)를 내려받아 gzip을 푼다.
+3. 볼륨 `agb_agb-data`의 `agb.db`를 그 파일로 바꾸고 `agb.db-wal`, `agb.db-shm`을 지운다. 파일 소유자는 컨테이너 사용자(65532)여야 한다.
+4. 컨테이너를 띄우고 `/v1/health`를 확인한다: `docker start agb-agb-1`
 
 ## 상태 확인
 
