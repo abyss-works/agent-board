@@ -1,9 +1,9 @@
-import { ArrowLeftIcon, CopyIcon, PencilIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue } from '@/api/queries'
-import type { Issue, IssuePatch, IssueType } from '@/api/types'
+import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
+import type { Issue, IssuePatch, IssueStatus, IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { InlineInput, MarkdownArea } from '@/components/issue/inline-edit'
@@ -12,17 +12,9 @@ import { parseIssueKeys, parseLabels, parseRefs } from '@/lib/parse'
 import { ActorChip, LabelChip } from '@/components/issue/meta'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from '@/components/issue/options'
 import { PropertySelect } from '@/components/issue/property-select'
+import { ReasonDialog } from '@/components/issue/reason-dialog'
+import { TopicSelect } from '@/components/issue/topic-select'
 import { Markdown } from '@/components/markdown'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,15 +24,20 @@ import { useFlash } from '@/hooks/use-flash'
 import { STATUS_LABEL } from '@/lib/labels'
 import { ISSUES_PATH, openedFromScreen } from '@/lib/overlay'
 import { isEditableTarget } from '@/lib/shortcuts'
+import { reasonRequired, statusChangePatch } from '@/lib/status'
 import { formatKst, formatRelative } from '@/lib/time'
+import { topicNameMap } from '@/lib/topics'
 import { toastError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
-function Property({ label, children }: { label: string; children: ReactNode }) {
+function Property({ label, children, note }: { label: string; children: ReactNode; note?: ReactNode }) {
   return (
     <div className="grid grid-cols-[5.5rem_1fr] items-start gap-2 py-1">
       <div className="pt-1.5 text-[0.6875rem] text-muted-foreground">{label}</div>
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0">
+        {children}
+        {note ? <p className="pb-0.5 text-[0.6875rem] leading-snug break-words text-muted-foreground">{note}</p> : null}
+      </div>
     </div>
   )
 }
@@ -60,11 +57,18 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const navigate = useNavigate()
   const patch = usePatchIssue()
   const del = useDeleteIssue()
+  const acknowledge = useSetAcknowledged()
   const comment = useCreateComment()
   const activity = useIssueActivity(issue.key)
+  // 고를 수 있는 주제는 활성 주제, 활동 기록의 주제 이름은 삭제된 주제까지 포함한 전체에서 찾는다.
+  const topics = useTopics(issue.project)
+  const allTopics = useTopics(issue.project, 'all')
+  const topicNames = topicNameMap(allTopics.data?.items ?? [])
   const [editingBody, setEditingBody] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // 취소·삭제로 바꾸려고 고른 상태. 사유를 받을 때까지 요청을 보내지 않는다.
+  const [reasonFor, setReasonFor] = useState<IssueStatus | null>(null)
   // 종류를 관측으로 바꿀 때 재검토 조건이 없으면 먼저 받는다.
   const [pendingRecheck, setPendingRecheck] = useState<string | null>(null)
 
@@ -74,6 +78,15 @@ function IssueDetail({ issue }: { issue: Issue }) {
 
   const save = (body: IssuePatch, label: string) =>
     patch.mutate({ key: issue.key, patch: body, version: issue.version }, { onError: (err) => toastError(err, `${label}을(를) 저장하지 못했습니다`) })
+
+  const setAcknowledged = (acknowledged: boolean) =>
+    acknowledge.mutate({ key: issue.key, acknowledged }, { onError: (err) => toastError(err, '확인 표시를 바꾸지 못했습니다') })
+
+  const changeStatus = (status: IssueStatus) => {
+    if (status === issue.status) return
+    if (reasonRequired(status)) setReasonFor(status)
+    else save(statusChangePatch(status), '상태')
+  }
 
   const changeType = (type: IssueType) => {
     if (type === issue.type) return
@@ -122,7 +135,28 @@ function IssueDetail({ issue }: { issue: Issue }) {
             <CopyIcon className="size-3" />
           </Button>
           {issue.status === 'deleted' ? <Badge variant="destructive">삭제됨</Badge> : null}
-          <span className="ml-auto font-mono text-[0.625rem] text-muted-foreground">v{issue.version}</span>
+          <div className="ml-auto flex items-center gap-2">
+            {issue.acknowledged_at === null ? (
+              <>
+                <Badge variant="info">미확인</Badge>
+                <Button size="xs" onClick={() => setAcknowledged(true)} disabled={acknowledge.isPending} title="이 이슈를 확인했다고 표시합니다. 작업 흐름에는 영향이 없습니다.">
+                  <CheckIcon />
+                  확인
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setAcknowledged(false)}
+                disabled={acknowledge.isPending}
+                title={`${issue.acknowledged_by ?? '마이그레이션'}이 ${formatKst(issue.acknowledged_at)} KST에 확인함`}
+              >
+                확인 취소
+              </Button>
+            )}
+            <span className="font-mono text-[0.625rem] text-muted-foreground">v{issue.version}</span>
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -189,7 +223,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
                 {items && items.length > 0 ? (
                   <ul>
                     {items.map((a) => (
-                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} />
+                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} topicName={(id) => topicNames.get(id)} />
                     ))}
                   </ul>
                 ) : null}
@@ -201,8 +235,8 @@ function IssueDetail({ issue }: { issue: Issue }) {
 
       <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l px-4 py-3">
         <div className="mb-1 text-[0.6875rem] font-medium text-muted-foreground">속성</div>
-        <Property label="상태">
-          <PropertySelect value={issue.status} options={STATUS_OPTIONS} onChange={(s) => s !== issue.status && save({ status: s }, '상태')} title="상태" className="-ml-1.5" />
+        <Property label="상태" note={issue.status_reason}>
+          <PropertySelect value={issue.status} options={STATUS_OPTIONS} onChange={changeStatus} title="상태" className="-ml-1.5" />
         </Property>
         <Property label="우선순위">
           <PropertySelect value={issue.priority} options={PRIORITY_OPTIONS} onChange={(p) => p !== issue.priority && save({ priority: p }, '우선순위')} title="우선순위" className="-ml-1.5" />
@@ -236,6 +270,15 @@ function IssueDetail({ issue }: { issue: Issue }) {
             <InlineInput value={issue.recheck_condition ?? ''} onCommit={(v) => v && save({ recheck_condition: v }, '재검토 조건')} placeholder="필수" />
           </Property>
         ) : null}
+        <Property label="주제">
+          <TopicSelect
+            topics={topics.data?.items ?? []}
+            value={issue.topic}
+            fallbackLabel={issue.topic_path}
+            onChange={(id) => id !== issue.topic && save({ topic: id }, '주제')}
+            className="-ml-1.5"
+          />
+        </Property>
         <Property label="라벨">
           <InlineInput
             value={issue.labels.join(' ')}
@@ -320,44 +363,53 @@ function IssueDetail({ issue }: { issue: Issue }) {
               이슈 삭제
             </Button>
           ) : (
-            <Button variant="outline" size="sm" className="w-full" onClick={() => save({ status: 'backlog' }, '상태')}>
+            <Button variant="outline" size="sm" className="w-full" onClick={() => save(statusChangePatch('backlog'), '상태')}>
               백로그로 되살리기
             </Button>
           )}
         </div>
       </aside>
 
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{issue.key}를 삭제할까요?</AlertDialogTitle>
-            <AlertDialogDescription>
-              소프트 삭제입니다. 상태가 '삭제'로 바뀌고 기록은 남습니다. 상태를 바꾸면 되살릴 수 있습니다.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={del.isPending}>취소</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={del.isPending}
-              onClick={(e) => {
-                e.preventDefault()
-                del.mutate(
-                  { key: issue.key, version: issue.version },
-                  {
-                    onSuccess: () => {
-                      toast.success(`${issue.key}를 삭제했습니다`)
-                      setConfirmDelete(false)
-                    },
-                    onError: (err) => toastError(err, '이슈를 삭제하지 못했습니다'),
-                  },
-                )
-              }}
-            >
-              삭제
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ReasonDialog
+        open={reasonFor !== null}
+        onOpenChange={(o) => !o && setReasonFor(null)}
+        title={`${issue.key}를 ${STATUS_LABEL[reasonFor ?? issue.status]} 상태로 바꿀까요?`}
+        description="취소와 삭제는 사유가 필요합니다. 사유는 이슈의 상태 사유와 활동 기록에 남습니다."
+        submitLabel="바꾸기"
+        pending={patch.isPending}
+        onSubmit={(reason) => {
+          if (!reasonFor) return
+          patch.mutate(
+            { key: issue.key, patch: statusChangePatch(reasonFor, reason), version: issue.version },
+            {
+              onSuccess: () => setReasonFor(null),
+              onError: (err) => toastError(err, '상태를 저장하지 못했습니다'),
+            },
+          )
+        }}
+      />
+
+      <ReasonDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`${issue.key}를 삭제할까요?`}
+        description="소프트 삭제입니다. 상태가 '삭제'로 바뀌고 기록은 남습니다. 상태를 바꾸면 되살릴 수 있습니다. 삭제 사유를 남깁니다."
+        submitLabel="삭제"
+        destructive
+        pending={del.isPending}
+        onSubmit={(reason) =>
+          del.mutate(
+            { key: issue.key, version: issue.version, reason },
+            {
+              onSuccess: () => {
+                toast.success(`${issue.key}를 삭제했습니다`)
+                setConfirmDelete(false)
+              },
+              onError: (err) => toastError(err, '이슈를 삭제하지 못했습니다'),
+            },
+          )
+        }
+      />
     </div>
   )
 }

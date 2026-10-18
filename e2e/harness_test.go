@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -281,6 +282,11 @@ type issue struct {
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
 	ClosedAt         *string  `json:"closed_at"`
+	Topic            *int64   `json:"topic"`
+	TopicPath        *string  `json:"topic_path"`
+	StatusReason     *string  `json:"status_reason"`
+	AcknowledgedAt   *string  `json:"acknowledged_at"`
+	AcknowledgedBy   *string  `json:"acknowledged_by"`
 	StatusChangedAt  string   `json:"status_changed_at"`
 	StatusChangedBy  string   `json:"status_changed_by"`
 	CreatedBy        string   `json:"created_by"`
@@ -340,6 +346,7 @@ type overview struct {
 	Blocked        section[issue]    `json:"blocked"`
 	Decisions      section[issue]    `json:"decisions"`
 	Next           section[issue]    `json:"next"`
+	Unacknowledged section[issue]    `json:"unacknowledged"`
 	RecentActivity section[activity] `json:"recent_activity"`
 }
 
@@ -397,6 +404,27 @@ func getIssue(t testing.TB, key string) issue {
 func patchIssue(t testing.TB, c caller, key string, patch map[string]any) issue {
 	t.Helper()
 	return decodeAs[issue](t, c.do(t, "PATCH", "/v1/issues/"+key, patch), 200)
+}
+
+// deleteIssue soft deletes an issue; the server requires a reason.
+func deleteIssue(t testing.TB, c caller, key string) issue {
+	t.Helper()
+	return decodeAs[issue](t, c.do(t, "DELETE", deletePath(key), nil), 200)
+}
+
+// deletePath is the DELETE path of an issue with a reason.
+func deletePath(key string) string {
+	return "/v1/issues/" + key + "?reason=" + url.QueryEscape("e2e 정리")
+}
+
+// statusPatch is the PATCH body for a status change; cancelling and deleting
+// carry the reason the server requires.
+func statusPatch(status string) map[string]any {
+	p := map[string]any{"status": status}
+	if status == "cancelled" || status == "deleted" {
+		p["status_reason"] = "e2e 시험"
+	}
+	return p
 }
 
 func keys(items []issue) []string {

@@ -27,6 +27,14 @@ func mustIssue(t *testing.T, s *Store, ctx context.Context, tr model.Trace, in I
 	if in.Title == "" {
 		in.Title = "issue"
 	}
+	if tr == trClaude && in.Body == "" {
+		// Agents write to the template of their type; fixtures that say nothing about the body do the same.
+		typ := in.Type
+		if typ == "" {
+			typ = model.DefaultIssueType
+		}
+		in.Body = tplBody(typ)
+	}
 	i, err := s.CreateIssue(ctx, tr, in)
 	if err != nil {
 		t.Fatalf("CreateIssue(%+v): %v", in, err)
@@ -44,7 +52,7 @@ func TestCreateIssueIssuesKeysAndDefaults(t *testing.T) {
 	if a.Key != "AGB-1" || b.Key != "OTH-1" || c.Key != "AGB-2" || c.Number != 2 || c.Project != "AGB" {
 		t.Errorf("keys = %s %s %s", a.Key, b.Key, c.Key)
 	}
-	if a.Type != model.TypeFeature || a.Status != model.StatusBacklog || a.Priority != model.P2 || a.Body != "" || a.Version != 1 {
+	if a.Type != model.TypeFeature || a.Status != model.StatusBacklog || a.Priority != model.P2 || a.Body != tplBody(model.TypeFeature) || c.Body != "" || a.Version != 1 {
 		t.Errorf("defaults = %+v", a)
 	}
 	if a.Labels == nil || a.DependsOn == nil || a.Refs == nil || len(a.Labels) != 0 {
@@ -74,12 +82,12 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 	parent := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "epic"})
 	dep := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "dep"})
 	in := IssueInput{
-		Title: "full", Body: "# body", Type: model.TypeObservation, Status: model.StatusTodo, Priority: model.P0,
+		Title: "full", Body: tplBody(model.TypeObservation), Type: model.TypeObservation, Status: model.StatusTodo, Priority: model.P0,
 		Labels: []string{"cli", "api", "cli"}, Parent: str(parent.Key), DependsOn: []string{dep.Key},
 		Refs: []string{"repo:wsk0715/agent-board", "doc:api.md", "repo:wsk0715/agent-board"}, RecheckCondition: str("when R2 is ready"),
 	}
 	i := mustIssue(t, s, ctx, trClaude, in)
-	if i.Key != "AGB-3" || i.Body != "# body" || i.Type != model.TypeObservation || i.Status != model.StatusTodo || i.Priority != model.P0 {
+	if i.Key != "AGB-3" || i.Body != tplBody(model.TypeObservation) || i.Type != model.TypeObservation || i.Status != model.StatusTodo || i.Priority != model.P0 {
 		t.Errorf("fields = %+v", i)
 	}
 	if !reflect.DeepEqual(i.Labels, []string{"api", "cli"}) {
@@ -185,7 +193,8 @@ func TestUpdateIssue(t *testing.T) {
 		t.Fatalf("activity = %+v", acts)
 	}
 	ch := acts[0].Changes
-	if len(ch) != 3 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` {
+	if len(ch) != 4 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` ||
+		string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` {
 		t.Errorf("changes = %+v", ch)
 	}
 
@@ -218,7 +227,11 @@ func TestUpdateIssueStatusLifecycle(t *testing.T) {
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t"})
 	set := func(st model.IssueStatus) *model.Issue {
 		t.Helper()
-		got, _, err := s.UpdateIssue(ctx, trClaude, "AGB-1", IssuePatch{Status: &st}, nil)
+		patch := IssuePatch{Status: &st}
+		if st.ReasonRequired() {
+			patch.StatusReason = str("사유")
+		}
+		got, _, err := s.UpdateIssue(ctx, trClaude, "AGB-1", patch, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

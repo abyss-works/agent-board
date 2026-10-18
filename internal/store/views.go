@@ -164,19 +164,12 @@ func (s *Store) openDependencies(ctx context.Context, rows []*issueRow) (map[int
 
 // scanIssueExtraInt scans an issue row followed by one integer column.
 func scanIssueExtraInt(rows *sql.Rows) (*issueRow, int, error) {
-	var r issueRow
-	var parentKey, recheck, closedAt sql.NullString
-	var created, updated, statusChanged string
 	var extra int
-	if err := rows.Scan(&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &parentKey, &recheck, &r.Version, &created, &updated, &closedAt,
-		&statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy, &extra); err != nil {
+	r, err := scanIssue(rows, &extra)
+	if err != nil {
 		return nil, 0, err
 	}
-	if err := r.finishScan(parentKey, recheck, closedAt, created, updated, statusChanged); err != nil {
-		return nil, 0, err
-	}
-	return &r, extra, nil
+	return r, extra, nil
 }
 
 // LabelCount is a label and the number of open issues carrying it.
@@ -212,6 +205,11 @@ func (s *Store) Labels(ctx context.Context, projects []string) ([]LabelCount, er
 	return out, rows.Err()
 }
 
+// notDeleted are the statuses of issues that have not been soft deleted.
+var notDeleted = []model.IssueStatus{
+	model.StatusBacklog, model.StatusTodo, model.StatusDoing, model.StatusReview, model.StatusDone, model.StatusCancelled,
+}
+
 // Section is a capped list with its full count.
 type Section[T any] struct {
 	Total int `json:"total"`
@@ -237,6 +235,7 @@ type Overview struct {
 	Blocked        Section[model.QueueItem]    `json:"blocked"`
 	Decisions      Section[model.IssueSummary] `json:"decisions"`
 	Next           Section[model.QueueItem]    `json:"next"`
+	Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
 	RecentActivity Section[model.Activity]     `json:"recent_activity"`
 }
 
@@ -325,6 +324,15 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 		return nil, err
 	}
 	o.Next = Section[model.QueueItem]{Total: total, Items: next}
+	notAcknowledged := false
+	unacked, total, err := s.ListIssues(ctx, IssueFilter{
+		Projects: projects, Statuses: notDeleted, Acknowledged: &notAcknowledged,
+		Sort: []Sort{{Field: "created_at", Desc: true}}, Limit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	o.Unacknowledged = Section[model.IssueSummary]{Total: total, Items: unacked}
 	acts, total, err := s.ListActivity(ctx, ActivityFilter{Projects: projects, Limit: limit})
 	if err != nil {
 		return nil, err

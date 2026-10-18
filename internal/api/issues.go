@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
@@ -10,18 +11,35 @@ import (
 func (h *handler) registerIssues(mux *http.ServeMux) {
 	route(mux, "/v1/issues", methods{"GET": h.listIssues, "POST": h.createIssue})
 	route(mux, "/v1/issues/{key}", methods{"GET": h.getIssue, "PATCH": h.patchIssue, "DELETE": h.deleteIssue})
+	route(mux, "/v1/issues/{key}/acknowledge", methods{"POST": h.acknowledge, "DELETE": h.unacknowledge})
 	route(mux, "/v1/issues/{key}/comments", methods{"POST": h.createComment})
 	route(mux, "/v1/issues/{key}/activity", methods{"GET": h.issueActivity})
 	route(mux, "/v1/activity", methods{"GET": h.listActivity})
 }
 
+// issueWriteFields are the fields a client may send when creating an issue.
 var issueWriteFields = map[string]bool{
 	"title": true, "body": true, "type": true, "status": true, "priority": true,
-	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true,
+	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true, "topic": true,
 }
 
+// issuePatchFields are the fields of a PATCH: the create fields plus the
+// reason that goes with a status change.
+var issuePatchFields = withFields(issueWriteFields, "status_reason")
+
 // issueFields are the activity change fields accepted by the field filter.
-var issueFields = issueWriteFields
+var issueFields = withFields(issuePatchFields, "acknowledged")
+
+func withFields(base map[string]bool, extra ...string) map[string]bool {
+	out := make(map[string]bool, len(base)+len(extra))
+	for k := range base {
+		out[k] = true
+	}
+	for _, k := range extra {
+		out[k] = true
+	}
+	return out
+}
 
 func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 	allowed := map[string]bool{"project": true}
@@ -35,6 +53,7 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	var in store.IssueInput
 	var parent, recheck string
+	var topic int64
 	// Nulls on non-nullable fields are left at their zero value so that
 	// validation reports them (an empty title, for example).
 	steps := []func() *apiError{
@@ -58,6 +77,13 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 			present, null, e := field(b, "recheck_condition", &recheck)
 			if present && !null {
 				in.RecheckCondition = &recheck
+			}
+			return e
+		},
+		func() *apiError {
+			present, null, e := field(b, "topic", &topic)
+			if present && !null {
+				in.Topic = &topic
 			}
 			return e
 		},
@@ -93,7 +119,7 @@ func (h *handler) getIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, issueWriteFields)
+	b, aerr := readBody(w, r, issuePatchFields)
 	if aerr != nil {
 		writeError(w, aerr)
 		return
@@ -115,7 +141,8 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 	var status model.IssueStatus
 	var prio model.Priority
 	var labels, deps, refs []string
-	var parent, recheck string
+	var parent, recheck, statusReason string
+	var topic int64
 	steps := []func() *apiError{
 		func() *apiError {
 			p, n, e := field(b, "title", &title)
@@ -177,6 +204,21 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 			}
 			return e
 		},
+		func() *apiError {
+			p, n, e := field(b, "topic", &topic)
+			if p {
+				patch.Topic = store.Optional[int64]{Set: true}
+				if !n {
+					patch.Topic.Value = &topic
+				}
+			}
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "status_reason", &statusReason)
+			nonNull("status_reason", p, n, func() { patch.StatusReason = &statusReason })
+			return e
+		},
 	}
 	for _, step := range steps {
 		if aerr := step(); aerr != nil {
@@ -191,9 +233,22 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 	h.applyIssuePatch(w, r, patch)
 }
 
+// deleteIssue is a PATCH of status deleted with the reason query parameter as
+// status_reason. A request without a reason is refused by the status rules.
 func (h *handler) deleteIssue(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	reason := q.one("reason")
+	hasReason := r.URL.Query().Has("reason")
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
 	deleted := model.StatusDeleted
-	h.applyIssuePatch(w, r, store.IssuePatch{Status: &deleted})
+	patch := store.IssuePatch{Status: &deleted}
+	if hasReason {
+		patch.StatusReason = &reason
+	}
+	h.applyIssuePatch(w, r, patch)
 }
 
 func (h *handler) applyIssuePatch(w http.ResponseWriter, r *http.Request, patch store.IssuePatch) {
@@ -203,6 +258,32 @@ func (h *handler) applyIssuePatch(w http.ResponseWriter, r *http.Request, patch 
 		return
 	}
 	issue, _, err := h.store.UpdateIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), patch, version)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	w.Header().Set("ETag", etag(issue.Version))
+	writeJSON(w, http.StatusOK, issue)
+}
+
+func (h *handler) acknowledge(w http.ResponseWriter, r *http.Request) { h.setAcknowledged(w, r, true) }
+func (h *handler) unacknowledge(w http.ResponseWriter, r *http.Request) {
+	h.setAcknowledged(w, r, false)
+}
+
+// setAcknowledged marks or unmarks an issue as acknowledged by the user. A
+// request that changes nothing answers 200 without a record.
+func (h *handler) setAcknowledged(w http.ResponseWriter, r *http.Request, acknowledged bool) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	version, aerr := ifMatch(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	issue, _, err := h.store.SetAcknowledged(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), acknowledged, version)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
@@ -242,6 +323,26 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 		q.add("status", "상태 또는 open, closed, all이어야 합니다.")
 	}
 	f.Statuses = statuses
+	for _, v := range q.csv("topic") {
+		if v == "none" {
+			f.TopicNone = true
+			continue
+		}
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			q.add("topic", "주제 ID 또는 none이어야 합니다.")
+			continue
+		}
+		f.Topics = append(f.Topics, id)
+	}
+	switch v := q.one("acknowledged"); v {
+	case "":
+	case "true", "false":
+		acknowledged := v == "true"
+		f.Acknowledged = &acknowledged
+	default:
+		q.add("acknowledged", "true 또는 false여야 합니다.")
+	}
 	if p := q.one("parent"); p != "" {
 		if _, _, ok := model.ParseIssueKey(p); !ok && p != "none" {
 			q.add("parent", "이슈 키 또는 none이어야 합니다.")

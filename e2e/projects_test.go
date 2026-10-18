@@ -148,7 +148,7 @@ func TestProjectUpdateAndSoftDelete(t *testing.T) {
 		if !e.hasReason("project_not_active") {
 			t.Errorf("details = %+v", e.Error.Details)
 		}
-		e = wantError(t, owner.do(t, "DELETE", "/v1/issues/"+iss.Key, nil), 409, "conflict")
+		e = wantError(t, owner.do(t, "DELETE", deletePath(iss.Key), nil), 409, "conflict")
 		if !e.hasReason("project_not_active") {
 			t.Errorf("details = %+v", e.Error.Details)
 		}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
@@ -52,7 +53,7 @@ func TestOpenAppliesPragmasAndMigrations(t *testing.T) {
 	if version != SchemaVersion {
 		t.Errorf("user_version = %d, want %d", version, SchemaVersion)
 	}
-	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts"} {
+	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic"} {
 		var n int
 		if err := s.db.QueryRow("select count(*) from sqlite_master where name = ?", table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -177,6 +178,129 @@ func TestMigrateAddsSummaryToVersion1Database(t *testing.T) {
 	}
 	if c.Summary == nil || *c.Summary != "새 요약" {
 		t.Errorf("comment after migration = %+v", c)
+	}
+}
+
+// TestMigrateAddsTopicAckAndReasonToVersion2Database upgrades a database
+// written under schema version 2. Migration 0003 adds the topic table and four
+// issue columns; every existing issue becomes acknowledged at migration time
+// with no acknowledging actor, and nothing else about it changes.
+func TestMigrateAddsTopicAckAndReasonToVersion2Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-10-17T05:00:00.000Z'"
+	seed := []string{}
+	for _, name := range []string{"migrations/0001_init.sql", "migrations/0002_activity_summary.sql"} {
+		body, err := migrationFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 2`,
+		`insert into actor(id, kind, created_at) values ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 3, `+at+`, `+at+`, 'claude', 'claude')`,
+		`insert into issue(id, project_id, number, key, title, type, status, priority, created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '첫 이슈', 'feature', 'backlog', 'P2', `+at+`, `+at+`, `+at+`, 'claude', 'claude', 'claude'),
+		        (2, 1, 2, 'AGB-2', '닫힌 이슈', 'bug', 'done', 'P1', `+at+`, `+at+`, `+at+`, 'claude', 'claude', 'claude')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Truncate(time.Millisecond)
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 2 database: %v", err)
+	}
+	defer s.Close()
+	after := time.Now().UTC().Add(time.Millisecond)
+
+	var version int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 3 || SchemaVersion != 3 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, want 3", version, SchemaVersion)
+	}
+
+	columns := func(table string) map[string]string {
+		rows, err := s.db.Query(`select name, type || ':' || "notnull" from pragma_table_info(?)`, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var name, kind string
+			if err := rows.Scan(&name, &kind); err != nil {
+				t.Fatal(err)
+			}
+			out[name] = kind
+		}
+		return out
+	}
+	issueCols := columns("issue")
+	for name, want := range map[string]string{"topic_id": "INTEGER:0", "status_reason": "TEXT:0", "acknowledged_at": "TEXT:0", "acknowledged_by": "TEXT:0"} {
+		if got := issueCols[name]; got != want {
+			t.Errorf("issue.%s = %q, want %q", name, got, want)
+		}
+	}
+	topicCols := columns("topic")
+	for name, want := range map[string]string{"id": "INTEGER:0", "project_id": "INTEGER:1", "name": "TEXT:1", "parent_id": "INTEGER:0", "status": "TEXT:1",
+		"created_at": "TEXT:1", "updated_at": "TEXT:1", "created_by": "TEXT:1", "updated_by": "TEXT:1"} {
+		if got := topicCols[name]; got != want {
+			t.Errorf("topic.%s = %q, want %q", name, got, want)
+		}
+	}
+
+	rows, err := s.db.Query(`select key, title, topic_id, status_reason, acknowledged_at, acknowledged_by from issue order by id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var key, title string
+		var topicID sql.NullInt64
+		var reason, ackAt, ackBy sql.NullString
+		if err := rows.Scan(&key, &title, &topicID, &reason, &ackAt, &ackBy); err != nil {
+			t.Fatal(err)
+		}
+		n++
+		if title == "" || topicID.Valid || reason.Valid || ackBy.Valid {
+			t.Errorf("%s: title %q topic %v reason %v acknowledged_by %v; want the old values and nulls", key, title, topicID, reason, ackBy)
+		}
+		stamp, err := model.ParseTime(ackAt.String)
+		if !ackAt.Valid || err != nil || stamp.String() != ackAt.String {
+			t.Errorf("%s: acknowledged_at = %q (%v), want a millisecond UTC stamp", key, ackAt.String, err)
+			continue
+		}
+		if stamp.Time().Before(before) || stamp.Time().After(after) {
+			t.Errorf("%s: acknowledged_at %s is outside the migration window %s..%s", key, ackAt.String, before, after)
+		}
+	}
+	if n != 2 {
+		t.Errorf("issues after migration = %d, want 2", n)
+	}
+
+	// The store reads the new columns: old issues are acknowledged with no actor.
+	old, err := s.GetIssue(context.Background(), "AGB-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.AcknowledgedAt == nil || old.AcknowledgedBy != nil || old.StatusReason != nil || old.Title != "첫 이슈" || old.Version != 1 {
+		t.Errorf("migrated issue = %+v", old)
 	}
 }
 

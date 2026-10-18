@@ -6,6 +6,7 @@ export type ProjectStatus = 'active' | 'archived' | 'deleted'
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
 export type ActorKind = 'user' | 'agent'
 export type ActivityKind = 'created' | 'updated' | 'commented'
+export type TopicStatus = 'active' | 'deleted'
 
 export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'decision', 'idea', 'observation']
 export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review', 'done', 'cancelled', 'deleted']
@@ -18,6 +19,21 @@ export interface Project {
   key: string
   name: string
   status: ProjectStatus
+  created_at: string
+  updated_at: string
+  created_by: string
+  updated_by: string
+}
+
+/** 프로젝트의 두 단계 분류. 상위가 없으면 대주제, 있으면 그 아래 주제다. */
+export interface Topic {
+  id: number
+  project: string
+  name: string
+  parent: number | null
+  /** `대주제/주제` 또는 `대주제` */
+  path: string
+  status: TopicStatus
   created_at: string
   updated_at: string
   created_by: string
@@ -38,6 +54,15 @@ export interface IssueSummary {
   depends_on: string[]
   refs: string[]
   recheck_condition: string | null
+  /** 이슈에 붙은 주제의 ID. 대주제와 주제 어느 쪽이든 붙일 수 있다. */
+  topic: number | null
+  /** `대주제/주제` 또는 `대주제`. 주제가 없으면 null이다. */
+  topic_path: string | null
+  /** 마지막 상태 변경의 사유. 상태를 바꾼 적이 없으면 null이다. */
+  status_reason: string | null
+  /** 사용자가 이 이슈를 확인한 시각과 행위자. 미확인이면 둘 다 null이다. 작업 흐름과 무관한 표시다. */
+  acknowledged_at: string | null
+  acknowledged_by: string | null
   version: number
   created_at: string
   updated_at: string
@@ -57,6 +82,16 @@ export interface Issue extends IssueSummary {
 export interface QueueItem extends IssueSummary {
   ready: boolean
   blocked_by: string[]
+}
+
+/** 이슈 종류별 본문 템플릿. 에이전트가 만드는 이슈는 서버가 body의 `## 제목`을 순서대로 검사한다. */
+export interface Template {
+  type: IssueType
+  /** 이슈 제목을 쓰는 규칙 */
+  title_rule: string
+  /** body의 `## ` 제목들 */
+  headings: string[]
+  body: string
 }
 
 export interface Change {
@@ -122,6 +157,8 @@ export interface Overview {
   blocked: Section<QueueItem>
   decisions: Section<IssueSummary>
   next: Section<QueueItem>
+  /** 삭제되지 않은 미확인 이슈. 최근에 만든 것부터. */
+  unacknowledged: Section<IssueSummary>
   recent_activity: Section<Activity>
 }
 
@@ -155,6 +192,7 @@ export interface IssueCreate {
   depends_on?: string[]
   refs?: string[]
   recheck_condition?: string | null
+  topic?: number | null
 }
 
 /** PATCH /v1/issues/{key} 본문(JSON Merge Patch). null은 지움이다. */
@@ -163,6 +201,9 @@ export interface IssuePatch {
   body?: string
   type?: IssueType
   status?: IssueStatus
+  /** 상태를 바꿀 때만 쓴다. 취소·삭제로 바꿀 때는 필수다. */
+  status_reason?: string
+  topic?: number | null
   priority?: Priority
   labels?: string[]
   parent?: string | null
@@ -179,4 +220,15 @@ export interface ProjectCreate {
 export interface ProjectPatch {
   name?: string
   status?: ProjectStatus
+}
+
+export interface TopicCreate {
+  name: string
+  parent?: number | null
+}
+
+export interface TopicPatch {
+  name?: string
+  parent?: number | null
+  status?: TopicStatus
 }

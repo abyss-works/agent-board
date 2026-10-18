@@ -26,6 +26,22 @@ type Project struct {
 	UpdatedBy string        `json:"updated_by"`
 }
 
+// Topic is one entry of a project's two-level classification list. A topic
+// without a parent is a top-level topic; its path is its name, and a topic
+// under it has the path "top-level/topic".
+type Topic struct {
+	ID        int64       `json:"id"`
+	Project   string      `json:"project"`
+	Name      string      `json:"name"`
+	Parent    *int64      `json:"parent"`
+	Path      string      `json:"path"`
+	Status    TopicStatus `json:"status"`
+	CreatedAt Time        `json:"created_at"`
+	UpdatedAt Time        `json:"updated_at"`
+	CreatedBy string      `json:"created_by"`
+	UpdatedBy string      `json:"updated_by"`
+}
+
 // Issue is a full issue resource including the body.
 type Issue struct {
 	Key              string      `json:"key"`
@@ -41,6 +57,11 @@ type Issue struct {
 	DependsOn        []string    `json:"depends_on"`
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
+	Topic            *int64      `json:"topic"`
+	TopicPath        *string     `json:"topic_path"`
+	StatusReason     *string     `json:"status_reason"`
+	AcknowledgedAt   *Time       `json:"acknowledged_at"`
+	AcknowledgedBy   *string     `json:"acknowledged_by"`
 	Version          int64       `json:"version"`
 	CreatedAt        Time        `json:"created_at"`
 	UpdatedAt        Time        `json:"updated_at"`
@@ -66,6 +87,11 @@ type IssueSummary struct {
 	DependsOn        []string    `json:"depends_on"`
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
+	Topic            *int64      `json:"topic"`
+	TopicPath        *string     `json:"topic_path"`
+	StatusReason     *string     `json:"status_reason"`
+	AcknowledgedAt   *Time       `json:"acknowledged_at"`
+	AcknowledgedBy   *string     `json:"acknowledged_by"`
 	Version          int64       `json:"version"`
 	CreatedAt        Time        `json:"created_at"`
 	UpdatedAt        Time        `json:"updated_at"`
@@ -83,7 +109,8 @@ func (i *Issue) Summary() IssueSummary {
 		Key: i.Key, Project: i.Project, Number: i.Number, Title: i.Title,
 		Type: i.Type, Status: i.Status, Priority: i.Priority,
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
-		RecheckCondition: i.RecheckCondition, Version: i.Version,
+		RecheckCondition: i.RecheckCondition, Topic: i.Topic, TopicPath: i.TopicPath, StatusReason: i.StatusReason,
+		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
 		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,
 		CreatedBy: i.CreatedBy, UpdatedBy: i.UpdatedBy,

@@ -16,6 +16,11 @@ import type {
   ProjectCreate,
   ProjectPatch,
   QueueItem,
+  Template,
+  Topic,
+  TopicCreate,
+  TopicPatch,
+  TopicStatus,
 } from './types'
 
 /** 모든 질의 키는 인스턴스 ID로 시작한다. 인스턴스를 바꾸면 캐시가 섞이지 않는다. */
@@ -116,6 +121,29 @@ export function useLabels(projectKey: string | null) {
   })
 }
 
+/** 프로젝트의 주제 목록. 대주제 이름순, 그 아래 주제 이름순이다. 프로젝트를 고르지 않으면 부르지 않는다. */
+export function useTopics(projectKey: string | null, status: TopicStatus | 'all' = 'active') {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: [inst, 'topics', projectKey, status],
+    queryFn: ({ signal }) => api.get<{ items: Topic[] }>(`/projects/${projectKey}/topics`, { status: status === 'active' ? undefined : status }, signal),
+    enabled: projectKey !== null,
+  })
+}
+
+/** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 3초 갱신에서 뺀다. */
+export function useTemplates() {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: [inst, 'templates'],
+    queryFn: ({ signal }) => api.get<{ items: Template[] }>('/templates', undefined, signal),
+    refetchInterval: false,
+    staleTime: 5 * 60_000,
+  })
+}
+
 export function useActors() {
   const api = useApi()
   const inst = useKeyPrefix()
@@ -167,7 +195,52 @@ export function useDeleteIssue() {
   const api = useApi()
   const invalidate = useInvalidateInstance()
   return useMutation({
-    mutationFn: ({ key, version }: { key: string; version: number }) => api.delete<Issue>(`/issues/${key}`, { ifMatch: version }),
+    mutationFn: ({ key, version, reason }: { key: string; version: number; reason: string }) =>
+      api.delete<Issue>(`/issues/${key}`, { ifMatch: version, query: { reason } }),
+    onSettled: () => invalidate(),
+  })
+}
+
+/** 이슈 하나의 확인 표시를 켜거나 끈다. If-Match는 보내지 않아 다른 변경과 겹쳐도 실패하지 않는다. */
+export function useSetAcknowledged() {
+  const api = useApi()
+  const qc = useQueryClient()
+  const inst = useKeyPrefix()
+  return useMutation({
+    mutationFn: ({ key, acknowledged }: { key: string; acknowledged: boolean }) =>
+      acknowledged ? api.post<Issue>(`/issues/${key}/acknowledge`, undefined) : api.delete<Issue>(`/issues/${key}/acknowledge`),
+    onSuccess: (issue) => {
+      qc.setQueryData([inst, 'issue', issue.key], issue)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: [inst] }),
+  })
+}
+
+export interface AcknowledgeManyResult {
+  done: number
+  failed: number
+  /** 처음 실패한 요청의 오류 */
+  firstError: unknown
+}
+
+/** 키마다 확인 요청을 차례로 보낸다. 일부가 실패해도 나머지는 계속한다. */
+export function useAcknowledgeMany() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: async (keys: string[]): Promise<AcknowledgeManyResult> => {
+      const result: AcknowledgeManyResult = { done: 0, failed: 0, firstError: undefined }
+      for (const key of keys) {
+        try {
+          await api.post<Issue>(`/issues/${key}/acknowledge`, undefined)
+          result.done += 1
+        } catch (err) {
+          result.failed += 1
+          result.firstError ??= err
+        }
+      }
+      return result
+    },
     onSettled: () => invalidate(),
   })
 }
@@ -177,6 +250,33 @@ export function useCreateComment() {
   const invalidate = useInvalidateInstance()
   return useMutation({
     mutationFn: ({ key, body }: { key: string; body: string }) => api.post<Activity>(`/issues/${key}/comments`, { body }),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useCreateTopic() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ project, body }: { project: string; body: TopicCreate }) => api.post<Topic>(`/projects/${project}/topics`, body),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function usePatchTopic() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: TopicPatch }) => api.patch<Topic>(`/topics/${id}`, patch),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useDeleteTopic() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<Topic>(`/topics/${id}`),
     onSuccess: () => invalidate(),
   })
 }

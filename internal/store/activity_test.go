@@ -38,7 +38,9 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	s.UpdateIssue(ctx, trOwner, b.Key, IssuePatch{Title: str("b2")}, nil)
 	// Comments are allowed on deleted issues.
 	del := model.StatusDeleted
-	s.UpdateIssue(ctx, trOwner, b.Key, IssuePatch{Status: &del}, nil)
+	if _, _, err := s.UpdateIssue(ctx, trOwner, b.Key, IssuePatch{Status: &del, StatusReason: str("삭제 시험")}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.AddComment(ctx, trOwner, b.Key, "deleted comment", nil); err != nil {
 		t.Errorf("comment on deleted issue: %v", err)
 	}

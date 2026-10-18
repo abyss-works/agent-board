@@ -1,8 +1,9 @@
-import { ArrowUpDownIcon, FilterIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
+import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, FolderTreeIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
+import { toast } from 'sonner'
 import type { IssueListFilters } from '@/api/client'
-import { useIssues, useLabels } from '@/api/queries'
+import { useAcknowledgeMany, useIssues, useLabels, useTopics } from '@/api/queries'
 import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type IssueStatus, type IssueType, type Priority } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -23,7 +24,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { useFlash } from '@/hooks/use-flash'
+import { unacknowledgedKeys } from '@/lib/acknowledge'
 import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
+import { toastError } from '@/lib/toast'
+import { flattenTopics, groupTopics } from '@/lib/topics'
 import { cn } from '@/lib/utils'
 
 const LIMIT = 200
@@ -109,12 +113,17 @@ export function IssuesPage() {
   const { project } = useAppState()
   const [params, setParams] = useSearchParams()
   const labels = useLabels(project)
+  const topics = useTopics(project)
+  const topicOptions = flattenTopics(groupTopics(topics.data?.items ?? []))
   const [create, setCreate] = useState(false)
 
   const status = csv(params.get('status'))
   const type = csv(params.get('type'))
   const priority = csv(params.get('priority'))
   const label = params.getAll('label')
+  const topic = csv(params.get('topic'))
+  const acknowledgedParam = params.get('acknowledged')
+  const acknowledged = acknowledgedParam === 'false' || acknowledgedParam === 'true' ? acknowledgedParam : undefined
   const q = params.get('q') ?? ''
   const sort = params.get('sort') ?? ''
 
@@ -140,7 +149,7 @@ export function IssuesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const toggle = (name: 'status' | 'type' | 'priority' | 'label', current: readonly string[]) => (v: string, on: boolean) => {
+  const toggle = (name: 'status' | 'type' | 'priority' | 'label' | 'topic', current: readonly string[]) => (v: string, on: boolean) => {
     const set = new Set(current.filter((x) => x !== 'all' && x !== 'closed'))
     if (on) set.add(v)
     else set.delete(v)
@@ -149,20 +158,38 @@ export function IssuesPage() {
   }
 
   const filters = useMemo<IssueListFilters>(
-    () => ({ project, status, type, priority, label, q, sort, limit: LIMIT }),
+    () => ({ project, status, type, priority, label, topic, acknowledged, q, sort, limit: LIMIT }),
     // 배열은 URL 문자열에서 매번 새로 만들어지므로 문자열로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, paramsKey],
   )
   const filterKey = `${project ?? '*'}|${paramsKey}`
-  const hasFilter = status.length + type.length + priority.length + label.length > 0 || q !== ''
+  const hasFilter = status.length + type.length + priority.length + label.length + topic.length > 0 || q !== '' || acknowledged !== undefined
   const statusPreset = status.length === 1 && (status[0] === 'all' || status[0] === 'closed') ? status[0] : status.length === 0 ? '' : null
-  const total = useIssues(filters).data?.total
+  const list = useIssues(filters).data
+  const total = list?.total
+  const acknowledgeMany = useAcknowledgeMany()
+  // 필터가 미확인일 때만, 지금 보이는 목록의 미확인 이슈를 모두 확인한다.
+  const pendingKeys = acknowledged === 'false' && list ? unacknowledgedKeys(list.items) : []
+  const acknowledgeAll = () =>
+    acknowledgeMany.mutate(pendingKeys, {
+      onSuccess: ({ done, failed, firstError }) => {
+        if (failed === 0) toast.success(`${done}건을 확인했습니다`)
+        else toastError(firstError, `${done}건을 확인했고 ${failed}건은 확인하지 못했습니다`)
+      },
+      onError: (err) => toastError(err, '확인하지 못했습니다'),
+    })
 
   return (
     <>
       <PageHeader title="이슈" meta={project ? <span className="font-mono text-foreground/80">{project}</span> : '전체 프로젝트'}>
         {total !== undefined ? <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}건</span> : null}
+        {acknowledged === 'false' ? (
+          <Button variant="secondary" size="xs" onClick={acknowledgeAll} disabled={pendingKeys.length === 0 || acknowledgeMany.isPending} title="지금 보이는 목록의 이슈에 확인 표시를 합니다">
+            <CheckCheckIcon />
+            목록 모두 확인{pendingKeys.length > 0 ? ` (${pendingKeys.length})` : ''}
+          </Button>
+        ) : null}
         <Button size="xs" onClick={() => setCreate(true)}>
           <PlusIcon />새 이슈
         </Button>
@@ -221,6 +248,24 @@ export function IssuesPage() {
             </>
           )}
         />
+
+        {project ? (
+          <FilterMenu
+            label="주제"
+            icon={<FolderTreeIcon className="size-3.5 text-muted-foreground" />}
+            values={['none', ...topicOptions.map((f) => String(f.topic.id))]}
+            selected={topic}
+            onToggle={toggle('topic', topic)}
+            render={(id: string) => {
+              if (id === 'none') return <span className="text-muted-foreground">주제 없음</span>
+              const f = topicOptions.find((o) => String(o.topic.id) === id)
+              return <span className={cn(f?.depth === 1 ? 'pl-3' : 'font-medium')}>{f?.topic.name ?? `#${id}`}</span>
+            }}
+          />
+        ) : null}
+        <Button variant={acknowledged === 'false' ? 'secondary' : 'ghost'} size="xs" className={cn(acknowledged === 'false' && 'text-sky-300')} onClick={() => update({ acknowledged: acknowledged === 'false' ? null : 'false' })}>
+          미확인
+        </Button>
 
         <div className="ml-auto flex items-center gap-1">
           {hasFilter ? (

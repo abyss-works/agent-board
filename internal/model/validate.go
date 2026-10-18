@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,6 +18,8 @@ const (
 	MaxRefs             = 50
 	MaxRecheckRunes     = 500
 	MaxSummaryRunes     = 30
+	MaxReasonRunes      = 500
+	MaxTopicNameRunes   = 50
 	MaxSearchTerms      = 10
 	DefaultIssueType    = TypeFeature
 	DefaultIssueStatus  = StatusBacklog
@@ -139,6 +142,69 @@ func ValidateIssue(i *Issue) error {
 		}
 	} else if i.RecheckCondition != nil {
 		e.add("recheck_condition", "종류가 observation일 때만 쓸 수 있습니다.")
+	}
+	return e.orNil()
+}
+
+// MergeValidation joins the violations of several validation results into
+// one error so a client sees every violation at once. Nil results are
+// skipped. An error that is not a *ValidationError is returned as it is.
+func MergeValidation(errs ...error) error {
+	var merged ValidationError
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			return err
+		}
+		merged.Fields = append(merged.Fields, ve.Fields...)
+	}
+	return merged.orNil()
+}
+
+// ResolveStatusReason decides the status_reason of an update that moves an
+// issue from one status to another. reason is the one the request carried, or
+// nil. A change to a reason-required status needs a reason; any other change
+// without one gets "{from} → {to}" in Korean status names. A reason on a
+// request that does not change the status is a violation. The result is nil
+// when the status does not change, and the caller keeps the stored reason.
+func ResolveStatusReason(from, to IssueStatus, reason *string) (*string, error) {
+	var e ValidationError
+	if from == to {
+		if reason != nil {
+			e.add("status_reason", "상태를 바꾸는 요청에서만 쓸 수 있습니다.")
+		}
+		return nil, e.orNil()
+	}
+	if _, ok := ParseIssueStatus(string(to)); !ok {
+		return nil, nil // the status check reports the unknown status
+	}
+	if reason == nil {
+		if to.ReasonRequired() {
+			e.add("status_reason", "%s로 바꿀 때는 사유가 필요합니다.", to.Label())
+			return nil, e.orNil()
+		}
+		def := from.Label() + " → " + to.Label()
+		return &def, nil
+	}
+	if n := utf8.RuneCountInString(*reason); n < 1 || n > MaxReasonRunes {
+		e.add("status_reason", "1~%d자여야 합니다.", MaxReasonRunes)
+		return nil, e.orNil()
+	}
+	return reason, nil
+}
+
+// ValidateTopicName checks the name of a topic: 1 to MaxTopicNameRunes
+// characters without a slash, which separates the levels of a topic path.
+func ValidateTopicName(name string) error {
+	var e ValidationError
+	if n := utf8.RuneCountInString(name); n < 1 || n > MaxTopicNameRunes {
+		e.add("name", "1~%d자여야 합니다.", MaxTopicNameRunes)
+	}
+	if strings.Contains(name, "/") {
+		e.add("name", "'/'를 넣을 수 없습니다.")
 	}
 	return e.orNil()
 }

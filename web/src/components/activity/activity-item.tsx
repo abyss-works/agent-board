@@ -28,6 +28,8 @@ interface Props {
   showIssue?: boolean
   /** 현황의 최근 활동처럼 좁은 곳. 이슈 행처럼 한 줄로 그리고, 누르면 이슈 오버레이를 연다. */
   compact?: boolean
+  /** 주제 ID를 경로로 바꾸는 조회. 없으면 `주제 #ID`로 보인다. */
+  topicName?: (id: number) => string | undefined
 }
 
 /** 한 줄 행. 시각, 행위자, 종류 아이콘, 이슈 키, 요약 문구 순이고 행 전체가 이슈 링크다. */
@@ -51,10 +53,10 @@ function CompactActivityRow({ activity: a, flash }: { activity: Activity; flash?
   )
 }
 
-export function ActivityItem({ activity: a, flash, showIssue = true, compact }: Props) {
+export function ActivityItem({ activity: a, flash, showIssue = true, compact, topicName }: Props) {
   if (compact) return <CompactActivityRow activity={a} flash={flash} />
   const Icon = KIND_ICON[a.kind]
-  const lines = describeChanges(a)
+  const lines = describeChanges(a, { topicName })
   return (
     <li className={cn('flex gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0', flash && 'animate-flash')}>
       <time
@@ -105,6 +107,7 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact }: 
                     <span className="truncate text-foreground/90">{l.to}</span>
                   </>
                 )}
+                {l.reason ? <span className="basis-full text-[0.6875rem] break-words text-muted-foreground">사유: {l.reason}</span> : null}
               </li>
             ))}
           </ul>
