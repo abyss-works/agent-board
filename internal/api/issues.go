@@ -283,17 +283,26 @@ func (h *handler) listIssues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) createComment(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, map[string]bool{"body": true})
+	b, aerr := readBody(w, r, map[string]bool{"body": true, "summary": true})
 	if aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	var text string
+	var text, summaryText string
 	if _, _, aerr := field(b, "body", &text); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	a, err := h.store.AddComment(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), text, nil)
+	var summary *string
+	present, null, aerr := field(b, "summary", &summaryText)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	if present && !null {
+		summary = &summaryText
+	}
+	a, err := h.store.AddComment(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), text, summary)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
