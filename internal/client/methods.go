@@ -63,6 +63,7 @@ type IssueFilter struct {
 	Labels          []string
 	Parent          string
 	Topic           string // topic ids and none, comma separated (OR)
+	Milestone       string // milestone ids and none, comma separated (OR)
 	Acknowledged    string // "true" or "false"; empty sends no filter
 	CreatedBy       string
 	UpdatedBy       string
@@ -85,6 +86,7 @@ func (f IssueFilter) Values() url.Values {
 	}
 	set(v, "parent", f.Parent)
 	set(v, "topic", f.Topic)
+	set(v, "milestone", f.Milestone)
 	set(v, "acknowledged", f.Acknowledged)
 	set(v, "created_by", f.CreatedBy)
 	set(v, "updated_by", f.UpdatedBy)
@@ -267,6 +269,44 @@ func (c *Client) PatchTopic(ctx context.Context, id int64, patch map[string]any)
 // DeleteTopic soft deletes a topic.
 func (c *Client) DeleteTopic(ctx context.Context, id int64) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/topics/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// ListMilestones lists the milestones of a project. status is open (the
+// server default when empty), closed, deleted or all, or a comma separated
+// list of them (OR).
+func (c *Client) ListMilestones(ctx context.Context, project, status string) (*Response, error) {
+	v := url.Values{}
+	set(v, "status", status)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/milestones", v), nil, nil)
+}
+
+// CreateMilestone adds an open milestone to a project. An empty description
+// or target date (YYYY-MM-DD) is left out of the request.
+func (c *Client) CreateMilestone(ctx context.Context, project, name, description, targetDate string) (*Response, error) {
+	in := map[string]any{"name": name}
+	if description != "" {
+		in["description"] = description
+	}
+	if targetDate != "" {
+		in["target_date"] = targetDate
+	}
+	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/milestones", in, nil)
+}
+
+// GetMilestone fetches one milestone with its progress.
+func (c *Client) GetMilestone(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// PatchMilestone applies a JSON Merge Patch to a milestone: name,
+// description, target_date (null clears it) and status.
+func (c *Client) PatchMilestone(ctx context.Context, id int64, patch map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPatch, "/v1/milestones/"+strconv.FormatInt(id, 10), patch, nil)
+}
+
+// DeleteMilestone soft deletes a milestone.
+func (c *Client) DeleteMilestone(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
 // Acknowledge marks an issue as acknowledged by the actor of the request.
