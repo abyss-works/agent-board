@@ -415,13 +415,15 @@ var issueDeleteCmd = &command{
 
 var issueCommentCmd = &command{
 	name: "comment", summary: "댓글 추가",
-	usage: `사용법: agb issue comment <KEY> (--body <텍스트> | --body-file <경로|->)
+	usage: `사용법: agb issue comment <KEY> [--summary <요약>] (--body <텍스트> | --body-file <경로|->)
 
 옵션:
+  --summary <요약>        한 줄 요약. 1~30자, 줄바꿈 없음. 목록에 보이는 색인
 ` + bodyUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue comment", g)
-		var body, bodyFile string
+		var summary, body, bodyFile string
+		fs.StringVar(&summary, "summary", "", "")
 		fs.StringVar(&body, "body", "", "")
 		fs.StringVar(&bodyFile, "body-file", "", "")
 		pos, err := parseArgs(fs, args)
@@ -443,7 +445,7 @@ var issueCommentCmd = &command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.AddComment(ctx, key, text)
+		resp, err := c.AddComment(ctx, key, text, summary)
 		if err != nil {
 			return err
 		}

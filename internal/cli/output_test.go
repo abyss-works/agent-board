@@ -43,6 +43,24 @@ func TestWriteJSONPassesBodyThroughWithNewline(t *testing.T) {
 	}
 }
 
+func TestDescribeActivityShowsSummaryOfComments(t *testing.T) {
+	text := func(s string) *string { return &s }
+	cases := []struct {
+		name string
+		act  model.Activity
+		want string
+	}{
+		{"summary replaces the body", model.Activity{Kind: model.ActivityCommented, Summary: text("서버 랭킹 함수 구현"), Body: text("상세 본문\n둘째 줄")}, "서버 랭킹 함수 구현"},
+		{"no summary shows the first body line", model.Activity{Kind: model.ActivityCommented, Body: text("상세 본문\n둘째 줄")}, "상세 본문 …"},
+		{"one line body without summary", model.Activity{Kind: model.ActivityCommented, Body: text("한 줄 본문")}, "한 줄 본문"},
+	}
+	for _, tc := range cases {
+		if got := describeActivity(tc.act); got != tc.want {
+			t.Errorf("%s: describeActivity = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestDisplayWidthCountsWideRunes(t *testing.T) {
 	if displayWidth("abc") != 3 || displayWidth("한글") != 4 || displayWidth("a한") != 3 {
 		t.Errorf("widths = %d %d %d", displayWidth("abc"), displayWidth("한글"), displayWidth("a한"))
