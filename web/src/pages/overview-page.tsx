@@ -1,4 +1,4 @@
-import { ArrowRightIcon, BellDotIcon, FolderIcon, LockIcon } from 'lucide-react'
+import { ArrowRightIcon, BellDotIcon, FolderIcon, LockIcon, ScaleIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useOverview, useProjects } from '@/api/queries'
@@ -18,7 +18,6 @@ import { cn } from '@/lib/utils'
 
 const STATUS_BAR: Record<string, string> = {
   backlog: 'bg-zinc-600',
-  todo: 'bg-zinc-400',
   doing: 'bg-amber-400',
   review: 'bg-emerald-400',
   done: 'bg-indigo-400',
@@ -223,13 +222,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
         </Group>
         <Group title="내 차례">
           <div className="grid gap-3 xl:grid-cols-3">
-            <Section
-              title="결정 대기"
-              total={o.decisions.total}
-              to="/issues?type=decision"
-              icon={<TypeIcon type="decision" className="size-3.5" />}
-              accent="decision"
-            >
+            <Section title="결정 대기" total={o.decisions.total} icon={<ScaleIcon className="size-3.5 text-amber-400" />} accent="decision">
               <IssueList items={o.decisions.items} flash={flash} />
             </Section>
             <Section
@@ -251,7 +244,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
             <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
               <IssueList items={o.doing.items} flash={flash} />
             </Section>
-            <Section title="다음 할 일" total={o.next.total} to="/issues?status=todo">
+            <Section title="다음 할 일" total={o.next.total} to="/issues?status=backlog">
               <IssueList items={o.next.items} flash={flash} showReady />
             </Section>
             <Section

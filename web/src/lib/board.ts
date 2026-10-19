@@ -1,7 +1,7 @@
 import type { Board, BoardColumn, IssueStatus } from '@/api/types'
 
 /** 보드에 늘 보이는 열. 취소는 토글, 삭제는 보드에 두지 않는다. */
-export const BOARD_STATUSES = ['backlog', 'todo', 'doing', 'review', 'done'] as const satisfies readonly IssueStatus[]
+export const BOARD_STATUSES = ['backlog', 'doing', 'review', 'done'] as const satisfies readonly IssueStatus[]
 
 export function boardColumns(board: Board, showCancelled: boolean): BoardColumn[] {
   const wanted: IssueStatus[] = showCancelled ? [...BOARD_STATUSES, 'cancelled'] : [...BOARD_STATUSES]

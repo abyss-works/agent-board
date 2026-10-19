@@ -2,7 +2,6 @@ import type { ActivityKind, DeviceAuthorizationStatus, IssueStatus, IssueType, M
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   backlog: '백로그',
-  todo: '할 일',
   doing: '진행',
   review: '검토',
   done: '완료',
@@ -14,7 +13,6 @@ export const TYPE_LABEL: Record<IssueType, string> = {
   feature: '기능',
   bug: '버그',
   design: '설계',
-  decision: '결정 대기',
   idea: '아이디어',
   observation: '관측',
 }

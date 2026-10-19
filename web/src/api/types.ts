@@ -1,7 +1,7 @@
 // agent-board REST API 응답 타입. 기준은 spec/api.md다.
 
-export type IssueType = 'feature' | 'bug' | 'design' | 'decision' | 'idea' | 'observation'
-export type IssueStatus = 'backlog' | 'todo' | 'doing' | 'review' | 'done' | 'cancelled' | 'deleted'
+export type IssueType = 'feature' | 'bug' | 'design' | 'idea' | 'observation'
+export type IssueStatus = 'backlog' | 'doing' | 'review' | 'done' | 'cancelled' | 'deleted'
 export type ProjectStatus = 'active' | 'archived' | 'deleted'
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
 export type ActorKind = 'user' | 'agent'
@@ -12,9 +12,9 @@ export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
 
-export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'decision', 'idea', 'observation']
-export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review', 'done', 'cancelled', 'deleted']
-export const OPEN_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review']
+export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'idea', 'observation']
+export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review', 'done', 'cancelled', 'deleted']
+export const OPEN_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review']
 export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
