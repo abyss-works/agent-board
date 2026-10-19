@@ -148,6 +148,11 @@ func (s Settings) requireAuth() error {
 	if s.Token == "" {
 		return usageErrorf("토큰이 없습니다. `agb login --actor %s`로 이 행위자의 토큰을 받으세요. (AGB_TOKEN 환경변수와 `agb config set-token`의 공용 토큰은 사용자 행위자 전용입니다.)", orPlaceholder(s.Actor))
 	}
+	return s.requireActor()
+}
+
+// requireActor checks that the settings name an actor.
+func (s Settings) requireActor() error {
 	if s.Actor == "" {
 		return usageErrorf("행위자가 없습니다. --actor, AGB_ACTOR, 또는 `agb config set actor <ID>`로 설정하세요.")
 	}

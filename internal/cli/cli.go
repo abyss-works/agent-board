@@ -27,6 +27,9 @@ type App struct {
 	ConfigPath string // default config file; --config overrides it
 	HTTP       *http.Client
 
+	Sleep       func(ctx context.Context, d time.Duration) error // waits for d, or until ctx ends with its error; nil waits in real time
+	OpenBrowser func(url string) error                           // starts the user's browser on url without waiting for it; nil opens nothing
+
 	Stdin            io.Reader
 	Stdout           io.Writer
 	Stderr           io.Writer
@@ -45,6 +48,7 @@ func New(version string, getenv func(string) string) *App {
 		Now:              time.Now,
 		Location:         time.Local,
 		HTTP:             &http.Client{Timeout: 30 * time.Second},
+		OpenBrowser:      openBrowser,
 		Stdin:            os.Stdin,
 		Stdout:           os.Stdout,
 		Stderr:           os.Stderr,
@@ -142,7 +146,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd,
+	configCmd, loginCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd,
 	activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
 }}
 
@@ -281,22 +285,30 @@ func (a *App) configPath(g *globals) (string, error) {
 	return a.ConfigPath, nil
 }
 
-// client resolves the settings and builds the HTTP client. needAuth
-// requires a token and an actor.
-func (a *App) client(g *globals, needAuth bool) (*client.Client, error) {
+// settings reads the config file and resolves the settings from it and the
+// command line. It returns the file's content too, for the commands that look
+// at the tokens in it.
+func (a *App) settings(g *globals) (Config, Settings, error) {
 	path, err := a.configPath(g)
 	if err != nil {
-		return nil, err
+		return Config{}, Settings{}, err
 	}
 	cfg, err := loadConfig(path)
 	if err != nil {
-		return nil, err
+		return Config{}, Settings{}, err
 	}
 	host, err := a.Hostname()
 	if err != nil {
 		host = ""
 	}
 	s, err := resolveSettings(g, a.Getenv, cfg, a.Now(), host)
+	return cfg, s, err
+}
+
+// client resolves the settings and builds the HTTP client. needAuth
+// requires a token and an actor.
+func (a *App) client(g *globals, needAuth bool) (*client.Client, error) {
+	_, s, err := a.settings(g)
 	if err != nil {
 		return nil, err
 	}
@@ -305,10 +317,30 @@ func (a *App) client(g *globals, needAuth bool) (*client.Client, error) {
 			return nil, err
 		}
 	}
+	return a.newClient(s), nil
+}
+
+// newClient builds the HTTP client for the settings.
+func (a *App) newClient(s Settings) *client.Client {
 	return &client.Client{
 		BaseURL: s.URL, Token: s.Token, Actor: s.Actor, SessionID: s.SessionID, ClientHost: s.ClientHost,
 		Version: a.Version, HTTP: a.HTTP,
-	}, nil
+	}
+}
+
+// wait pauses for d. When ctx ends first it returns early with the error of ctx.
+func (a *App) wait(ctx context.Context, d time.Duration) error {
+	if a.Sleep != nil {
+		return a.Sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // emit writes the response: the body verbatim in JSON mode, otherwise

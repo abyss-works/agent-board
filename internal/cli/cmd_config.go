@@ -225,21 +225,32 @@ var configSetTokenCmd = &command{
 	},
 }
 
-// updateConfig loads, changes and saves the config file.
-func (a *App) updateConfig(g *globals, change func(*Config) error, what string) error {
+// modifyConfig loads, changes and saves the config file and returns its path.
+// It reads the file anew each time, so a command that runs for long does not
+// write back what it read when it started.
+func (a *App) modifyConfig(g *globals, change func(*Config) error) (string, error) {
 	path, err := a.configPath(g)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cfg, err := loadConfig(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := change(&cfg); err != nil {
-		return err
+		return "", err
 	}
 	if err := saveConfig(path, cfg); err != nil {
-		return fmt.Errorf("설정 파일을 쓰지 못했습니다: %w", err)
+		return "", fmt.Errorf("설정 파일을 쓰지 못했습니다: %w", err)
+	}
+	return path, nil
+}
+
+// updateConfig is modifyConfig followed by a line that says what changed.
+func (a *App) updateConfig(g *globals, change func(*Config) error, what string) error {
+	path, err := a.modifyConfig(g, change)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(a.Stdout, "%s: %s\n", what, path)
 	return nil
