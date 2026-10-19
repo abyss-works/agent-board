@@ -3,11 +3,14 @@
 package api
 
 import (
+	crand "crypto/rand"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
@@ -26,12 +29,18 @@ type Options struct {
 	// Web is the built web client. When set, every path outside /v1 is served
 	// from it without authentication. When nil those paths belong to the API.
 	Web fs.FS
+	// Now and Rand are the clock and the source of randomness behind device
+	// authorizations and token secrets. Nil means time.Now and crypto/rand;
+	// tests replace them to fix times and codes.
+	Now  func() time.Time
+	Rand io.Reader
 }
 
 type handler struct {
-	opts   Options
-	actors map[string]model.Actor
-	store  *store.Store
+	opts    Options
+	actors  map[string]model.Actor
+	store   *store.Store
+	devices *deviceStore
 }
 
 // New builds the complete HTTP handler.
@@ -43,6 +52,13 @@ func New(o Options) http.Handler {
 	if h.opts.Logger == nil {
 		h.opts.Logger = slog.Default()
 	}
+	if h.opts.Now == nil {
+		h.opts.Now = time.Now
+	}
+	if h.opts.Rand == nil {
+		h.opts.Rand = crand.Reader
+	}
+	h.devices = newDeviceStore(h.opts.Now, h.opts.Rand)
 
 	// Routes behind authentication and trace headers.
 	protected := http.NewServeMux()
@@ -54,13 +70,22 @@ func New(o Options) http.Handler {
 	h.registerMilestones(protected)
 	h.registerTemplates(protected)
 	h.registerViews(protected)
+	h.registerDevices(protected)
+	h.registerTokens(protected)
 	protected.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, notFound("경로가 없습니다."))
 	})
 
 	root := http.NewServeMux()
 	route(root, "/v1/health", methods{"GET": h.health})
-	guarded := auth(o.Token, trace(h.actors, protected))
+	authenticated := h.auth(trace(h.actors, h.bind(protected)))
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if startsLogin(r) {
+			protected.ServeHTTP(w, r)
+			return
+		}
+		authenticated.ServeHTTP(w, r)
+	})
 	if o.Web == nil {
 		root.Handle("/", guarded)
 	} else {
@@ -71,6 +96,15 @@ func New(o Options) http.Handler {
 		root.Handle("/", webHandler(o.Web))
 	}
 	return logging(h.opts.Logger, root)
+}
+
+// startsLogin reports whether the request is one of the two that start a
+// login: asking for a device authorization and exchanging its device code.
+// They come from a client that has no token yet, so they carry neither a token
+// nor the trace headers. The other methods and paths next to them are
+// authenticated like the rest.
+func startsLogin(r *http.Request) bool {
+	return r.Method == http.MethodPost && (r.URL.Path == "/v1/device-authorizations" || r.URL.Path == "/v1/tokens")
 }
 
 type methods map[string]http.HandlerFunc
