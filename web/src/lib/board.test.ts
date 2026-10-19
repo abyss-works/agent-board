@@ -16,6 +16,7 @@ function issue(key: string, status: IssueSummary['status']): IssueSummary {
     depends_on: [],
     refs: [],
     recheck_condition: null,
+    decision_needed: null,
     topic: null,
     topic_path: null,
     milestone: null,

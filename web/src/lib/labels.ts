@@ -60,6 +60,7 @@ export const FIELD_LABEL: Record<string, string> = {
   depends_on: '선행 이슈',
   refs: '참조',
   recheck_condition: '재검토 조건',
+  decision_needed: '결정 필요',
   topic: '주제',
   milestone: '마일스톤',
   status_reason: '상태 사유',

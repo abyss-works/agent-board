@@ -115,6 +115,52 @@ describe('확인 표시의 변경', () => {
     expect(lines).toEqual([{ field: 'acknowledged', label: '확인', from: '미확인', to: '확인됨' }])
     expect(summarizeActivity(activity({ changes: { acknowledged: { from: true, to: false } } }))).toBe('확인: 확인됨 → 미확인')
   })
+  it('명세가 바뀌어 서버가 확인을 푼 기록은 확인 줄이 함께 나온다', () => {
+    const edited = activity({ changes: { acknowledged: { from: true, to: false }, title: { from: '옛 제목', to: '새 제목' } } })
+    expect(describeChanges(edited)).toEqual([
+      { field: 'acknowledged', label: '확인', from: '확인됨', to: '미확인' },
+      { field: 'title', label: '제목', from: '옛 제목', to: '새 제목' },
+    ])
+    expect(summarizeActivity(edited)).toBe('확인: 확인됨 → 미확인 · 제목: 옛 제목 → 새 제목')
+  })
+  it('검토에서 진행으로 되돌려 확인이 풀린 기록은 사유가 상태 줄에 붙고 확인 줄이 따로 나온다', () => {
+    const rejected = activity({
+      changes: {
+        acknowledged: { from: true, to: false },
+        status: { from: 'review', to: 'doing' },
+        status_reason: { from: null, to: '검토 → 진행' },
+      },
+    })
+    expect(describeChanges(rejected)).toEqual([
+      { field: 'acknowledged', label: '확인', from: '확인됨', to: '미확인' },
+      { field: 'status', label: '상태', from: '검토', to: '진행', reason: '검토 → 진행' },
+    ])
+  })
+})
+
+describe('결정 필요의 변경', () => {
+  it('질문을 정하면 없음에서 질문으로 보인다', () => {
+    const set = activity({ changes: { decision_needed: { from: null, to: '캐시를 쓸지 정해 주세요' } } })
+    expect(describeChanges(set)).toEqual([{ field: 'decision_needed', label: '결정 필요', from: '없음', to: '캐시를 쓸지 정해 주세요' }])
+    expect(summarizeActivity(set)).toBe('결정 필요: 없음 → 캐시를 쓸지 정해 주세요')
+  })
+  it('질문을 고치면 이전 질문과 새 질문을 모두 보인다', () => {
+    const edited = activity({ changes: { decision_needed: { from: '캐시를 쓸지', to: '캐시를 Redis로 할지' } } })
+    expect(summarizeActivity(edited)).toBe('결정 필요: 캐시를 쓸지 → 캐시를 Redis로 할지')
+  })
+  it('질문을 지우면 질문에서 없음으로 보인다', () => {
+    const cleared = activity({ changes: { decision_needed: { from: '캐시를 쓸지 정해 주세요', to: null } } })
+    expect(describeChanges(cleared)).toEqual([{ field: 'decision_needed', label: '결정 필요', from: '캐시를 쓸지 정해 주세요', to: '없음' }])
+    expect(summarizeActivity(cleared)).toBe('결정 필요: 캐시를 쓸지 정해 주세요 → 없음')
+  })
+  it('긴 질문은 다른 문자열 필드처럼 60자에서 자른다', () => {
+    const long = activity({ changes: { decision_needed: { from: null, to: '가'.repeat(100) } } })
+    expect(describeChanges(long)[0].to).toBe(`${'가'.repeat(60)}…`)
+  })
+  it('생성 기록은 결정 필요가 있어도 제목 한 줄만 낸다', () => {
+    const created = activity({ kind: 'created', changes: { title: { to: '새 이슈' }, decision_needed: { to: '질문' } } })
+    expect(describeChanges(created)).toEqual([{ field: 'title', label: '제목', from: null, to: '새 이슈' }])
+  })
 })
 
 describe('주제 변경', () => {
