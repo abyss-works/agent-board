@@ -155,6 +155,59 @@ func TestValidateComment(t *testing.T) {
 	}
 }
 
+func TestValidateIssueDecisionNeeded(t *testing.T) {
+	text := func(s string) *string { return &s }
+	cases := []struct {
+		name     string
+		question *string
+		valid    bool
+	}{
+		{"none", nil, true},
+		{"one rune", text("가"), true},
+		{"500 runes of 3 bytes each", text(strings.Repeat("가", MaxDecisionRunes)), true},
+		{"501 runes", text(strings.Repeat("가", MaxDecisionRunes+1)), false},
+		{"empty", text(""), false},
+	}
+	// A question can stay on an issue of any type.
+	for _, typ := range IssueTypes {
+		for _, c := range cases {
+			i := Issue{Title: "t", Type: typ, Status: StatusBacklog, Priority: P2, DecisionNeeded: c.question}
+			if typ == TypeObservation {
+				i.RecheckCondition = text("다음 릴리즈")
+			}
+			err := ValidateIssue(&i)
+			if c.valid {
+				if err != nil {
+					t.Errorf("%s/%s: unexpected error %v", typ, c.name, err)
+				}
+				continue
+			}
+			var ve *ValidationError
+			if !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != "decision_needed" {
+				t.Errorf("%s/%s: err = %v, want one decision_needed violation", typ, c.name, err)
+			}
+		}
+	}
+}
+
+func TestIssueCarriesDecisionNeeded(t *testing.T) {
+	question := "저장소를 SQLite로 둘지 정해 주세요."
+	i := Issue{Key: "AGB-1", DecisionNeeded: &question}
+	if s := i.Summary(); s.DecisionNeeded == nil || *s.DecisionNeeded != question {
+		t.Errorf("summary = %+v", s)
+	}
+	b, err := json.Marshal(Issue{Key: "AGB-2"})
+	if err != nil || !strings.Contains(string(b), `"decision_needed":null`) {
+		t.Errorf("an issue without a question must show the field as null: %s (%v)", b, err)
+	}
+	for name, v := range map[string]any{"issue": i, "summary": i.Summary()} {
+		b, _ = json.Marshal(v)
+		if !strings.Contains(string(b), `"decision_needed":"저장소를 SQLite로 둘지 정해 주세요."`) {
+			t.Errorf("%s JSON = %s", name, b)
+		}
+	}
+}
+
 func TestResolveStatusReason(t *testing.T) {
 	text := func(s string) *string { return &s }
 	cases := []struct {
