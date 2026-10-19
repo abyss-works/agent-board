@@ -68,12 +68,16 @@ export const FIELD_LABEL: Record<string, string> = {
   project: '프로젝트',
 }
 
+/** 스키마 버전 6에서 없어졌지만 그 전의 활동 기록에 남아 있는 값의 이름 */
+const LEGACY_STATUS_LABEL: Record<string, string> = { todo: '할 일' }
+const LEGACY_TYPE_LABEL: Record<string, string> = { decision: '결정 대기' }
+
 export function statusLabel(s: string): string {
-  return (STATUS_LABEL as Record<string, string>)[s] ?? s
+  return (STATUS_LABEL as Record<string, string>)[s] ?? LEGACY_STATUS_LABEL[s] ?? s
 }
 
 export function typeLabel(t: string): string {
-  return (TYPE_LABEL as Record<string, string>)[t] ?? t
+  return (TYPE_LABEL as Record<string, string>)[t] ?? LEGACY_TYPE_LABEL[t] ?? t
 }
 
 export function fieldLabel(f: string): string {
