@@ -1,4 +1,4 @@
-import { ActivityIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
+import { ActivityIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
 import { useProjects } from '@/api/queries'
@@ -34,6 +34,12 @@ const MENU_ICON: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   '/activity': ActivityIcon,
   '/milestones': MilestoneIcon,
 }
+
+const menuLinkClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    'flex h-8 items-center gap-2.5 rounded-md px-2 text-[0.8125rem] transition-colors',
+    isActive ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+  )
 
 function InstanceSwitcher() {
   const { instances, instance, selectInstance } = useAppState()
@@ -202,22 +208,18 @@ export function Sidebar() {
         {MENU_SHORTCUTS.map((m) => {
           const Icon = MENU_ICON[m.path]
           return (
-            <NavLink
-              key={m.path}
-              to={m.path}
-              className={({ isActive }) =>
-                cn(
-                  'flex h-8 items-center gap-2.5 rounded-md px-2 text-[0.8125rem] transition-colors',
-                  isActive ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
-                )
-              }
-            >
+            <NavLink key={m.path} to={m.path} className={menuLinkClass}>
               <Icon className="size-4" />
               <span className="flex-1">{m.label}</span>
               <Kbd>{m.key}</Kbd>
             </NavLink>
           )
         })}
+        {/* 단축키 없이 메뉴만 둔다. MENU_SHORTCUTS에는 넣지 않는다. */}
+        <NavLink to="/tokens" className={menuLinkClass}>
+          <KeyRoundIcon className="size-4" />
+          <span className="flex-1">접속 토큰</span>
+        </NavLink>
       </nav>
 
       <div className="mt-auto space-y-2 border-t border-sidebar-border p-3">

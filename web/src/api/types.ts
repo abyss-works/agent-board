@@ -8,6 +8,9 @@ export type ActorKind = 'user' | 'agent'
 export type ActivityKind = 'created' | 'updated' | 'commented'
 export type TopicStatus = 'active' | 'deleted'
 export type MilestoneStatus = 'open' | 'closed' | 'deleted'
+export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
+/** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
+export type ActorTokenFilter = 'active' | 'revoked' | 'all'
 
 export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'decision', 'idea', 'observation']
 export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review', 'done', 'cancelled', 'deleted']
@@ -149,6 +152,34 @@ export interface Actor {
   kind: ActorKind
 }
 
+/** CLI가 만든 기기 승인 요청. 사용자가 코드를 확인하고 승인하거나 거부한다. 서버 메모리에만 있고 600초 뒤 만료한다. */
+export interface DeviceAuthorization {
+  /** `XXXX-XXXX` */
+  user_code: string
+  /** 토큰을 받을 에이전트 행위자 */
+  actor: string
+  /** 요청을 보낸 기기 이름 */
+  client_host: string
+  status: DeviceAuthorizationStatus
+  created_at: string
+  expires_at: string
+}
+
+/** 기기 승인으로 발급한 행위자 토큰. 토큰 값은 발급 응답에서만 보이므로 여기에는 없다. */
+export interface ActorToken {
+  id: number
+  actor: string
+  client_host: string
+  created_at: string
+  /** 기기 승인을 한 행위자 */
+  created_by: string
+  /** 그 토큰으로 인증한 마지막 요청의 시각. 쓴 적이 없으면 null이다. */
+  last_used_at: string | null
+  /** 폐기한 시각과 폐기한 행위자. 폐기되지 않았으면 둘 다 null이다. */
+  revoked_at: string | null
+  revoked_by: string | null
+}
+
 export interface Page<T> {
   items: T[]
   total: number
@@ -278,4 +309,9 @@ export interface MilestonePatch {
   description?: string
   target_date?: string | null
   status?: MilestoneStatus
+}
+
+/** PATCH /v1/device-authorizations/{user_code} 본문. 대기 중인 요청만 바꿀 수 있다. */
+export interface DeviceAuthorizationPatch {
+  status: Exclude<DeviceAuthorizationStatus, 'pending'>
 }

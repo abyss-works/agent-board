@@ -45,3 +45,15 @@ export function formatRelative(iso: string, now: Date = new Date()): string {
   if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}일 전`
   return formatKstDate(iso)
 }
+
+/** 만료까지 남은 시간. `9분 30초`, 딱 떨어지는 분은 `10분`, 1분 미만은 `45초`, 시각이 지났으면 `만료됨`. */
+export function formatRemaining(iso: string, now: Date = new Date()): string {
+  const d = parse(iso)
+  if (!d) return iso
+  const sec = Math.ceil((d.getTime() - now.getTime()) / 1000)
+  if (sec <= 0) return '만료됨'
+  const min = Math.floor(sec / 60)
+  const rest = sec % 60
+  if (min === 0) return `${rest}초`
+  return rest === 0 ? `${min}분` : `${min}분 ${rest}초`
+}
