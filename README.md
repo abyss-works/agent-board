@@ -163,7 +163,7 @@ EOF
 
 ## REST API
 
-`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `health` 경로가 있다. `health`를 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
+`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
 
 ```bash
 curl -H "Authorization: Bearer $AGB_TOKEN" \
