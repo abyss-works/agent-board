@@ -35,9 +35,9 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, m
 }
 
 const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR)
-  --status <S>            backlog, todo, doing, review, done, cancelled, deleted 를 쉼표로 잇거나
-                          open(열린 넷), closed, all. 기본 open
-  --type <T>              feature, bug, design, decision, idea, observation. 쉼표 OR
+  --status <S>            backlog, doing, review, done, cancelled, deleted 를 쉼표로 잇거나
+                          open(열린 셋), closed, all. 기본 open
+  --type <T>              feature, bug, design, idea, observation. 쉼표 OR
   --priority <P>          P0, P1, P2, P3. 쉼표 OR
   --label <L>             라벨. 반복하면 AND
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
@@ -183,7 +183,7 @@ var issueCreateCmd = &command{
 옵션:
   --project, -p <P>       프로젝트 키 (필수)
   --title, -t <제목>      1~200자 (필수)
-  --type <T>              feature(기본), bug, design, decision, idea, observation
+  --type <T>              feature(기본), bug, design, idea, observation
   --priority <P>          P0, P1, P2(기본), P3
   --status <S>            기본 backlog
 ` + bodyUsage + `  --label <L>             라벨. 반복 가능
@@ -319,7 +319,7 @@ var issueUpdateCmd = &command{
   --title <제목>
   --type <T>              observation 으로 바꾸면 --recheck 를 함께 줍니다
   --priority <P>
-  --status <S>            backlog, todo, doing, review, done, cancelled, deleted
+  --status <S>            backlog, doing, review, done, cancelled, deleted
   --reason <사유>         상태 변경의 사유. 1~500자. cancelled, deleted 로 바꿀 때는 필수이고,
                           다른 상태로 바꿀 때 생략하면 서버가 "이전 상태 → 새 상태"를 적습니다.
                           상태를 바꾸지 않는 요청에는 쓸 수 없습니다
