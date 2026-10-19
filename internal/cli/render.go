@@ -36,8 +36,26 @@ func footer(w io.Writer, shown, total, offset int) {
 	}
 }
 
+// addDecisionColumn ends tb with a DECISION column when some row has a
+// decision question. Row i of tb is the one for questions[i]. As the last
+// column, a long question is cut to the terminal width by the table.
+func addDecisionColumn(tb *table, questions []*string) {
+	shown := false
+	for _, q := range questions {
+		shown = shown || q != nil
+	}
+	if !shown {
+		return
+	}
+	tb.header = append(tb.header, "DECISION")
+	for i, q := range questions {
+		tb.rows[i] = append(tb.rows[i], deref(q, "-"))
+	}
+}
+
 // issueTable lists issues. The MILESTONE column appears only when some issue
-// has a milestone and the SNIPPET column only for search results.
+// has a milestone, the SNIPPET column only for search results and the
+// DECISION column only when some issue asks for a decision.
 func (a *App) issueTable(items []model.IssueSummary) *table {
 	snippet, milestone := false, false
 	for _, it := range items {
@@ -56,6 +74,7 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 	if snippet {
 		tb.header = append(tb.header, "SNIPPET")
 	}
+	questions := make([]*string, 0, len(items))
 	for _, it := range items {
 		row := []string{it.Key, string(it.Status), string(it.Priority), string(it.Type), joinOr(it.Labels, "-")}
 		if milestone {
@@ -66,7 +85,9 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 			row = append(row, deref(it.Snippet, ""))
 		}
 		tb.add(row...)
+		questions = append(questions, it.DecisionNeeded)
 	}
+	addDecisionColumn(tb, questions)
 	return tb
 }
 
@@ -89,7 +110,7 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 	if err != nil {
 		return err
 	}
-	fields(w, [][2]string{
+	pairs := [][2]string{
 		{"key", i.Key},
 		{"title", i.Title},
 		{"project", i.Project},
@@ -103,6 +124,11 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"depends_on", joinOr(i.DependsOn, "-")},
 		{"refs", joinOr(i.Refs, "-")},
 		{"recheck_condition", deref(i.RecheckCondition, "-")},
+	}
+	if i.DecisionNeeded != nil {
+		pairs = append(pairs, [2]string{"결정 필요", *i.DecisionNeeded})
+	}
+	pairs = append(pairs, [][2]string{
 		{"topic", topicText(i.Topic, i.TopicPath)},
 		{"milestone", milestoneText(i.Milestone, i.MilestoneName)},
 		{"version", strconv.FormatInt(i.Version, 10)},
@@ -110,7 +136,8 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"updated", formatTime(i.UpdatedAt, a.Location) + " (" + i.UpdatedBy + ")"},
 		{"status_changed", formatTime(i.StatusChangedAt, a.Location) + " (" + i.StatusChangedBy + ")"},
 		{"closed", formatTimePtr(i.ClosedAt, a.Location)},
-	})
+	}...)
+	fields(w, pairs)
 	if strings.TrimSpace(i.Body) != "" {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, strings.TrimRight(i.Body, "\n"))
@@ -244,13 +271,16 @@ func (a *App) renderActivity(w io.Writer, resp *client.Response) error {
 
 func (a *App) queueTable(items []model.QueueItem) *table {
 	tb := &table{header: []string{"KEY", "PRI", "STATUS", "READY", "BLOCKED_BY", "TITLE"}}
+	questions := make([]*string, 0, len(items))
 	for _, it := range items {
 		ready := "yes"
 		if !it.Ready {
 			ready = "no"
 		}
 		tb.add(it.Key, string(it.Priority), string(it.Status), ready, joinOr(it.BlockedBy, "-"), it.Title)
+		questions = append(questions, it.DecisionNeeded)
 	}
+	addDecisionColumn(tb, questions)
 	return tb
 }
 
@@ -291,9 +321,12 @@ func (a *App) renderBoard(w io.Writer, resp *client.Response) error {
 			continue
 		}
 		tb := &table{header: []string{"KEY", "PRI", "TYPE", "LABELS", "TITLE"}}
+		questions := make([]*string, 0, len(col.Issues))
 		for _, it := range col.Issues {
 			tb.add(it.Key, string(it.Priority), string(it.Type), joinOr(it.Labels, "-"), it.Title)
+			questions = append(questions, it.DecisionNeeded)
 		}
+		addDecisionColumn(tb, questions)
 		tb.write(w, a.TermWidth)
 		if col.Total > len(col.Issues) {
 			fmt.Fprintf(w, "… 외 %d건\n", col.Total-len(col.Issues))
