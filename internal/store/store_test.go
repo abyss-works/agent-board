@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestOpenAppliesPragmasAndMigrations(t *testing.T) {
 	if version != SchemaVersion {
 		t.Errorf("user_version = %d, want %d", version, SchemaVersion)
 	}
-	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic", "milestone"} {
+	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic", "milestone", "token"} {
 		var n int
 		if err := s.db.QueryRow("select count(*) from sqlite_master where name = ?", table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -357,8 +358,8 @@ func TestMigrateAddsMilestoneToVersion3Database(t *testing.T) {
 	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 4 || SchemaVersion != 4 {
-		t.Errorf("user_version = %d, SchemaVersion = %d, want 4", version, SchemaVersion)
+	if version != SchemaVersion || SchemaVersion < 4 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, want the current version, at least 4", version, SchemaVersion)
 	}
 
 	columns := func(table string) map[string]string {
@@ -439,6 +440,116 @@ func TestMigrateAddsMilestoneToVersion3Database(t *testing.T) {
 	got, err := s.GetMilestone(ctx, m.ID)
 	if err != nil || got.Progress != (model.MilestoneProgress{Total: 2, Done: 1}) {
 		t.Errorf("milestone after attaching the old issues = %+v, %v", got, err)
+	}
+}
+
+// TestMigrateAddsTokenToVersion4Database upgrades a database written under
+// schema version 4. Migration 0005 adds the token table and its index; the
+// data that exists stays as it is and no token exists yet.
+func TestMigrateAddsTokenToVersion4Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-10-17T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"migrations/0001_init.sql", "migrations/0002_activity_summary.sql", "migrations/0003_topic_ack_reason.sql", "migrations/0004_milestone.sql"} {
+		body, err := migrationFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 4`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into milestone(id, project_id, name, created_at, updated_at, created_by, updated_by) values (1, 1, 'v0.1.0', `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into issue(id, project_id, number, key, title, type, status, priority, milestone_id, version,
+		                   created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '마일스톤이 붙은 이슈', 'feature', 'todo', 'P2', 1, 3, `+at+`, `+at+`, null, `+at+`, 'claude', 'claude', 'claude')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 4 database: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 5 || SchemaVersion != 5 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, want 5", version, SchemaVersion)
+	}
+
+	rows, err := s.db.Query(`select name, type || ':' || "notnull" || ':' || coalesce(dflt_value, '') from pragma_table_info('token')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols := map[string]string{}
+	for rows.Next() {
+		var name, kind string
+		if err := rows.Scan(&name, &kind); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = kind
+	}
+	rows.Close()
+	wantCols := map[string]string{
+		"id": "INTEGER:0:", "actor_id": "TEXT:1:", "client_host": "TEXT:1:", "token_hash": "TEXT:1:", "created_at": "TEXT:1:",
+		"created_by": "TEXT:1:", "last_used_at": "TEXT:0:", "revoked_at": "TEXT:0:", "revoked_by": "TEXT:0:",
+	}
+	if !reflect.DeepEqual(cols, wantCols) {
+		t.Errorf("token columns = %v, want %v", cols, wantCols)
+	}
+	var indexes int
+	if err := s.db.QueryRow(`select count(*) from sqlite_master where type = 'index' and tbl_name = 'token' and name = 'token_actor'`).Scan(&indexes); err != nil || indexes != 1 {
+		t.Errorf("token_actor index = %d, %v", indexes, err)
+	}
+	// The hash is unique: a second token cannot share it.
+	insert := `insert into token(actor_id, client_host, token_hash, created_at, created_by) values ('claude', 'pc', 'h', ` + at + `, 'owner')`
+	if _, err := s.db.Exec(insert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(insert); err == nil {
+		t.Error("two tokens with the same hash were accepted")
+	}
+	if _, err := s.db.Exec(`delete from token`); err != nil {
+		t.Fatal(err)
+	}
+	fk, err := s.db.Query(`pragma foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fk.Next() {
+		t.Error("foreign_key_check reports a violation after the migration")
+	}
+	fk.Close()
+
+	// Existing data is untouched and the feature works on it.
+	old, err := s.GetIssue(ctx, "AGB-1")
+	if err != nil || old.Title != "마일스톤이 붙은 이슈" || old.Version != 3 || old.Milestone == nil || *old.Milestone != 1 {
+		t.Errorf("migrated issue = %+v, %v", old, err)
+	}
+	tok, err := s.CreateToken(ctx, TokenInput{Actor: "claude", ClientHost: "desk", Secret: "agb_secret", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AuthenticateToken(ctx, "agb_secret"); err != nil || got.ID != tok.ID {
+		t.Errorf("authenticate on the migrated database = %+v, %v", got, err)
 	}
 }
 
