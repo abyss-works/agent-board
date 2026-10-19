@@ -53,8 +53,8 @@ func TestRequestReturnsRawBodyAndHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Status != 200 || string(resp.Body) != rec.reply || resp.ETag() != `"7"` {
-		t.Errorf("resp = %d %q etag %q", resp.Status, resp.Body, resp.ETag())
+	if resp.Status != 200 || string(resp.Body) != rec.reply || resp.Header.Get("ETag") != `"7"` {
+		t.Errorf("resp = %d %q etag %q", resp.Status, resp.Body, resp.Header.Get("ETag"))
 	}
 	var out struct {
 		Key string `json:"key"`

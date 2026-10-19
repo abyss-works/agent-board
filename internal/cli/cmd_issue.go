@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"flag"
+	"strconv"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/client"
@@ -461,8 +462,10 @@ var issueUpdateCmd = &command{
 					patch[e.field] = e.apply(current[e.field])
 				}
 			}
+			// The version comes from the body: a compressing proxy may turn
+			// the ETag header into a weak one, which the server rejects.
 			if version == "" {
-				version = resp.ETag()
+				version = quoteETag(strconv.FormatInt(cur.Version, 10))
 			}
 		}
 		resp, err := c.PatchIssue(ctx, key, patch, version)

@@ -285,6 +285,21 @@ func TestIssueUpdateAddLabelReadsThenPatchesWithIfMatch(t *testing.T) {
 	}
 }
 
+// A proxy that compresses responses may weaken the ETag (W/"3"). The CLI
+// takes the version from the issue body, so the If-Match it sends stays valid.
+func TestIssueUpdateIfMatchUsesBodyVersionWhenETagIsWeak(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/issues/CLI-1", canned{body: issueJSON, etag: `W/"3"`})
+	srv.on("PATCH", "/v1/issues/CLI-1", canned{body: issueJSON, etag: `"4"`})
+	h := newHarness(t, srv, false)
+	if code := h.run("issue", "update", "CLI-1", "--add-ref", "doc:x.md"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if len(srv.reqs) != 2 || srv.reqs[1].Header.Get("If-Match") != `"3"` {
+		t.Fatalf("requests = %+v", srv.reqs)
+	}
+}
+
 func TestPreconditionFailedIsReported(t *testing.T) {
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/issues/CLI-1", canned{body: issueJSON, etag: `"3"`})
