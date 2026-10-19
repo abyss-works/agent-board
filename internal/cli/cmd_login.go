@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/client"
@@ -142,5 +143,77 @@ func (a *App) printLogin(g *globals, t model.IssuedToken) error {
 		return nil
 	}
 	fmt.Fprintf(a.Stdout, "로그인했습니다: %s (토큰 %d, 기기 %s)\n", res.Actor, res.TokenID, res.ClientHost)
+	return nil
+}
+
+var logoutCmd = &command{
+	name: "logout", summary: "이 행위자의 토큰 폐기와 로컬 삭제",
+	usage: `사용법: agb logout --actor <ID>
+
+이 행위자의 토큰을 서버에서 폐기하고 설정 파일에서 지웁니다. 설정 파일의 tokens에 있는 이 행위자의
+토큰으로 요청하며, AGB_TOKEN은 쓰지 않습니다. 다른 행위자의 토큰과 공용 토큰은 건드리지 않습니다.
+
+- 폐기에 성공했거나 서버가 이미 모르는 토큰(401)이면 로컬 토큰을 지우고 종료 코드 0으로 끝납니다.
+- 그 밖의 오류는 로컬 토큰을 남기고 종료 코드 1로 끝납니다.
+- 이 행위자의 로컬 토큰이 없으면 종료 코드 2로 끝납니다.
+
+행위자는 --actor, AGB_ACTOR, 설정의 actor 순으로 정합니다.
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		pos, err := parseArgs(leafFlags("logout", g), args)
+		if err != nil {
+			return err
+		}
+		if err := none(pos); err != nil {
+			return err
+		}
+		cfg, s, err := a.settings(g)
+		if err != nil {
+			return err
+		}
+		if err := s.requireActor(); err != nil {
+			return err
+		}
+		token := cfg.Tokens[s.Actor]
+		if token == "" {
+			return usageErrorf("설정 파일에 %s의 토큰이 없습니다. `agb login --actor %s`로 받은 토큰만 로그아웃할 수 있습니다.", s.Actor, s.Actor)
+		}
+		s.Token = token
+		revoked := true
+		if _, err := a.newClient(s).RevokeCurrentToken(ctx); err != nil {
+			var apiErr *client.Error
+			if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+				return err
+			}
+			revoked = false
+		}
+		if _, err := a.modifyConfig(g, func(file *Config) error {
+			delete(file.Tokens, s.Actor)
+			return nil
+		}); err != nil {
+			return err
+		}
+		return a.printLogout(g, s.Actor, revoked)
+	},
+}
+
+// logoutResult is what a logout prints. Revoked is false when the server did
+// not know the token any more.
+type logoutResult struct {
+	Actor   string `json:"actor"`
+	Revoked bool   `json:"revoked"`
+}
+
+func (a *App) printLogout(g *globals, actor string, revoked bool) error {
+	if a.jsonOutput(g) {
+		raw, _ := json.Marshal(logoutResult{Actor: actor, Revoked: revoked})
+		writeJSON(a.Stdout, raw)
+		return nil
+	}
+	if revoked {
+		fmt.Fprintf(a.Stdout, "로그아웃했습니다: %s (서버에서 토큰을 폐기했습니다)\n", actor)
+	} else {
+		fmt.Fprintf(a.Stdout, "로그아웃했습니다: %s (서버가 이미 폐기한 토큰이어서 로컬 토큰만 지웠습니다)\n", actor)
+	}
 	return nil
 }
