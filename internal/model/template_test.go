@@ -73,13 +73,7 @@ func skillTemplates(t *testing.T) []Template {
 // The server serves and checks the same templates the skill tells agents to
 // use. Edit the skill first, then the server.
 func TestTemplatesMatchTheSkill(t *testing.T) {
-	// A section for a type the server has dropped is stale text, not a template to match.
-	var skill []Template
-	for _, tpl := range skillTemplates(t) {
-		if _, ok := ParseIssueType(string(tpl.Type)); ok {
-			skill = append(skill, tpl)
-		}
-	}
+	skill := skillTemplates(t)
 	if len(skill) != len(IssueTypes) || len(Templates) != len(IssueTypes) {
 		t.Fatalf("templates: skill %d, server %d, types %d", len(skill), len(Templates), len(IssueTypes))
 	}
