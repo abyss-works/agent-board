@@ -64,6 +64,15 @@ export function isPreconditionFailed(err: unknown): boolean {
   return isApiError(err) && err.status === 412
 }
 
+export function isNotFound(err: unknown): boolean {
+  return isApiError(err) && err.status === 404
+}
+
+/** 이미 승인되거나 거부된 기기 승인 요청을 바꾸려 한 오류(409 conflict, `details[].reason`이 not_pending). */
+export function isNotPending(err: unknown): boolean {
+  return isApiError(err) && err.status === 409 && err.code === 'conflict' && err.details.some((d) => d.reason === 'not_pending')
+}
+
 /** 사람이 읽을 오류 문구. */
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError || err instanceof NetworkError || err instanceof ServerUnavailableError) return err.message

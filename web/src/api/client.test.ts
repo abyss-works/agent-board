@@ -6,6 +6,8 @@ import {
   ServerUnavailableError,
   buildQuery,
   headersFor,
+  isNotFound,
+  isNotPending,
   isPreconditionFailed,
   isUnauthorized,
   issueListQuery,
@@ -221,5 +223,47 @@ describe('ApiClient', () => {
     const ctrl = new AbortController()
     await client.get('/board', undefined, ctrl.signal)
     expect(calls[0].init.signal).toBe(ctrl.signal)
+  })
+})
+
+describe('기기 승인 오류 분류', () => {
+  it('404는 대상이 없는 오류다', async () => {
+    const { fetchFn } = fakeFetch(404, { error: { code: 'not_found', message: '대상이 없습니다.' } })
+    const err = await new ApiClient(config, fetchFn).get('/device-authorizations/BDFG-HJKL').catch((e: unknown) => e)
+    expect(isNotFound(err)).toBe(true)
+    expect(isNotPending(err)).toBe(false)
+  })
+
+  it('409 conflict의 reason이 not_pending이면 대기 중이 아닌 요청을 바꾼 오류다', async () => {
+    const { fetchFn } = fakeFetch(409, {
+      error: { code: 'conflict', message: '이미 승인되거나 거부된 요청입니다.', details: [{ reason: 'not_pending' }] },
+    })
+    const err = await new ApiClient(config, fetchFn)
+      .patch('/device-authorizations/BDFG-HJKL', { status: 'approved' })
+      .catch((e: unknown) => e)
+    expect(isNotPending(err)).toBe(true)
+    expect(isNotFound(err)).toBe(false)
+    expect((err as ApiError).details).toEqual([{ reason: 'not_pending' }])
+  })
+
+  it('다른 409 reason은 대기 중이 아닌 요청을 바꾼 오류가 아니다', async () => {
+    const { fetchFn } = fakeFetch(409, {
+      error: { code: 'conflict', message: '프로젝트 키가 이미 있습니다.', details: [{ reason: 'duplicate_key' }] },
+    })
+    const err = await new ApiClient(config, fetchFn).post('/projects', { key: 'AGB', name: 'x' }).catch((e: unknown) => e)
+    expect(isNotPending(err)).toBe(false)
+  })
+
+  it('reason이 없는 409와 reason만 같은 다른 상태 코드는 대기 중이 아닌 요청을 바꾼 오류가 아니다', () => {
+    expect(isNotPending(new ApiError(409, 'conflict', '충돌'))).toBe(false)
+    expect(isNotPending(new ApiError(422, 'validation_failed', '검사 실패', [{ reason: 'not_pending' }]))).toBe(false)
+    expect(isNotPending(new ApiError(409, 'precondition_failed', '다름', [{ reason: 'not_pending' }]))).toBe(false)
+  })
+
+  it('ApiError가 아닌 값은 모두 거짓이다', () => {
+    for (const value of [new Error('x'), new NetworkError(), new ServerUnavailableError(502), 'not_found', null, undefined]) {
+      expect(isNotFound(value)).toBe(false)
+      expect(isNotPending(value)).toBe(false)
+    }
   })
 })
