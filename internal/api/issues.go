@@ -20,7 +20,7 @@ func (h *handler) registerIssues(mux *http.ServeMux) {
 // issueWriteFields are the fields a client may send when creating an issue.
 var issueWriteFields = map[string]bool{
 	"title": true, "body": true, "type": true, "status": true, "priority": true,
-	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true, "topic": true, "milestone": true,
+	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true, "decision_needed": true, "topic": true, "milestone": true,
 }
 
 // issuePatchFields are the fields of a PATCH: the create fields plus the
@@ -52,7 +52,7 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in store.IssueInput
-	var parent, recheck string
+	var parent, recheck, decision string
 	var topic, milestone int64
 	// Nulls on non-nullable fields are left at their zero value so that
 	// validation reports them (an empty title, for example).
@@ -77,6 +77,13 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 			present, null, e := field(b, "recheck_condition", &recheck)
 			if present && !null {
 				in.RecheckCondition = &recheck
+			}
+			return e
+		},
+		func() *apiError {
+			present, null, e := field(b, "decision_needed", &decision)
+			if present && !null {
+				in.DecisionNeeded = &decision
 			}
 			return e
 		},
@@ -148,7 +155,7 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 	var status model.IssueStatus
 	var prio model.Priority
 	var labels, deps, refs []string
-	var parent, recheck, statusReason string
+	var parent, recheck, decision, statusReason string
 	var topic, milestone int64
 	steps := []func() *apiError{
 		func() *apiError {
@@ -207,6 +214,16 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 				patch.RecheckCondition = store.Optional[string]{Set: true}
 				if !n {
 					patch.RecheckCondition.Value = &recheck
+				}
+			}
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "decision_needed", &decision)
+			if p {
+				patch.DecisionNeeded = store.Optional[string]{Set: true}
+				if !n {
+					patch.DecisionNeeded.Value = &decision
 				}
 			}
 			return e

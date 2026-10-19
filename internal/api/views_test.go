@@ -14,7 +14,7 @@ func seedViews(t *testing.T, e *env) {
 	e.createIssue(t, `{"project":"AGB","title":"dep","status":"doing","priority":"P1","labels":["api"]}`)
 	e.createIssue(t, `{"project":"AGB","title":"blocked","depends_on":["AGB-1"],"labels":["api","cli"]}`)
 	e.createIssue(t, `{"project":"AGB","title":"ready","priority":"P0"}`)
-	e.createIssue(t, `{"project":"AGB","title":"decide"}`)
+	e.createIssue(t, `{"project":"AGB","title":"decide","decision_needed":"어느 쪽으로 할지"}`)
 	e.createIssue(t, `{"project":"AGB","title":"done","status":"done","labels":["old"]}`)
 	e.createIssue(t, `{"project":"AGB","title":"gone","status":"deleted"}`)
 	e.createIssue(t, `{"project":"OTH","title":"other","status":"review"}`)
@@ -34,6 +34,11 @@ func TestBoardEndpoint(t *testing.T) {
 	}
 	if b.Columns[0].Status != model.StatusBacklog || b.Columns[0].Total != 3 || b.Columns[0].Issues[0].Key != "AGB-3" {
 		t.Errorf("backlog column = %+v", b.Columns[0])
+	}
+	// Board items carry decision_needed: set on AGB-4, null on AGB-2.
+	backlog := b.Columns[0].Issues
+	if backlog[1].Key != "AGB-2" || backlog[1].DecisionNeeded != nil || backlog[2].Key != "AGB-4" || backlog[2].DecisionNeeded == nil || *backlog[2].DecisionNeeded != "어느 쪽으로 할지" {
+		t.Errorf("backlog column items = %+v", backlog)
 	}
 	if b.Columns[5].Status != model.StatusDeleted || b.Columns[5].Total != 1 {
 		t.Errorf("deleted column must be shown: %+v", b.Columns[5])
@@ -67,6 +72,9 @@ func TestQueueEndpoint(t *testing.T) {
 	if l.Total != 3 || l.Items[0].Key != "AGB-3" || !l.Items[0].Ready || l.Items[1].Key != "AGB-4" || !l.Items[1].Ready ||
 		l.Items[2].Key != "AGB-2" || l.Items[2].Ready || l.Items[2].BlockedBy[0] != "AGB-1" {
 		t.Errorf("queue = %+v", l)
+	}
+	if q := l.Items[1].DecisionNeeded; q == nil || *q != "어느 쪽으로 할지" || l.Items[0].DecisionNeeded != nil {
+		t.Errorf("queue items carry decision_needed: %v and %v", l.Items[0].DecisionNeeded, q)
 	}
 	rec = e.do(t, "GET", "/v1/queue?project=AGB&limit=1", "", nil)
 	decodeJSON(t, rec, &l)
@@ -134,10 +142,10 @@ func TestOverviewEndpoint(t *testing.T) {
 	if o.Blocked.Total != 1 || o.Blocked.Items[0].Key != "AGB-2" || o.Blocked.Items[0].BlockedBy[0] != "AGB-1" {
 		t.Errorf("blocked = %+v", o.Blocked)
 	}
-	if o.Decisions.Total != 0 || o.Decisions.Items == nil {
+	if o.Decisions.Total != 1 || o.Decisions.Items[0].Key != "AGB-4" || o.Decisions.Items[0].DecisionNeeded == nil || *o.Decisions.Items[0].DecisionNeeded != "어느 쪽으로 할지" {
 		t.Errorf("decisions = %+v", o.Decisions)
 	}
-	if o.Next.Total != 2 || o.Next.Items[0].Key != "AGB-3" || o.Next.Items[1].Key != "AGB-4" {
+	if o.Next.Total != 2 || o.Next.Items[0].Key != "AGB-3" || o.Next.Items[1].Key != "AGB-4" || o.Next.Items[1].DecisionNeeded == nil {
 		t.Errorf("next = %+v", o.Next)
 	}
 	if o.RecentActivity.Total != 7 || o.RecentActivity.Items[0].Kind != model.ActivityCommented {

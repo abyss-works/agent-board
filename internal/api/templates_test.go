@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,6 +21,13 @@ func TestTemplatesEndpoint(t *testing.T) {
 	decodeJSON(t, rec, &got)
 	if len(got.Items) != 5 {
 		t.Fatalf("templates = %d, want 5", len(got.Items))
+	}
+	var types []model.IssueType
+	for _, tpl := range got.Items {
+		types = append(types, tpl.Type)
+	}
+	if want := []model.IssueType{model.TypeFeature, model.TypeBug, model.TypeDesign, model.TypeIdea, model.TypeObservation}; !reflect.DeepEqual(types, want) {
+		t.Errorf("template types = %v, want %v (no decision template)", types, want)
 	}
 	for i, typ := range model.IssueTypes {
 		want := model.Templates[i]
