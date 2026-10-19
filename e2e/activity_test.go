@@ -59,7 +59,7 @@ func TestActivity(t *testing.T) {
 	p := createProject(t, "AC")
 	creator := caller{actor: "claude", session: sessionID + "-ac", host: "desk-win10"}
 	editor := caller{actor: "codex", session: sessionID + "-ac2", host: "ab"}
-	iss := createIssue(t, creator, map[string]any{"project": p.Key, "title": "활동 기록", "labels": strs("api"), "priority": "P1", "status": "todo", "body": templateBody(t, "feature")})
+	iss := createIssue(t, creator, map[string]any{"project": p.Key, "title": "활동 기록", "labels": strs("api"), "priority": "P1", "body": templateBody(t, "feature")})
 	tick()
 	upd := patchIssue(t, editor, iss.Key, map[string]any{"status": "doing", "labels": strs("api", "cli"), "title": "활동 기록"})
 	tick()
@@ -96,7 +96,7 @@ func TestActivity(t *testing.T) {
 			t.Fatalf("changes = null")
 		}
 		ch := *a.Changes
-		for _, f := range []string{"title", "body", "type", "status", "priority", "labels", "parent", "depends_on", "refs", "recheck_condition"} {
+		for _, f := range []string{"title", "body", "type", "status", "priority", "labels", "parent", "depends_on", "refs", "recheck_condition", "decision_needed"} {
 			c, ok := ch[f]
 			if !ok {
 				t.Errorf("created changes lack %s", f)
@@ -106,7 +106,7 @@ func TestActivity(t *testing.T) {
 				t.Errorf("created change %s has from %s", f, c.From)
 			}
 		}
-		if string(ch["title"].To) != `"활동 기록"` || string(ch["status"].To) != `"todo"` || string(ch["priority"].To) != `"P1"` || string(ch["labels"].To) != `["api"]` || string(ch["parent"].To) != "null" {
+		if string(ch["title"].To) != `"활동 기록"` || string(ch["status"].To) != `"backlog"` || string(ch["priority"].To) != `"P1"` || string(ch["labels"].To) != `["api"]` || string(ch["parent"].To) != "null" {
 			t.Errorf("created to-values = %v", ch)
 		}
 	})
@@ -123,10 +123,10 @@ func TestActivity(t *testing.T) {
 		if len(ch) != 3 {
 			t.Errorf("changes = %v, want status, status_reason and labels only", ch)
 		}
-		if string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` {
+		if string(ch["status"].From) != `"backlog"` || string(ch["status"].To) != `"doing"` {
 			t.Errorf("status change = %+v", ch["status"])
 		}
-		if string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` {
+		if string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"백로그 → 진행"` {
 			t.Errorf("status_reason change = %+v", ch["status_reason"])
 		}
 		var from, to []string

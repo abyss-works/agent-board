@@ -18,7 +18,7 @@ func TestTemplateCheck(t *testing.T) {
 				t.Errorf("%v: details = %+v", in, e.Error.Details)
 			}
 		}
-		for _, typ := range []string{"feature", "bug", "design", "decision", "idea", "observation"} {
+		for _, typ := range []string{"feature", "bug", "design", "idea", "observation"} {
 			in := map[string]any{"project": p.Key, "title": "템플릿 " + typ, "type": typ, "body": templateBody(t, typ)}
 			if typ == "observation" {
 				in["recheck_condition"] = "다음 릴리즈 뒤"

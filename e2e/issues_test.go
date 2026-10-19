@@ -35,8 +35,8 @@ func TestIssueCreate(t *testing.T) {
 		if iss.Labels == nil || len(iss.Labels) != 0 || iss.DependsOn == nil || len(iss.DependsOn) != 0 || iss.Refs == nil || len(iss.Refs) != 0 {
 			t.Errorf("arrays should be empty, not null: labels %v depends_on %v refs %v", iss.Labels, iss.DependsOn, iss.Refs)
 		}
-		if iss.Parent != nil || iss.RecheckCondition != nil || iss.ClosedAt != nil {
-			t.Errorf("nullable fields = parent %v recheck %v closed_at %v", iss.Parent, iss.RecheckCondition, iss.ClosedAt)
+		if iss.Parent != nil || iss.RecheckCondition != nil || iss.DecisionNeeded != nil || iss.ClosedAt != nil {
+			t.Errorf("nullable fields = parent %v recheck %v decision_needed %v closed_at %v", iss.Parent, iss.RecheckCondition, iss.DecisionNeeded, iss.ClosedAt)
 		}
 		if iss.Version != 1 {
 			t.Errorf("version = %d", iss.Version)
@@ -73,7 +73,7 @@ func TestIssueCreate(t *testing.T) {
 		dep := getIssue(t, other.Key+"-1")
 		in := map[string]any{
 			"project": p.Key, "title": "전체 속성", "body": "## 배경\n\n본문",
-			"type": "bug", "status": "todo", "priority": "P0",
+			"type": "bug", "status": "doing", "priority": "P0", "decision_needed": "방식을 정해 주세요.",
 			"labels":     strs("api", "cli", "api"),
 			"parent":     parent.Key,
 			"depends_on": strs(dep.Key, p.Key+"-2"),
@@ -83,8 +83,11 @@ func TestIssueCreate(t *testing.T) {
 		if iss.Title != "전체 속성" || iss.Body == nil || *iss.Body != "## 배경\n\n본문" {
 			t.Errorf("text = %+v", iss)
 		}
-		if iss.Type != "bug" || iss.Status != "todo" || iss.Priority != "P0" {
+		if iss.Type != "bug" || iss.Status != "doing" || iss.Priority != "P0" {
 			t.Errorf("enums = %s %s %s", iss.Type, iss.Status, iss.Priority)
+		}
+		if iss.DecisionNeeded == nil || *iss.DecisionNeeded != "방식을 정해 주세요." {
+			t.Errorf("decision_needed = %v", iss.DecisionNeeded)
 		}
 		if !equalStrings(sortedCopy(iss.Labels), []string{"api", "cli"}) {
 			t.Errorf("labels = %v (duplicates must merge)", iss.Labels)
@@ -177,6 +180,10 @@ func TestIssueValidation(t *testing.T) {
 		{"body over 64 KiB", map[string]any{"body": strings.Repeat("b", 64*1024+1)}, "body"},
 		{"unknown type", map[string]any{"type": "task"}, "type"},
 		{"unknown status", map[string]any{"status": "open"}, "status"},
+		{"removed status todo", map[string]any{"status": "todo"}, "status"},
+		{"removed type decision", map[string]any{"type": "decision"}, "type"},
+		{"empty decision_needed", map[string]any{"decision_needed": ""}, "decision_needed"},
+		{"decision_needed over 500 runes", map[string]any{"decision_needed": strings.Repeat("가", 501)}, "decision_needed"},
 		{"unknown priority", map[string]any{"priority": "P4"}, "priority"},
 		{"label with uppercase", map[string]any{"labels": strs("API")}, "labels[0]"},
 		{"label starting with dash", map[string]any{"labels": strs("-api")}, "labels[0]"},
@@ -272,6 +279,25 @@ func TestIssuePatch(t *testing.T) {
 			t.Errorf("cleared = %+v", got)
 		}
 	})
+	t.Run("decision_needed is set, repeated and cleared like any nullable field", func(t *testing.T) {
+		set := patchIssue(t, owner, iss.Key, map[string]any{"decision_needed": "어느 쪽으로 할지"})
+		if set.DecisionNeeded == nil || *set.DecisionNeeded != "어느 쪽으로 할지" {
+			t.Fatalf("set = %+v", set)
+		}
+		if same := patchIssue(t, owner, iss.Key, map[string]any{"decision_needed": "어느 쪽으로 할지"}); same.Version != set.Version {
+			t.Errorf("the same question wrote: version %d -> %d", set.Version, same.Version)
+		}
+		cleared := patchIssue(t, owner, iss.Key, map[string]any{"decision_needed": nil})
+		if cleared.DecisionNeeded != nil || cleared.Version != set.Version+1 {
+			t.Errorf("cleared = %+v", cleared)
+		}
+		acts := decodeAs[list[activity]](t, owner.do(t, "GET", "/v1/issues/"+iss.Key+"/activity", nil), 200)
+		ch := (*acts.Items[0].Changes)["decision_needed"]
+		if string(ch.From) != `"어느 쪽으로 할지"` || string(ch.To) != "null" {
+			t.Errorf("decision_needed change = %s -> %s", ch.From, ch.To)
+		}
+		wantError(t, owner.do(t, "PATCH", "/v1/issues/"+iss.Key, map[string]any{"decision_needed": ""}), 422, "validation_failed")
+	})
 	t.Run("same values leave the issue untouched", func(t *testing.T) {
 		before := getIssue(t, iss.Key)
 		acts := decodeAs[list[activity]](t, owner.do(t, "GET", "/v1/issues/"+iss.Key+"/activity", nil), 200)
@@ -341,7 +367,7 @@ func TestIssuePatch(t *testing.T) {
 
 func TestIssueStatusTransitions(t *testing.T) {
 	p := createProject(t, "IT")
-	statuses := []string{"backlog", "todo", "doing", "review", "done", "cancelled", "deleted"}
+	statuses := []string{"backlog", "doing", "review", "done", "cancelled", "deleted"}
 	closed := map[string]bool{"done": true, "cancelled": true, "deleted": true}
 
 	t.Run("every ordered pair is allowed", func(t *testing.T) {
@@ -403,12 +429,12 @@ func TestIssueStatusTransitions(t *testing.T) {
 
 // statusLabel is the Korean status name the server uses in default reasons.
 func statusLabel(s string) string {
-	return map[string]string{"backlog": "백로그", "todo": "할 일", "doing": "진행", "review": "검토", "done": "완료", "cancelled": "취소", "deleted": "삭제"}[s]
+	return map[string]string{"backlog": "백로그", "doing": "진행", "review": "검토", "done": "완료", "cancelled": "취소", "deleted": "삭제"}[s]
 }
 
 func TestIssueStatusReason(t *testing.T) {
 	p := createProject(t, "IR")
-	iss := newIssue(t, p.Key, "reason", map[string]any{"status": "todo"})
+	iss := newIssue(t, p.Key, "reason", nil)
 	path := "/v1/issues/" + iss.Key
 	t.Run("cancelling and deleting need a reason", func(t *testing.T) {
 		for _, st := range []string{"cancelled", "deleted"} {
@@ -421,12 +447,12 @@ func TestIssueStatusReason(t *testing.T) {
 		if !e.hasField("status_reason") {
 			t.Errorf("DELETE without a reason: details = %+v", e.Error.Details)
 		}
-		if got := getIssue(t, iss.Key); got.Status != "todo" || got.Version != 1 {
+		if got := getIssue(t, iss.Key); got.Status != "backlog" || got.Version != 1 {
 			t.Errorf("refused requests changed the issue: %+v", got)
 		}
 	})
 	t.Run("a reason is only for a status change", func(t *testing.T) {
-		for _, body := range []map[string]any{{"status_reason": "x"}, {"status": "todo", "status_reason": "x"}, {"status": "doing", "status_reason": ""}} {
+		for _, body := range []map[string]any{{"status_reason": "x"}, {"status": "backlog", "status_reason": "x"}, {"status": "doing", "status_reason": ""}} {
 			e := wantError(t, owner.do(t, "PATCH", path, body), 422, "validation_failed")
 			if !e.hasField("status_reason") {
 				t.Errorf("%v: details = %+v", body, e.Error.Details)
@@ -435,7 +461,7 @@ func TestIssueStatusReason(t *testing.T) {
 	})
 	t.Run("the reason is stored and recorded", func(t *testing.T) {
 		got := patchIssue(t, owner, iss.Key, map[string]any{"status": "doing"})
-		if got.StatusReason == nil || *got.StatusReason != "할 일 → 진행" {
+		if got.StatusReason == nil || *got.StatusReason != "백로그 → 진행" {
 			t.Errorf("default reason = %v", got.StatusReason)
 		}
 		got = patchIssue(t, owner, iss.Key, map[string]any{"status": "cancelled", "status_reason": "AGB-20과 중복"})
@@ -444,7 +470,7 @@ func TestIssueStatusReason(t *testing.T) {
 		}
 		acts := decodeAs[list[activity]](t, owner.do(t, "GET", path+"/activity", nil), 200)
 		ch := (*acts.Items[0].Changes)["status_reason"]
-		if string(ch.To) != `"AGB-20과 중복"` || string(ch.From) != `"할 일 → 진행"` {
+		if string(ch.To) != `"AGB-20과 중복"` || string(ch.From) != `"백로그 → 진행"` {
 			t.Errorf("status_reason change = %s -> %s", ch.From, ch.To)
 		}
 		if got := decodeAs[list[issue]](t, owner.do(t, "GET", "/v1/issues?project="+p.Key+"&status=cancelled", nil), 200); len(got.Items) != 1 || got.Items[0].StatusReason == nil {
@@ -496,7 +522,7 @@ func TestIssueCycles(t *testing.T) {
 
 func TestIssueSoftDelete(t *testing.T) {
 	p := createProject(t, "ID")
-	iss := newIssue(t, p.Key, "delete me", map[string]any{"status": "todo"})
+	iss := newIssue(t, p.Key, "delete me", nil)
 	tick()
 	t.Run("DELETE sets status deleted and answers with the issue", func(t *testing.T) {
 		r := as("opencode").do(t, "DELETE", "/v1/issues/"+iss.Key+"?reason="+url.QueryEscape("잘못 만든 이슈"), nil)
@@ -521,7 +547,7 @@ func TestIssueSoftDelete(t *testing.T) {
 			t.Fatalf("activity = %+v", acts)
 		}
 		ch := (*acts.Items[0].Changes)["status"]
-		if string(ch.From) != `"todo"` || string(ch.To) != `"deleted"` {
+		if string(ch.From) != `"backlog"` || string(ch.To) != `"deleted"` {
 			t.Errorf("status change = %s -> %s", ch.From, ch.To)
 		}
 	})
@@ -562,7 +588,7 @@ func TestIssueList(t *testing.T) {
 	// Created in this order so created_at is monotonic.
 	i1 := newIssue(t, p.Key, "one", map[string]any{"status": "backlog", "type": "feature", "priority": "P2", "labels": strs(la)})
 	tick()
-	i2 := newIssue(t, p.Key, "two", map[string]any{"status": "todo", "type": "bug", "priority": "P0", "labels": strs(la, lb), "parent": i1.Key})
+	i2 := newIssue(t, p.Key, "two", map[string]any{"status": "review", "type": "bug", "priority": "P0", "labels": strs(la, lb), "parent": i1.Key})
 	tick()
 	i3 := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "three", "status": "doing", "type": "design", "priority": "P1", "labels": strs(lb), "parent": i1.Key, "body": templateBody(t, "design")})
 	tick()
@@ -570,11 +596,11 @@ func TestIssueList(t *testing.T) {
 	tick()
 	i5 := newIssue(t, p.Key, "five", map[string]any{"status": "cancelled", "type": "idea", "priority": "P3"})
 	tick()
-	i6 := newIssue(t, p.Key, "six", map[string]any{"status": "review", "type": "decision", "priority": "P1"})
+	i6 := newIssue(t, p.Key, "six", map[string]any{"status": "review", "priority": "P1", "decision_needed": "여섯 번째 이슈를 어떻게 할지"})
 	tick()
 	patchIssue(t, as("codex"), i1.Key, map[string]any{"priority": "P3"}) // updated by codex
 	tick()
-	patchIssue(t, as("gemini"), i6.Key, map[string]any{"status": "todo"}) // status changed by gemini, updated last
+	patchIssue(t, as("gemini"), i6.Key, map[string]any{"status": "backlog"}) // status changed by gemini, updated last
 	tick()
 	deleteIssue(t, owner, i5.Key)
 
@@ -600,7 +626,7 @@ func TestIssueList(t *testing.T) {
 		if _, has := raw.Items[0]["body"]; has {
 			t.Errorf("summary carries body: %v", raw.Items[0])
 		}
-		for _, k := range []string{"key", "project", "number", "title", "type", "status", "priority", "labels", "parent", "depends_on", "refs", "recheck_condition", "version", "created_at", "updated_at", "closed_at", "status_changed_at", "status_changed_by", "created_by", "updated_by"} {
+		for _, k := range []string{"key", "project", "number", "title", "type", "status", "priority", "labels", "parent", "depends_on", "refs", "recheck_condition", "decision_needed", "version", "created_at", "updated_at", "closed_at", "status_changed_at", "status_changed_by", "created_by", "updated_by"} {
 			if _, has := raw.Items[0][k]; !has {
 				t.Errorf("summary lacks %s", k)
 			}
@@ -612,7 +638,7 @@ func TestIssueList(t *testing.T) {
 	t.Run("status filters and aliases", func(t *testing.T) {
 		wantKeys(t, get(t, "status=closed&sort=key").Items, i4.Key, i5.Key)
 		wantKeys(t, get(t, "status=all&sort=key").Items, i1.Key, i2.Key, i3.Key, i4.Key, i5.Key, i6.Key)
-		wantKeys(t, get(t, "status=todo,doing&sort=key").Items, i2.Key, i3.Key, i6.Key)
+		wantKeys(t, get(t, "status=review,doing&sort=key").Items, i2.Key, i3.Key)
 		wantKeys(t, get(t, "status=deleted").Items, i5.Key)
 		wantKeys(t, get(t, "status=open,done&sort=key").Items, i1.Key, i2.Key, i3.Key, i4.Key, i6.Key)
 	})
@@ -668,7 +694,7 @@ func TestIssueList(t *testing.T) {
 	t.Run("bad query parameters are 400", func(t *testing.T) {
 		for _, q := range []string{
 			"status=nope", "type=task", "priority=P9", "sort=title", "sort=relevance", "limit=0", "limit=201",
-			"offset=x", "parent=bad", "label=BAD", "project=bad", "status=todo&status=doing", "type=bug&type=idea", "unknown=1",
+			"offset=x", "parent=bad", "label=BAD", "project=bad", "status=backlog&status=doing", "type=bug&type=idea", "unknown=1", "status=todo", "type=decision",
 		} {
 			wantError(t, owner.do(t, "GET", "/v1/issues?project="+p.Key+"&"+q, nil), 400, "bad_request")
 		}
