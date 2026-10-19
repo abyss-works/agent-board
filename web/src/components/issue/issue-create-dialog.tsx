@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { decisionForCreate } from '@/lib/decision'
 import { TYPE_LABEL } from '@/lib/labels'
 import { parseLabels } from '@/lib/parse'
 import { composeBody, hasContent, parseBody, templateFields, toMarkdown, type FieldValues } from '@/lib/template-form'
@@ -50,6 +51,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
   const [priority, setPriority] = useState<Priority>('P2')
   const [labels, setLabels] = useState('')
   const [recheck, setRecheck] = useState('')
+  const [decision, setDecision] = useState('')
   const [topic, setTopic] = useState<number | null>(null)
   const [milestone, setMilestone] = useState<number | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -135,6 +137,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
       ...(bodyText ? { body: bodyText } : {}),
       ...(labelList.length ? { labels: labelList } : {}),
       ...(type === 'observation' ? { recheck_condition: recheck.trim() } : {}),
+      ...decisionForCreate(decision),
       ...(validTopic !== null ? { topic: validTopic } : {}),
       ...(validMilestone !== null ? { milestone: validMilestone } : {}),
     }
@@ -291,6 +294,19 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
               <FieldError message={errors.recheck_condition} />
             </div>
           ) : null}
+          <div className="sm:col-span-2">
+            <Label htmlFor="issue-decision">결정 필요</Label>
+            <Input
+              id="issue-decision"
+              value={decision}
+              onChange={(e) => setDecision(e.target.value)}
+              placeholder="무엇을 정해야 하는지"
+              aria-invalid={!!errors.decision_needed}
+              className="mt-1"
+              maxLength={500}
+            />
+            <FieldError message={errors.decision_needed} />
+          </div>
         </div>
       </div>
 

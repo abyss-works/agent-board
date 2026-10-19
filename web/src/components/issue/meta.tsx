@@ -1,6 +1,7 @@
-import { BugIcon, DraftingCompassIcon, EyeIcon, LightbulbIcon, PuzzleIcon, ScaleIcon } from 'lucide-react'
+import { BugIcon, DraftingCompassIcon, EyeIcon, LightbulbIcon, PuzzleIcon } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 import type { IssueStatus, IssueType, Priority } from '@/api/types'
+import { Badge } from '@/components/ui/badge'
 import { hashColor } from '@/lib/colors'
 import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
 import { cn } from '@/lib/utils'
@@ -8,7 +9,6 @@ import { cn } from '@/lib/utils'
 // 상태 아이콘. 원의 채움 정도로 진행을 나타낸다.
 const STATUS_COLOR: Record<IssueStatus, string> = {
   backlog: 'text-zinc-500',
-  todo: 'text-zinc-300',
   doing: 'text-amber-400',
   review: 'text-emerald-400',
   done: 'text-indigo-400',
@@ -24,12 +24,6 @@ export function StatusIcon({ status, className }: { status: IssueStatus; classNa
       return (
         <svg viewBox="0 0 14 14" className={cls} aria-label={label} role="img">
           <circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.2 2" />
-        </svg>
-      )
-    case 'todo':
-      return (
-        <svg viewBox="0 0 14 14" className={cls} aria-label={label} role="img">
-          <circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
         </svg>
       )
     case 'doing':
@@ -104,7 +98,6 @@ const TYPE_ICON: Record<IssueType, ComponentType<SVGProps<SVGSVGElement>>> = {
   feature: PuzzleIcon,
   bug: BugIcon,
   design: DraftingCompassIcon,
-  decision: ScaleIcon,
   idea: LightbulbIcon,
   observation: EyeIcon,
 }
@@ -113,7 +106,6 @@ const TYPE_COLOR: Record<IssueType, string> = {
   feature: 'text-sky-400',
   bug: 'text-rose-400',
   design: 'text-violet-400',
-  decision: 'text-amber-400',
   idea: 'text-yellow-300',
   observation: 'text-teal-400',
 }
@@ -129,6 +121,15 @@ export function TypeBadge({ type, className }: { type: IssueType; className?: st
       <TypeIcon type={type} className="size-3" />
       {TYPE_LABEL[type]}
     </span>
+  )
+}
+
+/** 사용자의 결정을 기다리는 이슈에 다는 표시. 질문은 마우스를 올리면 보인다. */
+export function DecisionBadge({ question }: { question: string }) {
+  return (
+    <Badge variant="warning" title={`결정 필요: ${question}`}>
+      결정 필요
+    </Badge>
   )
 }
 

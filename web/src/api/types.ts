@@ -1,7 +1,7 @@
 // agent-board REST API 응답 타입. 기준은 spec/api.md다.
 
-export type IssueType = 'feature' | 'bug' | 'design' | 'decision' | 'idea' | 'observation'
-export type IssueStatus = 'backlog' | 'todo' | 'doing' | 'review' | 'done' | 'cancelled' | 'deleted'
+export type IssueType = 'feature' | 'bug' | 'design' | 'idea' | 'observation'
+export type IssueStatus = 'backlog' | 'doing' | 'review' | 'done' | 'cancelled' | 'deleted'
 export type ProjectStatus = 'active' | 'archived' | 'deleted'
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
 export type ActorKind = 'user' | 'agent'
@@ -12,9 +12,9 @@ export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
 
-export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'decision', 'idea', 'observation']
-export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review', 'done', 'cancelled', 'deleted']
-export const OPEN_STATUSES: IssueStatus[] = ['backlog', 'todo', 'doing', 'review']
+export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'idea', 'observation']
+export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review', 'done', 'cancelled', 'deleted']
+export const OPEN_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review']
 export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
@@ -83,6 +83,8 @@ export interface IssueSummary {
   depends_on: string[]
   refs: string[]
   recheck_condition: string | null
+  /** 사용자에게 결정을 구하는 질문(1~500자). 결정을 기다리지 않으면 null이다. 종류와 상태에 관계없이 쓸 수 있다. */
+  decision_needed: string | null
   /** 이슈에 붙은 주제의 ID. 대주제와 주제 어느 쪽이든 붙일 수 있다. */
   topic: number | null
   /** `대주제/주제` 또는 `대주제`. 주제가 없으면 null이다. */
@@ -216,6 +218,7 @@ export interface Overview {
   doing: Section<IssueSummary>
   review: Section<IssueSummary>
   blocked: Section<QueueItem>
+  /** decision_needed가 있는 열린 이슈 */
   decisions: Section<IssueSummary>
   next: Section<QueueItem>
   /** 삭제되지 않은 미확인 이슈. 최근에 만든 것부터. */
@@ -253,6 +256,7 @@ export interface IssueCreate {
   depends_on?: string[]
   refs?: string[]
   recheck_condition?: string | null
+  decision_needed?: string | null
   topic?: number | null
   milestone?: number | null
 }
@@ -273,6 +277,7 @@ export interface IssuePatch {
   depends_on?: string[]
   refs?: string[]
   recheck_condition?: string | null
+  decision_needed?: string | null
 }
 
 export interface ProjectCreate {

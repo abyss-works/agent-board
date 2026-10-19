@@ -6,6 +6,7 @@ import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilest
 import { MILESTONE_STATUSES, type Issue, type IssuePatch, type IssueStatus, type IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
+import { DecisionNeeded } from '@/components/issue/decision-needed'
 import { InlineInput, MarkdownArea } from '@/components/issue/inline-edit'
 import { IssueLink } from '@/components/issue/issue-link'
 import { parseIssueKeys, parseLabels, parseRefs } from '@/lib/parse'
@@ -22,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { useFlash } from '@/hooks/use-flash'
+import { decisionPatch } from '@/lib/decision'
 import { STATUS_LABEL } from '@/lib/labels'
 import { milestoneNameMap } from '@/lib/milestones'
 import { ISSUES_PATH, openedFromScreen } from '@/lib/overlay'
@@ -241,6 +243,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
 
       <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l px-4 py-3">
         <div className="mb-1 text-[0.6875rem] font-medium text-muted-foreground">속성</div>
+        <DecisionNeeded value={issue.decision_needed} onCommit={(v) => save(decisionPatch(v), '결정 필요')} />
         <Property label="상태" note={issue.status_reason}>
           <PropertySelect value={issue.status} options={STATUS_OPTIONS} onChange={changeStatus} title="상태" className="-ml-1.5" />
         </Property>

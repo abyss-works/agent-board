@@ -4,7 +4,7 @@ import type { IssueSummary, QueueItem } from '@/api/types'
 import { formatKst, formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon } from './meta'
+import { DecisionBadge, IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon } from './meta'
 
 /** FTS 스니펫의 `[일치]` 부분을 강조해 그린다. */
 export function SnippetText({ snippet }: { snippet: string }) {
@@ -59,6 +59,7 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
               {queue.blocked_by.join(', ')}
             </span>
           ) : null}
+          {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
         </div>
         {issue.snippet ? (
           <div className="truncate">
