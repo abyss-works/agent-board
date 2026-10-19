@@ -20,10 +20,14 @@ const (
 // webHandler serves the built web client from fsys. An existing file is sent
 // as it is. A missing path without a file extension is a route of the single
 // page app and gets index.html; a missing path with an extension is a 404.
-// Directories are never listed. Only GET and HEAD are allowed.
+// Directories are never listed. Only GET and HEAD are allowed. Every response,
+// errors included, forbids rendering in a frame of any origin, so that no other
+// site can overlay a page to trick a click.
 func webHandler(fsys fs.FS) http.Handler {
 	files := http.FS(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

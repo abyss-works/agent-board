@@ -17,6 +17,7 @@
 - 토큰 관리: `GET /v1/tokens`(`status` `active` 기본, `revoked`, `all`)와 `DELETE /v1/tokens/{id}`는 사용자 행위자만 부르고, `DELETE /v1/tokens/current`는 요청에 쓴 행위자 토큰을 폐기한다. 같은 행위자가 같은 기기에서 다시 로그인하면 이전 토큰을 폐기한다. 토큰의 `last_used_at`은 60초 이상 지났을 때만 갱신한다.
 - 오류 코드 `forbidden`(403), `too_many_requests`(429), `authorization_pending`, `access_denied`, `expired_token`(400)과 conflict의 reason `not_pending`.
 - 스키마 버전 5(`token` 테이블). 서버를 시작할 때 자동으로 마이그레이션한다. 토큰의 발급과 폐기는 백업 변경 감지에 포함하고, `last_used_at` 갱신만으로는 백업을 올리지 않는다.
+- 웹 클라이언트 응답(파일, 클라이언트 경로, 404, 405)에 `X-Frame-Options: DENY`와 `Content-Security-Policy: frame-ancestors 'none'`을 붙인다. 다른 사이트가 기기 승인 화면을 프레임에 넣어 승인 버튼을 누르게 할 수 없다. `/v1` 응답은 바뀌지 않는다.
 
 ### CLI
 
