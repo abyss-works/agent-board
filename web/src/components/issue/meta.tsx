@@ -1,6 +1,7 @@
 import { BugIcon, DraftingCompassIcon, EyeIcon, LightbulbIcon, PuzzleIcon } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 import type { IssueStatus, IssueType, Priority } from '@/api/types'
+import { Badge } from '@/components/ui/badge'
 import { hashColor } from '@/lib/colors'
 import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
 import { cn } from '@/lib/utils'
@@ -120,6 +121,15 @@ export function TypeBadge({ type, className }: { type: IssueType; className?: st
       <TypeIcon type={type} className="size-3" />
       {TYPE_LABEL[type]}
     </span>
+  )
+}
+
+/** 사용자의 결정을 기다리는 이슈에 다는 표시. 질문은 마우스를 올리면 보인다. */
+export function DecisionBadge({ question }: { question: string }) {
+  return (
+    <Badge variant="warning" title={`결정 필요: ${question}`}>
+      결정 필요
+    </Badge>
   )
 }
 
