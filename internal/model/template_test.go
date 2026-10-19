@@ -15,7 +15,7 @@ import (
 // sentence) and the body in its fenced block.
 func skillTemplates(t *testing.T) []Template {
 	t.Helper()
-	path := filepath.Join("..", "..", "skills", "agent-board", "SKILL.md")
+	path := filepath.Join("..", "..", "skills", "tool-agb", "SKILL.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read the skill: %v", err)
