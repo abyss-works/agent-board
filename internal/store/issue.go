@@ -362,6 +362,9 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 // UpdateIssue applies a merge patch. It returns the resulting issue and
 // whether anything changed; an unchanged issue gets no activity record and
 // keeps its version. ifMatch, when non-nil, must equal the current version.
+//
+// An acknowledged issue whose spec changes loses the acknowledgement in the
+// same write: see changesSpec.
 func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, patch IssuePatch, ifMatch *int64) (*model.Issue, bool, error) {
 	kind, err := actorKind(ctx, s.db, tr.Actor)
 	if err != nil {
@@ -435,6 +438,10 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			// Always listed with the status, even when the text repeats.
 			changes["status_reason"] = model.Change{From: rawJSON(cur.StatusReason), To: rawJSON(next.StatusReason)}
 		}
+		if cur.AcknowledgedAt != nil && changesSpec(changes, cur.Status, next.Status) {
+			next.AcknowledgedAt, next.AcknowledgedBy = nil, nil
+			changes["acknowledged"] = model.Change{From: rawJSON(true), To: rawJSON(false)}
+		}
 		if cur.projectStatus != model.ProjectActive {
 			return ErrProjectNotActive
 		}
@@ -471,9 +478,11 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `update issue set title = ?, body = ?, type = ?, status = ?, priority = ?, parent_id = ?, recheck_condition = ?,
-			topic_id = ?, milestone_id = ?, status_reason = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?, status_changed_at = ?, status_changed_by = ? where id = ?`,
+			topic_id = ?, milestone_id = ?, status_reason = ?, acknowledged_at = ?, acknowledged_by = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?,
+			status_changed_at = ?, status_changed_by = ? where id = ?`,
 			next.Title, next.Body, string(next.Type), string(next.Status), string(next.Priority), parentID, next.RecheckCondition,
-			next.Topic, next.Milestone, next.StatusReason, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt), next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
+			next.Topic, next.Milestone, next.StatusReason, timePtr(next.AcknowledgedAt), next.AcknowledgedBy, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt),
+			next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
 			return err
 		}
 		for _, table := range []string{"issue_label", "issue_dependency", "issue_ref"} {
@@ -495,6 +504,19 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 	}
 	issue, err := s.GetIssue(ctx, key)
 	return issue, changed, err
+}
+
+// changesSpec reports whether an update changes what the issue says, which
+// makes the user's acknowledgement of the old spec stale: its title, body or
+// type, or a return from review to doing, which is a rejection. Anything else
+// leaves the acknowledgement alone.
+func changesSpec(changes map[string]model.Change, from, to model.IssueStatus) bool {
+	for _, f := range []string{"title", "body", "type"} {
+		if _, ok := changes[f]; ok {
+			return true
+		}
+	}
+	return from == model.StatusReview && to == model.StatusDoing
 }
 
 func timePtr(t *model.Time) any {

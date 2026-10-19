@@ -192,9 +192,11 @@ func TestUpdateIssue(t *testing.T) {
 	if len(acts) != 2 || acts[0].Kind != model.ActivityUpdated {
 		t.Fatalf("activity = %+v", acts)
 	}
+	// The user created the issue, so it starts acknowledged, and the new title clears that.
 	ch := acts[0].Changes
-	if len(ch) != 4 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` ||
-		string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` {
+	if len(ch) != 5 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` ||
+		string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` ||
+		string(ch["acknowledged"].From) != `true` || string(ch["acknowledged"].To) != `false` {
 		t.Errorf("changes = %+v", ch)
 	}
 
