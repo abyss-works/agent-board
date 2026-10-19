@@ -615,6 +615,38 @@ func TestConfigFileFeedsCommands(t *testing.T) {
 	}
 }
 
+func TestActorTokenFeedsCommands(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/actors/me", canned{body: `{"id":"codex","kind":"agent"}`})
+	h := newHarness(t, nil, false)
+	for k := range h.env {
+		delete(h.env, k)
+	}
+	h.env["AGB_URL"] = srv.srv.URL
+	saveConfig(h.app.ConfigPath, Config{Token: "shared-file-token", Tokens: map[string]string{"codex": "agb_codex-token", "claude": "agb_claude-token"}})
+
+	authorization := func(args ...string) string {
+		t.Helper()
+		if code := h.run(args...); code != 0 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, h.stderr)
+		}
+		return srv.last().Header.Get("Authorization")
+	}
+	for _, tc := range []struct{ actor, want string }{
+		{"codex", "Bearer agb_codex-token"},
+		{"claude", "Bearer agb_claude-token"},
+		{"gemini", "Bearer shared-file-token"},
+	} {
+		if got := authorization("--actor", tc.actor, "whoami"); got != tc.want {
+			t.Errorf("actor %s: Authorization = %q, want %q", tc.actor, got, tc.want)
+		}
+	}
+	h.env["AGB_TOKEN"] = "env-token"
+	if got := authorization("--actor", "codex", "whoami"); got != "Bearer env-token" {
+		t.Errorf("AGB_TOKEN must win: Authorization = %q", got)
+	}
+}
+
 func TestHelpAndUnknownCommands(t *testing.T) {
 	h := newHarness(t, nil, true)
 	if code := h.run("help"); code != 0 {
