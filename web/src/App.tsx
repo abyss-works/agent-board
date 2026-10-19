@@ -7,6 +7,7 @@ import { AppShell } from '@/components/layout/app-shell'
 import { backgroundOf } from '@/lib/overlay'
 import { ActivityPage } from '@/pages/activity-page'
 import { BoardPage } from '@/pages/board-page'
+import { DevicePage } from '@/pages/device-page'
 import { IssueDetailPage } from '@/pages/issue-detail-page'
 import { IssuesPage } from '@/pages/issues-page'
 import { LoginPage } from '@/pages/login-page'
@@ -48,6 +49,7 @@ function Root() {
           <Route path="/issues" element={<IssuesPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/milestones" element={<MilestonesPage />} />
+          <Route path="/device" element={<DevicePage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>
