@@ -27,6 +27,9 @@ type App struct {
 	ConfigPath string // default config file; --config overrides it
 	HTTP       *http.Client
 
+	Sleep       func(ctx context.Context, d time.Duration) error // waits for d, or until ctx ends with its error; nil waits in real time
+	OpenBrowser func(url string) error                           // starts the user's browser on url without waiting for it; nil opens nothing
+
 	Stdin            io.Reader
 	Stdout           io.Writer
 	Stderr           io.Writer
@@ -45,6 +48,7 @@ func New(version string, getenv func(string) string) *App {
 		Now:              time.Now,
 		Location:         time.Local,
 		HTTP:             &http.Client{Timeout: 30 * time.Second},
+		OpenBrowser:      openBrowser,
 		Stdin:            os.Stdin,
 		Stdout:           os.Stdout,
 		Stderr:           os.Stderr,
@@ -106,6 +110,8 @@ const Usage = `사용법: agb <명령> [옵션]
 
 설정:
   config            설정 파일 경로, 표시, 수정 (url, actor, session_id, client_host, 토큰)
+  login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
+  logout            이 행위자의 토큰 폐기와 로컬 삭제
 
 상태:
   health            서버 상태 (인증 없음)
@@ -135,14 +141,16 @@ const Usage = `사용법: agb <명령> [옵션]
   --client-host <H> 기기 이름 (AGB_CLIENT_HOST). 기본 호스트 이름
   --config <경로>   설정 파일 경로
 
-우선순위: 옵션 > 환경변수 > 설정 파일. 토큰은 AGB_TOKEN 또는 설정 파일에서만 읽습니다.
+우선순위: 옵션 > 환경변수 > 설정 파일. 토큰은 옵션으로 받지 않습니다.
+토큰 선택: AGB_TOKEN > 설정 파일의 행위자별 토큰(agb login) > 설정 파일의 공용 토큰.
+공용 토큰은 사용자 행위자(owner)만 씁니다. 에이전트는 agb login --actor <ID> 로 받은 토큰을 씁니다.
 종료 코드: 0 성공, 1 API·네트워크 오류, 2 사용법 오류
 
 agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니다.
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd,
+	configCmd, loginCmd, logoutCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd,
 	activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
 }}
 
@@ -265,9 +273,24 @@ func (a *App) printAPIError(g *globals, e *client.Error) {
 		}
 		fmt.Fprintln(a.Stderr, line)
 	}
-	if e.Status == http.StatusPreconditionFailed {
+	switch {
+	case e.Status == http.StatusPreconditionFailed:
 		fmt.Fprintln(a.Stderr, "  다른 쪽에서 먼저 수정했습니다. 다시 조회한 뒤 재시도하세요.")
+	case e.Status == http.StatusUnauthorized:
+		fmt.Fprintf(a.Stderr, "  `agb login --actor %s`로 다시 로그인하세요.\n", orPlaceholder(a.requestActor(g)))
+	case e.Status == http.StatusForbidden && hasReason(e.Details, "actor_mismatch"):
+		fmt.Fprintf(a.Stderr, "  이 행위자의 토큰이 없거나 다른 행위자의 토큰입니다. `agb login --actor %s`를 실행하세요.\n", orPlaceholder(a.requestActor(g)))
 	}
+}
+
+// hasReason reports whether one of the details of a server error has reason.
+func hasReason(details []client.Detail, reason string) bool {
+	for _, d := range details {
+		if d.Reason == reason {
+			return true
+		}
+	}
+	return false
 }
 
 // configPath is the config file in use.
@@ -281,22 +304,40 @@ func (a *App) configPath(g *globals) (string, error) {
 	return a.ConfigPath, nil
 }
 
-// client resolves the settings and builds the HTTP client. needAuth
-// requires a token and an actor.
-func (a *App) client(g *globals, needAuth bool) (*client.Client, error) {
+// requestActor is the actor the run acts as, as far as the flag, the
+// environment and the config file tell. It is "" when none of them does.
+func (a *App) requestActor(g *globals) string {
+	var file Config
+	if path, err := a.configPath(g); err == nil {
+		file, _ = loadConfig(path)
+	}
+	return actorOf(g, a.Getenv, file)
+}
+
+// settings reads the config file and resolves the settings from it and the
+// command line. It returns the file's content too, for the commands that look
+// at the tokens in it.
+func (a *App) settings(g *globals) (Config, Settings, error) {
 	path, err := a.configPath(g)
 	if err != nil {
-		return nil, err
+		return Config{}, Settings{}, err
 	}
 	cfg, err := loadConfig(path)
 	if err != nil {
-		return nil, err
+		return Config{}, Settings{}, err
 	}
 	host, err := a.Hostname()
 	if err != nil {
 		host = ""
 	}
 	s, err := resolveSettings(g, a.Getenv, cfg, a.Now(), host)
+	return cfg, s, err
+}
+
+// client resolves the settings and builds the HTTP client. needAuth
+// requires a token and an actor.
+func (a *App) client(g *globals, needAuth bool) (*client.Client, error) {
+	_, s, err := a.settings(g)
 	if err != nil {
 		return nil, err
 	}
@@ -305,10 +346,30 @@ func (a *App) client(g *globals, needAuth bool) (*client.Client, error) {
 			return nil, err
 		}
 	}
+	return a.newClient(s), nil
+}
+
+// newClient builds the HTTP client for the settings.
+func (a *App) newClient(s Settings) *client.Client {
 	return &client.Client{
 		BaseURL: s.URL, Token: s.Token, Actor: s.Actor, SessionID: s.SessionID, ClientHost: s.ClientHost,
 		Version: a.Version, HTTP: a.HTTP,
-	}, nil
+	}
+}
+
+// wait pauses for d. When ctx ends first it returns early with the error of ctx.
+func (a *App) wait(ctx context.Context, d time.Duration) error {
+	if a.Sleep != nil {
+		return a.Sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // emit writes the response: the body verbatim in JSON mode, otherwise

@@ -2,7 +2,7 @@
 
 에이전트가 CLI와 REST API로 프로젝트의 할 일과 진행 상황을 기록하고, 사용자가 웹 클라이언트로 확인하는 프로젝트 트래커다. 아이디어, 다음 할 일, 발견한 문제, 결정 대기처럼 계속 쌓이고 바뀌는 목록을 한 서버에 모은다. 여러 기기와 여러 에이전트가 같은 서버를 읽고 쓰므로 세션이 바뀌어도 같은 현황에서 작업을 이어 갈 수 있다.
 
-사용자 한 사람과 그 사용자의 에이전트들이 쓰는 도구다. 인증은 공용 토큰 하나이고, 행위자(사용자 또는 에이전트)는 서버 환경변수로 선언한다. 버전별 변경 사항은 [CHANGELOG.md](CHANGELOG.md)에 있다.
+사용자 한 사람과 그 사용자의 에이전트들이 쓰는 도구다. 행위자(사용자 또는 에이전트)는 서버 환경변수로 선언한다. 인증은 사용자 행위자가 쓰는 공용 토큰과, 에이전트 행위자가 기기 승인으로 받는 행위자별 토큰으로 나뉜다. 버전별 변경 사항은 [CHANGELOG.md](CHANGELOG.md)에 있다.
 
 ## 구성 요소
 
@@ -56,13 +56,13 @@ curl -fsSL -o "$SKILLS_DIR/tool-agb/SKILL.md" \
   https://raw.githubusercontent.com/abyss-works/agent-board/main/skills/tool-agb/SKILL.md
 ```
 
-스킬은 세션 시작, 등록, 착수, 진행, 마침 단계별 `agb` 사용법과 이슈 종류별 제목 규칙, 본문 템플릿, 댓글 요약 규칙을 정한다. 프로젝트 키는 프로젝트의 AGENTS.md에 적힌 값을 쓰고, 행위자는 `agb actors`에 선언된 값 중 자기 도구에 맞는 것을 쓴다.
+스킬은 세션 시작, 등록, 착수, 진행, 마침 단계별 `agb` 사용법과 이슈 종류별 제목 규칙, 본문 템플릿, 댓글 요약 규칙을 정한다. 프로젝트 키는 프로젝트의 AGENTS.md에 적힌 값을 쓰고, 행위자는 `agb actors`에 선언된 값 중 자기 도구에 맞는 것을 쓴다. 에이전트는 처음 한 번 `agb login`으로 기기 승인을 받아 행위자별 토큰을 저장한다([CLI 사용](#cli-사용) 참조).
 
 ## 서버 실행
 
 서버는 환경변수 `AGB_TOKEN`(공용 토큰, 32자 이상)과 `AGB_ACTORS`(선언할 행위자)가 있어야 시작한다. `AGB_ACTORS`는 `id:kind`를 쉼표로 잇고, `kind`는 `user` 또는 `agent`다.
 
-에이전트 도구마다 행위자를 하나씩 선언하면 활동 기록에서 변경한 쪽이 구분된다. 웹 클라이언트는 행위자 `owner`로 요청하므로 `owner:user`도 선언해야 한다.
+에이전트 도구마다 행위자를 하나씩 선언하면 활동 기록에서 변경한 쪽이 구분된다. 웹 클라이언트는 행위자 `owner`로 요청하므로 `owner:user`도 선언해야 한다. 공용 토큰은 `user` 종류 행위자만 쓰고, `agent` 종류 행위자는 CLI의 `agb login`으로 받은 행위자별 토큰만 쓴다.
 
 ### Docker Compose
 
@@ -75,7 +75,7 @@ docker compose up -d --build
 curl http://127.0.0.1:8420/v1/health
 ```
 
-응답에 `"status":"ok"`가 있으면 서버가 떠 있다. 토큰은 CLI 설정과 웹 클라이언트 로그인에 쓰이므로 따로 보관한다.
+응답에 `"status":"ok"`가 있으면 서버가 떠 있다. 공용 토큰은 웹 클라이언트 로그인과 사용자 행위자의 CLI 설정에 쓰이므로 따로 보관한다.
 
 - `compose.yaml`은 `Dockerfile`로 이미지를 빌드한다. 이미지에는 `agb`와 웹 클라이언트 빌드가 함께 들어 있으므로 `http://127.0.0.1:8420/`에서 웹 클라이언트가 열린다. 로그인 화면에 `AGB_TOKEN` 값을 붙여 넣는다.
 - `AGB_TOKEN`이나 `AGB_ACTORS`가 비어 있으면 `docker compose`가 필수 변수가 없다는 오류로 멈춘다.
@@ -117,19 +117,21 @@ AGB_WEB_DIR=web/dist agb serve
 
 ## CLI 사용
 
-CLI에 서버 주소, 행위자, 토큰을 설정한다.
+CLI에 서버 주소와 행위자를 설정하고 로그인한다.
 
 ```bash
 agb config set url http://127.0.0.1:8420
 agb config set actor agent1
-agb config set-token
+agb login
 agb health
 agb whoami
 ```
 
-`agb config set-token`은 터미널에서 토큰을 입력받으며 입력이 화면에 표시되지 않는다. 파이프로도 받을 수 있다(`echo "$AGB_TOKEN" | agb config set-token`). 설정 파일은 사용자만 읽을 수 있는 권한으로 만들어지고, 경로는 `agb config path`로 확인한다.
+에이전트 행위자는 공용 토큰을 쓰지 않고 `agb login`이 기기 승인으로 받은 행위자별 토큰을 쓴다. `agb login`은 승인 요청을 만들어 승인 주소(`<서버 주소>/device?code=<코드>`)와 코드를 표준 오류에 보이고 브라우저로 주소를 연다(`--no-browser`를 붙이면 열지 않는다). 사용자가 웹 클라이언트에서 코드를 확인하고 승인하면 CLI가 토큰을 받아 설정 파일에 행위자별로 저장하고, 이후 그 행위자의 요청에 쓴다. 승인 요청은 10분 뒤 만료되며, 거부되거나 만료되면 종료 코드 1로 끝난다. 같은 행위자가 같은 기기에서 다시 로그인하면 서버가 이전 토큰을 폐기한다. `agb logout`은 서버에서 토큰을 폐기하고 설정 파일에서 지운다. 토큰 값은 어떤 출력에도 나오지 않는다.
 
-설정 값은 옵션, 환경변수, 설정 파일 순으로 우선한다. 환경변수는 `AGB_URL`, `AGB_ACTOR`, `AGB_SESSION_ID`, `AGB_CLIENT_HOST`, `AGB_TOKEN`이고, 토큰은 옵션으로 받지 않는다. 세션 ID는 지정하지 않으면 `cli-YYYYMMDD`이고 클라이언트 호스트는 호스트 이름이다. 두 값은 행위자와 함께 활동 기록에 남는다.
+공용 토큰은 `user` 종류 행위자(예: `owner`) 전용이다. 에이전트 행위자가 공용 토큰으로 요청하면 403이다. 사용자 행위자로 CLI를 쓸 때만 `agb config set-token`이나 `AGB_TOKEN` 환경변수로 공용 토큰을 준다. `agb config set-token`은 터미널에서 토큰을 입력받으며 입력이 화면에 표시되지 않고, 파이프로도 받을 수 있다(`echo "$AGB_TOKEN" | agb config set-token`). 에이전트의 셸에 `AGB_TOKEN`이 있으면 그 값이 먼저 쓰여 403이 나므로 해제한다. 설정 파일은 사용자만 읽을 수 있는 권한으로 만들어지고, 경로는 `agb config path`로 확인한다. `agb config show`는 토큰 값 대신 공용 토큰의 저장 여부와 토큰이 있는 행위자의 이름을 보인다.
+
+설정 값은 옵션, 환경변수, 설정 파일 순으로 우선한다. 환경변수는 `AGB_URL`, `AGB_ACTOR`, `AGB_SESSION_ID`, `AGB_CLIENT_HOST`, `AGB_TOKEN`이고, 토큰은 옵션으로 받지 않는다. 토큰은 `AGB_TOKEN`, 설정 파일의 행위자별 토큰, 설정 파일의 공용 토큰 순으로 고른다. 세션 ID는 지정하지 않으면 `cli-YYYYMMDD`이고 클라이언트 호스트는 호스트 이름이다. 두 값은 행위자와 함께 활동 기록에 남는다.
 
 ```bash
 # 프로젝트를 만든다. 키는 대문자로 시작하는 대문자와 숫자 2~10자이며 이슈 키의 접두어가 된다.
@@ -161,7 +163,7 @@ EOF
 
 ## REST API
 
-`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `health` 경로가 있다. `health`를 뺀 요청에는 공용 토큰(`Authorization: Bearer`)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 한다. 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
+`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `health` 경로가 있다. `health`를 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
 
 ```bash
 curl -H "Authorization: Bearer $AGB_TOKEN" \
