@@ -16,6 +16,7 @@
 
 - 마일스톤 명령: `agb milestone list`, `get`, `create`, `update`, `close`, `reopen`, `delete`. 목록 표에 상태, 목표일, 진행(완료 수/전체 수와 비율)을 보인다.
 - 이슈의 마일스톤 지정(`--milestone <ID|이름|none>`)을 `issue create`, `issue update`에 더하고, 같은 옵션으로 `issue list`, `search`를 거른다. 이름은 이슈 프로젝트의 마일스톤(삭제된 것 포함)에서 정확히 같은 이름을 찾고, 없거나 둘 이상이면 사용법 오류(종료 코드 2)다.
+- 배열 필드(`--add-label`, `--add-ref` 등)를 바꾸는 `issue update`가 응답을 압축하는 프록시 뒤의 서버에서 400으로 실패하던 문제를 고친다. `If-Match`를 응답의 `ETag` 헤더 대신 이슈 본문의 `version`으로 만든다. 프록시가 압축하면서 `ETag`를 약한 형식(`W/"3"`)으로 바꾸기 때문이다.
 - 이슈 단건 표시에 마일스톤을 보이고, 마일스톤이 있는 이슈가 있으면 이슈 표에 `MILESTONE` 열을 더한다. 활동 기록 표시에서 `null` 값을 `-`로 보인다.
 
 ### 웹 클라이언트
