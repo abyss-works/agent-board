@@ -191,6 +191,10 @@ func orderBy(sorts []Sort, cols map[string][]string, def, tiebreak string) (stri
 	if len(terms) == 0 {
 		terms = append(terms, def)
 	}
+	// Ties follow the first sort, so a newest-first list stays newest first.
+	if len(sorts) > 0 && sorts[0].Desc {
+		tiebreak += " desc"
+	}
 	terms = append(terms, tiebreak)
 	return " order by " + strings.Join(terms, ", "), nil
 }

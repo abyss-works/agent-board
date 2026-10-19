@@ -111,3 +111,22 @@ func TestUpdateProject(t *testing.T) {
 		t.Errorf("missing err = %v", err)
 	}
 }
+
+func TestOrderByTiebreakFollowsTheFirstSort(t *testing.T) {
+	cols := map[string][]string{"created_at": {"p.created_at"}, "key": {"p.key"}}
+	cases := []struct {
+		sorts []Sort
+		want  string
+	}{
+		{nil, " order by p.key, p.id"},
+		{[]Sort{{Field: "created_at"}}, " order by p.created_at, p.id"},
+		{[]Sort{{Field: "created_at", Desc: true}}, " order by p.created_at desc, p.id desc"},
+		{[]Sort{{Field: "created_at", Desc: true}, {Field: "key"}}, " order by p.created_at desc, p.key, p.id desc"},
+	}
+	for _, c := range cases {
+		got, err := orderBy(c.sorts, cols, "p.key", "p.id")
+		if err != nil || got != c.want {
+			t.Errorf("orderBy(%+v) = %q, %v; want %q", c.sorts, got, err, c.want)
+		}
+	}
+}
