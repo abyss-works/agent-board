@@ -82,12 +82,13 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 	parent := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "epic"})
 	dep := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "dep"})
 	in := IssueInput{
-		Title: "full", Body: tplBody(model.TypeObservation), Type: model.TypeObservation, Status: model.StatusTodo, Priority: model.P0,
+		Title: "full", Body: tplBody(model.TypeObservation), Type: model.TypeObservation, Status: model.StatusDoing, Priority: model.P0,
 		Labels: []string{"cli", "api", "cli"}, Parent: str(parent.Key), DependsOn: []string{dep.Key},
 		Refs: []string{"repo:wsk0715/agent-board", "doc:api.md", "repo:wsk0715/agent-board"}, RecheckCondition: str("when R2 is ready"),
+		DecisionNeeded: str("whether to wait for R2"),
 	}
 	i := mustIssue(t, s, ctx, trClaude, in)
-	if i.Key != "AGB-3" || i.Body != tplBody(model.TypeObservation) || i.Type != model.TypeObservation || i.Status != model.StatusTodo || i.Priority != model.P0 {
+	if i.Key != "AGB-3" || i.Body != tplBody(model.TypeObservation) || i.Type != model.TypeObservation || i.Status != model.StatusDoing || i.Priority != model.P0 {
 		t.Errorf("fields = %+v", i)
 	}
 	if !reflect.DeepEqual(i.Labels, []string{"api", "cli"}) {
@@ -96,7 +97,8 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 	if !reflect.DeepEqual(i.Refs, []string{"doc:api.md", "repo:wsk0715/agent-board"}) {
 		t.Errorf("refs = %v", i.Refs)
 	}
-	if i.Parent == nil || *i.Parent != "AGB-1" || !reflect.DeepEqual(i.DependsOn, []string{"AGB-2"}) || *i.RecheckCondition != "when R2 is ready" {
+	if i.Parent == nil || *i.Parent != "AGB-1" || !reflect.DeepEqual(i.DependsOn, []string{"AGB-2"}) || *i.RecheckCondition != "when R2 is ready" ||
+		i.DecisionNeeded == nil || *i.DecisionNeeded != "whether to wait for R2" {
 		t.Errorf("links = %+v", i)
 	}
 
@@ -111,7 +113,7 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 	if a.At != i.CreatedAt {
 		t.Errorf("activity at %v != created_at %v", a.At, i.CreatedAt)
 	}
-	for _, f := range []string{"title", "body", "type", "status", "priority", "labels", "parent", "depends_on", "refs", "recheck_condition"} {
+	for _, f := range []string{"title", "body", "type", "status", "priority", "labels", "parent", "depends_on", "refs", "recheck_condition", "decision_needed"} {
 		ch, ok := a.Changes[f]
 		if !ok {
 			t.Errorf("created changes missing %s", f)
@@ -121,8 +123,8 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 			t.Errorf("created change %s has from", f)
 		}
 	}
-	if string(a.Changes["labels"].To) != `["api","cli"]` || string(a.Changes["status"].To) != `"todo"` {
-		t.Errorf("changes = %s %s", a.Changes["labels"].To, a.Changes["status"].To)
+	if string(a.Changes["labels"].To) != `["api","cli"]` || string(a.Changes["status"].To) != `"doing"` || string(a.Changes["decision_needed"].To) != `"whether to wait for R2"` {
+		t.Errorf("changes = %s %s %s", a.Changes["labels"].To, a.Changes["status"].To, a.Changes["decision_needed"].To)
 	}
 }
 
@@ -175,7 +177,7 @@ func TestCreateIssueValidationAndRefs(t *testing.T) {
 func TestUpdateIssue(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
-	i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t", Labels: []string{"api"}, Status: model.StatusTodo})
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t", Labels: []string{"api"}})
 
 	doing := model.StatusDoing
 	got, changed, err := s.UpdateIssue(ctx, trClaude, "AGB-1", IssuePatch{Status: &doing, Labels: &[]string{"cli", "api"}, Title: str("t2")}, nil)
@@ -194,8 +196,8 @@ func TestUpdateIssue(t *testing.T) {
 	}
 	// The user created the issue, so it starts acknowledged, and the new title clears that.
 	ch := acts[0].Changes
-	if len(ch) != 5 || string(ch["status"].From) != `"todo"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` ||
-		string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"할 일 → 진행"` ||
+	if len(ch) != 5 || string(ch["status"].From) != `"backlog"` || string(ch["status"].To) != `"doing"` || string(ch["labels"].From) != `["api"]` || string(ch["title"].To) != `"t2"` ||
+		string(ch["status_reason"].From) != `null` || string(ch["status_reason"].To) != `"백로그 → 진행"` ||
 		string(ch["acknowledged"].From) != `true` || string(ch["acknowledged"].To) != `false` {
 		t.Errorf("changes = %+v", ch)
 	}
@@ -251,7 +253,7 @@ func TestUpdateIssueStatusLifecycle(t *testing.T) {
 	if got, err := s.GetIssue(ctx, "AGB-1"); err != nil || got.Status != model.StatusDeleted {
 		t.Errorf("deleted issue read = %+v, %v", got, err)
 	}
-	reopened := set(model.StatusTodo)
+	reopened := set(model.StatusBacklog)
 	if reopened.ClosedAt != nil || reopened.StatusChangedBy != "claude" {
 		t.Errorf("reopen = %+v", reopened)
 	}
@@ -303,6 +305,148 @@ func TestUpdateIssueNullableAndValidation(t *testing.T) {
 	}
 }
 
+// The todo status and the decision type are gone: no write can set them.
+func TestRemovedStatusAndTypeAreRejected(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t"})
+	todo, decision := model.IssueStatus("todo"), model.IssueType("decision")
+
+	for name, c := range map[string]struct {
+		in    IssueInput
+		field string
+	}{
+		"create in todo":       {IssueInput{Project: "AGB", Title: "x", Status: todo}, "status"},
+		"create as a decision": {IssueInput{Project: "AGB", Title: "x", Type: decision}, "type"},
+	} {
+		if _, err := s.CreateIssue(ctx, trOwner, c.in); !hasViolation(err, c.field) {
+			t.Errorf("%s: err = %v, want a %s violation", name, err, c.field)
+		}
+	}
+	for name, c := range map[string]struct {
+		patch IssuePatch
+		field string
+	}{
+		"update to todo":       {IssuePatch{Status: &todo}, "status"},
+		"update to a decision": {IssuePatch{Type: &decision}, "type"},
+	} {
+		if _, _, err := s.UpdateIssue(ctx, trOwner, i.Key, c.patch, nil); !hasViolation(err, c.field) {
+			t.Errorf("%s: err = %v, want a %s violation", name, err, c.field)
+		}
+	}
+
+	// Refused writes left nothing behind: no issue, no record, no new version.
+	cur, err := s.GetIssue(ctx, i.Key)
+	if err != nil || cur.Version != 1 || cur.Status != model.StatusBacklog || cur.Type != model.TypeFeature {
+		t.Errorf("issue after the refusals = %+v, %v", cur, err)
+	}
+	if _, total, _ := s.ListActivity(ctx, ActivityFilter{Limit: 10}); total != 1 {
+		t.Errorf("records = %d, want only the creation", total)
+	}
+	if next := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "next"}); next.Key != "AGB-2" {
+		t.Errorf("key after the refusals = %s, want AGB-2", next.Key)
+	}
+}
+
+func hasViolation(err error, field string) bool {
+	var verr *model.ValidationError
+	if !errors.As(err, &verr) {
+		return false
+	}
+	for _, f := range verr.Fields {
+		if f.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDecisionNeeded(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	set := func(q string) IssuePatch { return IssuePatch{DecisionNeeded: Optional[string]{Set: true, Value: &q}} }
+	clear := IssuePatch{DecisionNeeded: Optional[string]{Set: true}}
+	record := func(key string) model.Change {
+		t.Helper()
+		acts, _, err := s.ListActivity(ctx, ActivityFilter{Issues: []string{key}, Limit: 1})
+		if err != nil || len(acts) != 1 {
+			t.Fatalf("activity of %s: %v, %v", key, acts, err)
+		}
+		return acts[0].Changes["decision_needed"]
+	}
+
+	// A question can be given when the issue is created, and the created record holds it, null or not.
+	asked := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "asks", DecisionNeeded: str("SQLite로 둘지")})
+	plain := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "plain"})
+	if asked.DecisionNeeded == nil || *asked.DecisionNeeded != "SQLite로 둘지" || plain.DecisionNeeded != nil {
+		t.Fatalf("created: %v and %v", asked.DecisionNeeded, plain.DecisionNeeded)
+	}
+	if c := record(asked.Key); c.From != nil || string(c.To) != `"SQLite로 둘지"` {
+		t.Errorf("created record of the question = %+v", c)
+	}
+	if c := record(plain.Key); c.From != nil || string(c.To) != `null` {
+		t.Errorf("created record without a question = %+v", c)
+	}
+
+	// Set, change and clear are each one change with the value before and after.
+	for _, step := range []struct {
+		name     string
+		patch    IssuePatch
+		from, to string
+		want     *string
+	}{
+		{"set", set("두 안 중 어느 쪽으로 할지"), `null`, `"두 안 중 어느 쪽으로 할지"`, str("두 안 중 어느 쪽으로 할지")},
+		{"change", set("다른 질문"), `"두 안 중 어느 쪽으로 할지"`, `"다른 질문"`, str("다른 질문")},
+		{"clear", clear, `"다른 질문"`, `null`, nil},
+	} {
+		got, changed, err := s.UpdateIssue(ctx, trClaude, plain.Key, step.patch, nil)
+		if err != nil || !changed || !reflect.DeepEqual(got.DecisionNeeded, step.want) {
+			t.Fatalf("%s: %v changed=%v err=%v", step.name, got.DecisionNeeded, changed, err)
+		}
+		if c := record(plain.Key); string(c.From) != step.from || string(c.To) != step.to {
+			t.Errorf("%s: record = %s -> %s, want %s -> %s", step.name, c.From, c.To, step.from, step.to)
+		}
+		acts, _, _ := s.ListActivity(ctx, ActivityFilter{Issues: []string{plain.Key}, Limit: 1})
+		if len(acts[0].Changes) != 1 {
+			t.Errorf("%s: the record holds %d changes, want only decision_needed", step.name, len(acts[0].Changes))
+		}
+		if reread, err := s.GetIssue(ctx, plain.Key); err != nil || !reflect.DeepEqual(reread, got) {
+			t.Errorf("%s: stored %+v, %v", step.name, reread, err)
+		}
+	}
+	// Writing the same value, or clearing what is not there, is no change.
+	if _, changed, err := s.UpdateIssue(ctx, trClaude, plain.Key, clear, nil); err != nil || changed {
+		t.Errorf("clear again: changed=%v err=%v", changed, err)
+	}
+	if _, changed, err := s.UpdateIssue(ctx, trClaude, asked.Key, set("SQLite로 둘지"), nil); err != nil || changed {
+		t.Errorf("same question: changed=%v err=%v", changed, err)
+	}
+
+	// The question is a summary field: lists carry it.
+	items, _, err := s.ListIssues(ctx, IssueFilter{Statuses: model.OpenStatuses, Sort: []Sort{{Field: "key"}}, Limit: 10})
+	if err != nil || len(items) != 2 || items[0].DecisionNeeded == nil || *items[0].DecisionNeeded != "SQLite로 둘지" || items[1].DecisionNeeded != nil {
+		t.Errorf("list items = %+v, %v", items, err)
+	}
+
+	// One to 500 characters; the limit counts characters, not bytes.
+	for name, q := range map[string]string{"empty": "", "501 characters": strings.Repeat("가", 501)} {
+		if _, _, err := s.UpdateIssue(ctx, trClaude, plain.Key, set(q), nil); !hasViolation(err, "decision_needed") {
+			t.Errorf("update with %s: err = %v", name, err)
+		}
+		if _, err := s.CreateIssue(ctx, trClaude, IssueInput{Project: "AGB", Title: "x", Body: tplBody(model.TypeFeature), DecisionNeeded: str(q)}); !hasViolation(err, "decision_needed") {
+			t.Errorf("create with %s: err = %v", name, err)
+		}
+	}
+	long := strings.Repeat("가", 500)
+	if got, _, err := s.UpdateIssue(ctx, trClaude, plain.Key, set(long), nil); err != nil || *got.DecisionNeeded != long {
+		t.Errorf("500 characters: %v", err)
+	}
+	// Only the creation, the three steps and the 500 character write were recorded.
+	if _, total, _ := s.ListActivity(ctx, ActivityFilter{Issues: []string{plain.Key}, Limit: 20}); total != 5 {
+		t.Errorf("records of the plain issue = %d, want 5", total)
+	}
+}
+
 func TestCycles(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
@@ -343,7 +487,7 @@ func TestListIssuesFilters(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	mustProject(t, s, ctx, "OTH")
-	i1 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "alpha", Priority: model.P1, Labels: []string{"api"}, Status: model.StatusTodo})
+	i1 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "alpha", Priority: model.P1, Labels: []string{"api"}, Status: model.StatusDoing})
 	i2 := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "beta", Priority: model.P0, Labels: []string{"api", "cli"}, Type: model.TypeBug})
 	i3 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "gamma", Project: "OTH", Status: model.StatusDone, Parent: nil})
 	i4 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "delta", Parent: str(i1.Key), Status: model.StatusDeleted})

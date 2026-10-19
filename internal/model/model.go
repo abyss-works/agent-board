@@ -16,20 +16,18 @@ const (
 	TypeFeature     IssueType = "feature"
 	TypeBug         IssueType = "bug"
 	TypeDesign      IssueType = "design"
-	TypeDecision    IssueType = "decision"
 	TypeIdea        IssueType = "idea"
 	TypeObservation IssueType = "observation"
 )
 
 // IssueTypes lists every issue type in display order.
-var IssueTypes = []IssueType{TypeFeature, TypeBug, TypeDesign, TypeDecision, TypeIdea, TypeObservation}
+var IssueTypes = []IssueType{TypeFeature, TypeBug, TypeDesign, TypeIdea, TypeObservation}
 
 // IssueStatus is the workflow state of an issue. Deletion is a status.
 type IssueStatus string
 
 const (
 	StatusBacklog   IssueStatus = "backlog"
-	StatusTodo      IssueStatus = "todo"
 	StatusDoing     IssueStatus = "doing"
 	StatusReview    IssueStatus = "review"
 	StatusDone      IssueStatus = "done"
@@ -38,10 +36,10 @@ const (
 )
 
 // IssueStatuses lists every issue status in board column order.
-var IssueStatuses = []IssueStatus{StatusBacklog, StatusTodo, StatusDoing, StatusReview, StatusDone, StatusCancelled, StatusDeleted}
+var IssueStatuses = []IssueStatus{StatusBacklog, StatusDoing, StatusReview, StatusDone, StatusCancelled, StatusDeleted}
 
 // OpenStatuses are the statuses an issue can be worked on in.
-var OpenStatuses = []IssueStatus{StatusBacklog, StatusTodo, StatusDoing, StatusReview}
+var OpenStatuses = []IssueStatus{StatusBacklog, StatusDoing, StatusReview}
 
 // ClosedStatuses are the terminal statuses, including soft deletion.
 var ClosedStatuses = []IssueStatus{StatusDone, StatusCancelled, StatusDeleted}
@@ -58,7 +56,7 @@ func (s IssueStatus) ReasonRequired() bool {
 }
 
 var statusLabels = map[IssueStatus]string{
-	StatusBacklog: "백로그", StatusTodo: "할 일", StatusDoing: "진행", StatusReview: "검토",
+	StatusBacklog: "백로그", StatusDoing: "진행", StatusReview: "검토",
 	StatusDone: "완료", StatusCancelled: "취소", StatusDeleted: "삭제",
 }
 

@@ -18,8 +18,8 @@ func TestTemplatesEndpoint(t *testing.T) {
 		Items []model.Template `json:"items"`
 	}
 	decodeJSON(t, rec, &got)
-	if len(got.Items) != 6 {
-		t.Fatalf("templates = %d, want 6", len(got.Items))
+	if len(got.Items) != 5 {
+		t.Fatalf("templates = %d, want 5", len(got.Items))
 	}
 	for i, typ := range model.IssueTypes {
 		want := model.Templates[i]

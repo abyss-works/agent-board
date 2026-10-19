@@ -12,9 +12,9 @@ func seedViews(t *testing.T, e *env) {
 	e.createProject(t, "AGB", "agent-board")
 	e.createProject(t, "OTH", "other")
 	e.createIssue(t, `{"project":"AGB","title":"dep","status":"doing","priority":"P1","labels":["api"]}`)
-	e.createIssue(t, `{"project":"AGB","title":"blocked","status":"todo","depends_on":["AGB-1"],"labels":["api","cli"]}`)
-	e.createIssue(t, `{"project":"AGB","title":"ready","status":"todo","priority":"P0"}`)
-	e.createIssue(t, `{"project":"AGB","title":"decide","type":"decision"}`)
+	e.createIssue(t, `{"project":"AGB","title":"blocked","depends_on":["AGB-1"],"labels":["api","cli"]}`)
+	e.createIssue(t, `{"project":"AGB","title":"ready","priority":"P0"}`)
+	e.createIssue(t, `{"project":"AGB","title":"decide"}`)
 	e.createIssue(t, `{"project":"AGB","title":"done","status":"done","labels":["old"]}`)
 	e.createIssue(t, `{"project":"AGB","title":"gone","status":"deleted"}`)
 	e.createIssue(t, `{"project":"OTH","title":"other","status":"review"}`)
@@ -29,24 +29,24 @@ func TestBoardEndpoint(t *testing.T) {
 	}
 	var b store.Board
 	decodeJSON(t, rec, &b)
-	if b.Project == nil || *b.Project != "AGB" || len(b.Columns) != 7 {
+	if b.Project == nil || *b.Project != "AGB" || len(b.Columns) != 6 {
 		t.Fatalf("board = %+v", b)
 	}
-	if b.Columns[1].Status != model.StatusTodo || b.Columns[1].Total != 2 || b.Columns[1].Issues[0].Key != "AGB-3" {
-		t.Errorf("todo column = %+v", b.Columns[1])
+	if b.Columns[0].Status != model.StatusBacklog || b.Columns[0].Total != 3 || b.Columns[0].Issues[0].Key != "AGB-3" {
+		t.Errorf("backlog column = %+v", b.Columns[0])
 	}
-	if b.Columns[6].Status != model.StatusDeleted || b.Columns[6].Total != 1 {
-		t.Errorf("deleted column must be shown: %+v", b.Columns[6])
+	if b.Columns[5].Status != model.StatusDeleted || b.Columns[5].Total != 1 {
+		t.Errorf("deleted column must be shown: %+v", b.Columns[5])
 	}
 	rec = e.do(t, "GET", "/v1/board", "", nil)
 	decodeJSON(t, rec, &b)
-	if b.Project != nil || b.Columns[3].Total != 1 {
+	if b.Project != nil || b.Columns[2].Total != 1 {
 		t.Errorf("all projects board = %+v", b)
 	}
 	rec = e.do(t, "GET", "/v1/board?project=AGB&closed_days=0&limit=1", "", nil)
 	decodeJSON(t, rec, &b)
-	if len(b.Columns[1].Issues) != 1 || b.Columns[1].Total != 2 {
-		t.Errorf("limit = %+v", b.Columns[1])
+	if len(b.Columns[0].Issues) != 1 || b.Columns[0].Total != 3 {
+		t.Errorf("limit = %+v", b.Columns[0])
 	}
 	for _, q := range []string{"closed_days=-1", "closed_days=x", "limit=201", "limit=0", "status=todo", "project=bad"} {
 		if rec = e.do(t, "GET", "/v1/board?"+q, "", nil); rec.Code != 400 {
@@ -64,7 +64,8 @@ func TestQueueEndpoint(t *testing.T) {
 	}
 	var l listEnvelope[model.QueueItem]
 	decodeJSON(t, rec, &l)
-	if l.Total != 2 || l.Items[0].Key != "AGB-3" || !l.Items[0].Ready || l.Items[1].Key != "AGB-2" || l.Items[1].Ready || l.Items[1].BlockedBy[0] != "AGB-1" {
+	if l.Total != 3 || l.Items[0].Key != "AGB-3" || !l.Items[0].Ready || l.Items[1].Key != "AGB-4" || !l.Items[1].Ready ||
+		l.Items[2].Key != "AGB-2" || l.Items[2].Ready || l.Items[2].BlockedBy[0] != "AGB-1" {
 		t.Errorf("queue = %+v", l)
 	}
 	rec = e.do(t, "GET", "/v1/queue?project=AGB&limit=1", "", nil)
@@ -72,10 +73,10 @@ func TestQueueEndpoint(t *testing.T) {
 	if len(l.Items) != 1 || l.Items[0].Key != "AGB-3" || l.Limit != 1 {
 		t.Errorf("next = %+v", l)
 	}
-	rec = e.do(t, "GET", "/v1/queue?status=todo,backlog&project=AGB", "", nil)
+	rec = e.do(t, "GET", "/v1/queue?status=backlog,doing&project=AGB", "", nil)
 	decodeJSON(t, rec, &l)
-	if l.Total != 3 {
-		t.Errorf("with backlog = %d", l.Total)
+	if l.Total != 4 {
+		t.Errorf("with doing = %d", l.Total)
 	}
 	rec = e.do(t, "GET", "/v1/queue?status=all", "", nil)
 	decodeJSON(t, rec, &l)
@@ -123,7 +124,8 @@ func TestOverviewEndpoint(t *testing.T) {
 	}
 	var o store.Overview
 	decodeJSON(t, rec, &o)
-	if o.Project.Key != "AGB" || o.Counts.Total != 6 || o.Counts.Open != 4 || o.Counts.ByStatus[model.StatusDeleted] != 1 || o.Counts.ByType[model.TypeDecision] != 1 || o.Counts.ByPriority[model.P0] != 1 {
+	if o.Project.Key != "AGB" || o.Counts.Total != 6 || o.Counts.Open != 4 || o.Counts.ByStatus[model.StatusDeleted] != 1 || o.Counts.ByType[model.TypeFeature] != 4 || o.Counts.ByPriority[model.P0] != 1 ||
+		len(o.Counts.ByStatus) != 6 || len(o.Counts.ByType) != 5 {
 		t.Errorf("counts = %+v", o.Counts)
 	}
 	if o.Doing.Total != 1 || o.Doing.Items[0].Key != "AGB-1" || o.Review.Total != 0 || o.Review.Items == nil {
@@ -132,10 +134,10 @@ func TestOverviewEndpoint(t *testing.T) {
 	if o.Blocked.Total != 1 || o.Blocked.Items[0].Key != "AGB-2" || o.Blocked.Items[0].BlockedBy[0] != "AGB-1" {
 		t.Errorf("blocked = %+v", o.Blocked)
 	}
-	if o.Decisions.Total != 1 || o.Decisions.Items[0].Key != "AGB-4" {
+	if o.Decisions.Total != 0 || o.Decisions.Items == nil {
 		t.Errorf("decisions = %+v", o.Decisions)
 	}
-	if o.Next.Total != 1 || o.Next.Items[0].Key != "AGB-3" {
+	if o.Next.Total != 2 || o.Next.Items[0].Key != "AGB-3" || o.Next.Items[1].Key != "AGB-4" {
 		t.Errorf("next = %+v", o.Next)
 	}
 	if o.RecentActivity.Total != 7 || o.RecentActivity.Items[0].Kind != model.ActivityCommented {

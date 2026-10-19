@@ -69,9 +69,9 @@ func TestTemplateCheckOnCreateAppliesToAgents(t *testing.T) {
 			t.Errorf("user %q: %v", in.Title, err)
 		}
 	}
-	// A refused creation consumes no number: 6 agent + 3 user issues so far.
-	if i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "next"}); i.Key != "AGB-10" {
-		t.Errorf("key after refusals = %s, want AGB-10", i.Key)
+	// A refused creation consumes no number: 5 agent + 3 user issues so far.
+	if i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "next"}); i.Key != "AGB-9" {
+		t.Errorf("key after refusals = %s, want AGB-9", i.Key)
 	}
 
 	// The template violation comes with the other field violations.

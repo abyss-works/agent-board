@@ -142,12 +142,12 @@ func TestAcknowledgementDoesNotAffectTheWorkflow(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	dep := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "dep", Status: model.StatusDoing, Priority: model.P1})
-	blocked := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "blocked", Status: model.StatusTodo, DependsOn: []string{dep.Key}})
-	ready := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "ready", Status: model.StatusTodo, Priority: model.P0})
-	acked := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "acked", Status: model.StatusTodo, Priority: model.P2})
+	blocked := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "blocked", Status: model.StatusBacklog, DependsOn: []string{dep.Key}})
+	ready := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "ready", Status: model.StatusBacklog, Priority: model.P0})
+	acked := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "acked", Status: model.StatusBacklog, Priority: model.P2})
 
 	queueKeys := func() []string {
-		items, _, err := s.Queue(ctx, QueueFilter{Statuses: []model.IssueStatus{model.StatusTodo}, Limit: 10})
+		items, _, err := s.Queue(ctx, QueueFilter{Statuses: []model.IssueStatus{model.StatusBacklog}, Limit: 10})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -173,8 +173,8 @@ func TestAcknowledgementDoesNotAffectTheWorkflow(t *testing.T) {
 	if _, _, err := s.UpdateIssue(ctx, trClaude, ready.Key, IssuePatch{Status: &review}, nil); err != nil {
 		t.Fatal(err)
 	}
-	todo := model.StatusTodo
-	if _, _, err := s.UpdateIssue(ctx, trClaude, ready.Key, IssuePatch{Status: &todo}, nil); err != nil {
+	backlog := model.StatusBacklog
+	if _, _, err := s.UpdateIssue(ctx, trClaude, ready.Key, IssuePatch{Status: &backlog}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -237,7 +237,7 @@ func TestOverviewUnacknowledged(t *testing.T) {
 	cancelled := agent("cancelled", "AGB", model.StatusCancelled)
 	gone := agent("deleted", "AGB", model.StatusDeleted)
 	last := agent("last", "AGB", model.StatusDoing)
-	seen := agent("seen", "AGB", model.StatusTodo)
+	seen := agent("seen", "AGB", model.StatusReview)
 	agent("other project", "OTH", model.StatusBacklog)
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "by the user"})
 	if _, _, err := s.SetAcknowledged(ctx, trOwner, seen.Key, true, nil); err != nil {
@@ -400,6 +400,8 @@ func TestOtherChangesKeepTheAcknowledgement(t *testing.T) {
 		{"milestone", IssueInput{}, IssuePatch{Milestone: Optional[int64]{Set: true, Value: &milestone.ID}}},
 		{"recheck_condition", IssueInput{Type: model.TypeObservation, RecheckCondition: str("다음 릴리즈")},
 			IssuePatch{RecheckCondition: Optional[string]{Set: true, Value: str("다음 마일스톤")}}},
+		{"decision_needed", IssueInput{}, IssuePatch{DecisionNeeded: Optional[string]{Set: true, Value: str("어느 쪽으로 할지")}}},
+		{"decision_needed cleared", IssueInput{DecisionNeeded: str("어느 쪽으로 할지")}, IssuePatch{DecisionNeeded: Optional[string]{Set: true}}},
 		{"backlog to doing", IssueInput{}, IssuePatch{Status: &doing}},
 		{"doing to review", IssueInput{Status: model.StatusDoing}, IssuePatch{Status: &review}},
 		{"review to done", IssueInput{Status: model.StatusReview}, IssuePatch{Status: &done}},

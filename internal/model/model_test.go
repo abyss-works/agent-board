@@ -11,11 +11,11 @@ import (
 
 func TestIssueStatusClosed(t *testing.T) {
 	closed := map[IssueStatus]bool{
-		StatusBacklog: false, StatusTodo: false, StatusDoing: false, StatusReview: false,
+		StatusBacklog: false, StatusDoing: false, StatusReview: false,
 		StatusDone: true, StatusCancelled: true, StatusDeleted: true,
 	}
-	if len(IssueStatuses) != 7 {
-		t.Fatalf("IssueStatuses = %d, want 7", len(IssueStatuses))
+	if len(IssueStatuses) != 6 {
+		t.Fatalf("IssueStatuses = %d, want 6", len(IssueStatuses))
 	}
 	for s, want := range closed {
 		if got := s.Closed(); got != want {
@@ -34,6 +34,18 @@ func TestParseEnums(t *testing.T) {
 	if _, ok := ParseIssueType("observation"); !ok {
 		t.Error("observation must be a valid type")
 	}
+	if _, ok := ParseIssueStatus("todo"); ok {
+		t.Error("todo was removed and must not be a status")
+	}
+	if _, ok := ParseIssueType("decision"); ok {
+		t.Error("decision was removed and must not be a type")
+	}
+	if want := []IssueType{TypeFeature, TypeBug, TypeDesign, TypeIdea, TypeObservation}; !reflect.DeepEqual(IssueTypes, want) {
+		t.Errorf("IssueTypes = %v, want %v", IssueTypes, want)
+	}
+	if want := []IssueStatus{StatusBacklog, StatusDoing, StatusReview, StatusDone, StatusCancelled, StatusDeleted}; !reflect.DeepEqual(IssueStatuses, want) {
+		t.Errorf("IssueStatuses = %v, want %v", IssueStatuses, want)
+	}
 	if _, ok := ParsePriority("P4"); ok {
 		t.Error("P4 must be invalid")
 	}
@@ -47,23 +59,25 @@ func TestParseEnums(t *testing.T) {
 
 func TestExpandStatusAlias(t *testing.T) {
 	got, err := ExpandIssueStatuses("open")
-	if err != nil || len(got) != 4 {
-		t.Fatalf("open = %v, %v", got, err)
+	if want := []IssueStatus{StatusBacklog, StatusDoing, StatusReview}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("open = %v, %v; want %v", got, err, want)
 	}
 	got, err = ExpandIssueStatuses("closed")
 	if err != nil || len(got) != 3 {
 		t.Fatalf("closed = %v, %v", got, err)
 	}
 	got, err = ExpandIssueStatuses("all")
-	if err != nil || len(got) != 7 {
+	if err != nil || len(got) != 6 {
 		t.Fatalf("all = %v, %v", got, err)
 	}
-	got, err = ExpandIssueStatuses("todo,doing,todo")
+	got, err = ExpandIssueStatuses("backlog,doing,backlog")
 	if err != nil || len(got) != 2 {
-		t.Fatalf("todo,doing,todo = %v, %v (dedup)", got, err)
+		t.Fatalf("backlog,doing,backlog = %v, %v (dedup)", got, err)
 	}
-	if _, err = ExpandIssueStatuses("todo,nope"); err == nil {
-		t.Fatal("nope must be rejected")
+	for _, bad := range []string{"todo", "backlog,todo", "doing,nope"} {
+		if _, err = ExpandIssueStatuses(bad); err == nil {
+			t.Fatalf("%s must be rejected", bad)
+		}
 	}
 }
 
@@ -217,24 +231,24 @@ func TestResolveStatusReason(t *testing.T) {
 		want     *string // resolved reason when the request is valid
 		field    string  // field of the single violation, empty when valid
 	}{
-		{"default message names both statuses", StatusTodo, StatusDoing, nil, text("할 일 → 진행"), ""},
+		{"default message names both statuses", StatusBacklog, StatusDoing, nil, text("백로그 → 진행"), ""},
 		{"default message for every ordinary target", StatusBacklog, StatusReview, nil, text("백로그 → 검토"), ""},
 		{"default message when leaving a closed status", StatusDeleted, StatusDone, nil, text("삭제 → 완료"), ""},
-		{"given reason replaces the default", StatusTodo, StatusDoing, text("선행 이슈 완료"), text("선행 이슈 완료"), ""},
+		{"given reason replaces the default", StatusBacklog, StatusDoing, text("선행 이슈 완료"), text("선행 이슈 완료"), ""},
 		{"cancelling needs a reason", StatusDoing, StatusCancelled, nil, nil, "status_reason"},
 		{"deleting needs a reason", StatusBacklog, StatusDeleted, nil, nil, "status_reason"},
 		{"cancelling with a reason", StatusDoing, StatusCancelled, text("AGB-20과 중복"), text("AGB-20과 중복"), ""},
 		{"deleting with a reason", StatusDone, StatusDeleted, text("잘못 만든 이슈"), text("잘못 만든 이슈"), ""},
-		{"one rune", StatusTodo, StatusDoing, text("가"), text("가"), ""},
-		{"500 runes of 3 bytes each", StatusTodo, StatusDoing, text(strings.Repeat("가", 500)), text(strings.Repeat("가", 500)), ""},
-		{"501 runes", StatusTodo, StatusDoing, text(strings.Repeat("가", 501)), nil, "status_reason"},
-		{"empty reason", StatusTodo, StatusDoing, text(""), nil, "status_reason"},
-		{"empty reason on cancel", StatusTodo, StatusCancelled, text(""), nil, "status_reason"},
-		{"reason without a status change", StatusTodo, StatusTodo, text("이유"), nil, "status_reason"},
-		{"empty reason without a status change", StatusTodo, StatusTodo, text(""), nil, "status_reason"},
-		{"no change and no reason leaves it alone", StatusTodo, StatusTodo, nil, nil, ""},
+		{"one rune", StatusBacklog, StatusDoing, text("가"), text("가"), ""},
+		{"500 runes of 3 bytes each", StatusBacklog, StatusDoing, text(strings.Repeat("가", 500)), text(strings.Repeat("가", 500)), ""},
+		{"501 runes", StatusBacklog, StatusDoing, text(strings.Repeat("가", 501)), nil, "status_reason"},
+		{"empty reason", StatusBacklog, StatusDoing, text(""), nil, "status_reason"},
+		{"empty reason on cancel", StatusBacklog, StatusCancelled, text(""), nil, "status_reason"},
+		{"reason without a status change", StatusBacklog, StatusBacklog, text("이유"), nil, "status_reason"},
+		{"empty reason without a status change", StatusBacklog, StatusBacklog, text(""), nil, "status_reason"},
+		{"no change and no reason leaves it alone", StatusBacklog, StatusBacklog, nil, nil, ""},
 		{"no change to a reason-required status is fine", StatusCancelled, StatusCancelled, nil, nil, ""},
-		{"unknown target is left to the status check", StatusTodo, IssueStatus("gone"), nil, nil, ""},
+		{"unknown target is left to the status check", StatusBacklog, IssueStatus("gone"), nil, nil, ""},
 	}
 	for _, c := range cases {
 		got, err := ResolveStatusReason(c.from, c.to, c.reason)
@@ -278,7 +292,7 @@ func TestMergeValidation(t *testing.T) {
 
 func TestIssueStatusLabel(t *testing.T) {
 	want := map[IssueStatus]string{
-		StatusBacklog: "백로그", StatusTodo: "할 일", StatusDoing: "진행", StatusReview: "검토",
+		StatusBacklog: "백로그", StatusDoing: "진행", StatusReview: "검토",
 		StatusDone: "완료", StatusCancelled: "취소", StatusDeleted: "삭제",
 	}
 	for _, s := range IssueStatuses {

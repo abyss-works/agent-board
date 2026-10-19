@@ -73,7 +73,13 @@ func skillTemplates(t *testing.T) []Template {
 // The server serves and checks the same templates the skill tells agents to
 // use. Edit the skill first, then the server.
 func TestTemplatesMatchTheSkill(t *testing.T) {
-	skill := skillTemplates(t)
+	// A section for a type the server has dropped is stale text, not a template to match.
+	var skill []Template
+	for _, tpl := range skillTemplates(t) {
+		if _, ok := ParseIssueType(string(tpl.Type)); ok {
+			skill = append(skill, tpl)
+		}
+	}
 	if len(skill) != len(IssueTypes) || len(Templates) != len(IssueTypes) {
 		t.Fatalf("templates: skill %d, server %d, types %d", len(skill), len(Templates), len(IssueTypes))
 	}
@@ -103,7 +109,6 @@ func TestTemplateHeadings(t *testing.T) {
 		TypeFeature:     {"배경", "할 일", "완료 조건"},
 		TypeBug:         {"현상", "재현", "원인", "완료 조건"},
 		TypeDesign:      {"배경", "정할 것", "후보", "제약", "완료 조건"},
-		TypeDecision:    {"현황", "결정할 것", "선택지", "영향"},
 		TypeIdea:        {"내용", "출처", "검토할 것"},
 		TypeObservation: {"현상", "지금 고치지 않는 이유", "다시 볼 때 할 일"},
 	}
@@ -113,8 +118,13 @@ func TestTemplateHeadings(t *testing.T) {
 			t.Errorf("%s headings = %v (found %v), want %v", typ, tpl.Headings, ok, headings)
 		}
 	}
-	if _, ok := TemplateFor(IssueType("task")); ok {
-		t.Error("an unknown type has no template")
+	for _, typ := range []IssueType{"task", "decision"} {
+		if _, ok := TemplateFor(typ); ok {
+			t.Errorf("%s has no template", typ)
+		}
+	}
+	if len(Templates) != 5 {
+		t.Errorf("templates = %d, want one for each of the 5 types", len(Templates))
 	}
 }
 

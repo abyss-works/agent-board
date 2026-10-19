@@ -18,7 +18,7 @@ func reasonOf(iss *model.Issue) string {
 func TestStatusReason(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
-	i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t", Status: model.StatusTodo})
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t", Status: model.StatusBacklog})
 	if i.StatusReason != nil {
 		t.Errorf("a new issue has status_reason %q", *i.StatusReason)
 	}
@@ -45,10 +45,10 @@ func TestStatusReason(t *testing.T) {
 
 	// Without a reason an ordinary change records "{from} → {to}".
 	doing, err := change(trClaude, model.StatusDoing, nil)
-	if err != nil || reasonOf(doing) != "할 일 → 진행" {
+	if err != nil || reasonOf(doing) != "백로그 → 진행" {
 		t.Fatalf("default reason = %s, %v", reasonOf(doing), err)
 	}
-	if rc, ok := latest()["status_reason"]; !ok || string(rc.From) != `null` || string(rc.To) != `"할 일 → 진행"` {
+	if rc, ok := latest()["status_reason"]; !ok || string(rc.From) != `null` || string(rc.To) != `"백로그 → 진행"` {
 		t.Errorf("activity status_reason = %+v (present %v)", rc, ok)
 	}
 	// A given reason wins over the default.
@@ -56,7 +56,7 @@ func TestStatusReason(t *testing.T) {
 	if err != nil || reasonOf(review) != "구현을 마쳐 검토를 요청한다" {
 		t.Fatalf("given reason = %s, %v", reasonOf(review), err)
 	}
-	if rc := latest()["status_reason"]; string(rc.From) != `"할 일 → 진행"` || string(rc.To) != `"구현을 마쳐 검토를 요청한다"` {
+	if rc := latest()["status_reason"]; string(rc.From) != `"백로그 → 진행"` || string(rc.To) != `"구현을 마쳐 검토를 요청한다"` {
 		t.Errorf("reason change = %+v", rc)
 	}
 
@@ -84,14 +84,14 @@ func TestStatusReason(t *testing.T) {
 		t.Errorf("a status change must always carry status_reason: %+v", latest())
 	}
 	// Reviving falls back to the default message.
-	todo, err := change(trOwner, model.StatusTodo, nil)
-	if err != nil || reasonOf(todo) != "삭제 → 할 일" {
-		t.Fatalf("revive = %s, %v", reasonOf(todo), err)
+	backlog, err := change(trOwner, model.StatusBacklog, nil)
+	if err != nil || reasonOf(backlog) != "삭제 → 백로그" {
+		t.Fatalf("revive = %s, %v", reasonOf(backlog), err)
 	}
 
 	// The reason belongs to a status change only.
 	var verr *model.ValidationError
-	same, doingStatus, cancelStatus := model.StatusTodo, model.StatusDoing, model.StatusCancelled
+	same, doingStatus, cancelStatus := model.StatusBacklog, model.StatusDoing, model.StatusCancelled
 	for name, patch := range map[string]IssuePatch{
 		"reason alone":        {StatusReason: str("이유")},
 		"reason with a title": {Title: str("x"), StatusReason: str("이유")},

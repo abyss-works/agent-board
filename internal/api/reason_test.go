@@ -25,16 +25,16 @@ func wantFieldError(t *testing.T, rec *httptest.ResponseRecorder, status int, fi
 func TestStatusReasonOnPatch(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
-	e.createIssue(t, `{"project":"AGB","title":"a","status":"todo"}`)
+	e.createIssue(t, `{"project":"AGB","title":"a"}`)
 
 	// An ordinary change without a reason gets the default message.
 	rec := e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"doing"}`, nil)
 	var i model.Issue
 	decodeJSON(t, rec, &i)
-	if rec.Code != 200 || i.StatusReason == nil || *i.StatusReason != "할 일 → 진행" {
+	if rec.Code != 200 || i.StatusReason == nil || *i.StatusReason != "백로그 → 진행" {
 		t.Fatalf("default reason: %d %v", rec.Code, i.StatusReason)
 	}
-	if !strings.Contains(rec.Body.String(), `"status_reason":"할 일 → 진행"`) {
+	if !strings.Contains(rec.Body.String(), `"status_reason":"백로그 → 진행"`) {
 		t.Errorf("response lacks status_reason: %s", rec.Body.String())
 	}
 	rec = e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"review","status_reason":"구현을 마쳐 검토를 요청한다"}`, nil)
@@ -56,16 +56,16 @@ func TestStatusReasonOnPatch(t *testing.T) {
 	for name, body := range map[string]string{
 		"reason alone":        `{"status_reason":"이유"}`,
 		"same status":         `{"status":"cancelled","status_reason":"이유"}`,
-		"empty":               `{"status":"todo","status_reason":""}`,
-		"501 characters":      `{"status":"todo","status_reason":"` + strings.Repeat("가", 501) + `"}`,
+		"empty":               `{"status":"backlog","status_reason":""}`,
+		"501 characters":      `{"status":"backlog","status_reason":"` + strings.Repeat("가", 501) + `"}`,
 		"reason with a title": `{"title":"x","status_reason":"이유"}`,
 	} {
 		wantFieldError(t, e.do(t, "PATCH", "/v1/issues/AGB-1", body, nil), 422, "status_reason")
 		_ = name
 	}
-	wantFieldError(t, e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"todo","status_reason":null}`, nil), 422, "status_reason")
-	wantFieldError(t, e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"todo","status_reason":5}`, nil), 400, "status_reason")
-	rec = e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"todo","status_reason":"`+strings.Repeat("가", 500)+`"}`, nil)
+	wantFieldError(t, e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"backlog","status_reason":null}`, nil), 422, "status_reason")
+	wantFieldError(t, e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"backlog","status_reason":5}`, nil), 400, "status_reason")
+	rec = e.do(t, "PATCH", "/v1/issues/AGB-1", `{"status":"backlog","status_reason":"`+strings.Repeat("가", 500)+`"}`, nil)
 	if rec.Code != 200 {
 		t.Errorf("500 characters: %d %s", rec.Code, rec.Body.String())
 	}
@@ -88,7 +88,7 @@ func TestStatusReasonOnPatch(t *testing.T) {
 	rec = e.do(t, "GET", "/v1/activity?issue=AGB-1&field=status_reason&kind=updated&sort=at", "", nil)
 	var acts listEnvelope[model.Activity]
 	decodeJSON(t, rec, &acts)
-	if rec.Code != 200 || acts.Total < 3 || string(acts.Items[0].Changes["status_reason"].To) != `"할 일 → 진행"` {
+	if rec.Code != 200 || acts.Total < 3 || string(acts.Items[0].Changes["status_reason"].To) != `"백로그 → 진행"` {
 		t.Errorf("activity by status_reason: %d %+v", rec.Code, acts)
 	}
 	// Lists and the single read return it.

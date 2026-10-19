@@ -44,7 +44,7 @@ func (h *handler) queue(w http.ResponseWriter, r *http.Request) {
 	f := store.QueueFilter{Projects: h.projects(q), Limit: q.limit(50, 200), Offset: q.offset()}
 	statusParam := q.one("status")
 	if statusParam == "" {
-		statusParam = string(model.StatusTodo)
+		statusParam = string(model.StatusBacklog)
 	}
 	statuses, err := model.ExpandIssueStatuses(statusParam)
 	if err != nil {
