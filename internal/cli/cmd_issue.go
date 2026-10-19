@@ -176,6 +176,15 @@ const templateUsage = `
 (생성, 그리고 본문이나 종류를 바꾸는 수정). 템플릿은 agb template show <type> 으로 받습니다.
 `
 
+// checkDecision rejects an empty --decision-needed. A question is cleared, or
+// left out on create, with none.
+func checkDecision(fs *flag.FlagSet, v string) error {
+	if isSet(fs, "decision-needed") && v == "" {
+		return usageErrorf("--decision-needed 값이 비어 있습니다. 질문을 주거나, 없애려면 none 을 주세요.")
+	}
+	return nil
+}
+
 var issueCreateCmd = &command{
 	name: "create", summary: "이슈 생성",
 	usage: `사용법: agb issue create --project <P> --title <제목> [옵션]
@@ -191,13 +200,14 @@ var issueCreateCmd = &command{
   --depends-on <KEY>      선행 이슈. 반복 가능
   --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc. 반복 가능
   --recheck <조건>        observation 의 재검토 조건 (observation 이면 필수)
+  --decision-needed <질문|none>  사용자의 결정이 필요한 질문. 1~500자. 생략하거나 none 이면 없음
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다
   --milestone <M>         마일스톤의 ID나 이름. 이름은 프로젝트의 마일스톤(agb milestone list -p <KEY> --status all)에서
                           정확히 같은 것을 찾고, 없거나 둘 이상이면 오류입니다. 숫자만 있는 값은 ID로 봅니다
 ` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue create", g)
-		var project, title, typ, priority, status, body, bodyFile, parent, recheck, topic, milestone string
+		var project, title, typ, priority, status, body, bodyFile, parent, recheck, decision, topic, milestone string
 		var labels, deps, refs stringList
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
@@ -213,6 +223,7 @@ var issueCreateCmd = &command{
 		fs.Var(&deps, "depends-on", "")
 		fs.Var(&refs, "ref", "")
 		fs.StringVar(&recheck, "recheck", "", "")
+		fs.StringVar(&decision, "decision-needed", "", "")
 		fs.StringVar(&topic, "topic", "", "")
 		fs.StringVar(&milestone, "milestone", "", "")
 		pos, err := parseArgs(fs, args)
@@ -228,11 +239,17 @@ var issueCreateCmd = &command{
 		if title == "" {
 			return usageErrorf("--title 이 필요합니다.")
 		}
+		if err := checkDecision(fs, decision); err != nil {
+			return err
+		}
 		in := map[string]any{"project": project, "title": title}
 		for name, v := range map[string]string{"type": typ, "priority": priority, "status": status, "parent": parent, "recheck_condition": recheck} {
 			if v != "" {
 				in[name] = v
 			}
+		}
+		if decision != "" && decision != "none" {
+			in["decision_needed"] = decision
 		}
 		text, present, err := a.readBody(fs, body, bodyFile)
 		if err != nil {
@@ -333,6 +350,7 @@ var issueUpdateCmd = &command{
   --add-ref <R>, --remove-ref <R>
   --recheck <조건>        재검토 조건 설정
   --no-recheck            재검토 조건 제거 (type 을 observation 에서 바꿀 때)
+  --decision-needed <질문|none>  사용자의 결정이 필요한 질문. 1~500자. none 이면 질문을 지움
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). none 이면 주제를 지움
   --milestone <M>         마일스톤의 ID나 이름. none 이면 마일스톤을 지움. 이름은 이슈 프로젝트의 마일스톤
                           (agb milestone list -p <KEY> --status all)에서 정확히 같은 것을 찾고, 없거나 둘 이상이면
@@ -341,7 +359,7 @@ var issueUpdateCmd = &command{
 ` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue update", g)
-		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, topic, milestone, ifMatch string
+		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, decision, topic, milestone, ifMatch string
 		var noParent, noRecheck bool
 		fs.StringVar(&title, "title", "", "")
 		fs.StringVar(&typ, "type", "", "")
@@ -354,6 +372,7 @@ var issueUpdateCmd = &command{
 		fs.BoolVar(&noParent, "no-parent", false, "")
 		fs.StringVar(&recheck, "recheck", "", "")
 		fs.BoolVar(&noRecheck, "no-recheck", false, "")
+		fs.StringVar(&decision, "decision-needed", "", "")
 		fs.StringVar(&topic, "topic", "", "")
 		fs.StringVar(&milestone, "milestone", "", "")
 		fs.StringVar(&ifMatch, "if-match", "", "")
@@ -401,6 +420,15 @@ var issueUpdateCmd = &command{
 			patch["recheck_condition"] = recheck
 		case noRecheck:
 			patch["recheck_condition"] = nil
+		}
+		if err := checkDecision(fs, decision); err != nil {
+			return err
+		}
+		switch {
+		case decision == "none":
+			patch["decision_needed"] = nil
+		case decision != "":
+			patch["decision_needed"] = decision
 		}
 		needRead := false
 		for _, e := range arrays {
