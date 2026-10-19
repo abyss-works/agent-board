@@ -15,7 +15,7 @@ type Template struct {
 }
 
 // Templates holds one template per issue type in the order of IssueTypes.
-// The text is the "이슈 템플릿" section of skills/agent-board/SKILL.md, which is
+// The text is the "이슈 템플릿" section of skills/tool-agb/SKILL.md, which is
 // the source; template_test.go compares the two so they cannot drift apart.
 var Templates = []Template{
 	newTemplate(TypeFeature, "만들거나 바꿀 것을 명사형으로 쓴다.",

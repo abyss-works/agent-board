@@ -11,7 +11,7 @@
 | 서버 | `cmd/agb`, `internal/` | `/v1` 아래의 REST API를 제공하고 SQLite 파일 하나에 저장한다. 데이터베이스는 서버만 연다. |
 | CLI | `cmd/agb`, `internal/cli`, `internal/client` | 서버의 REST API를 HTTP로만 호출한다. 업무 규칙은 서버에 있다. |
 | 웹 클라이언트 | `web/` | 브라우저에서 REST API를 직접 호출하는 SPA다. 현황, 보드, 이슈 목록, 활동 화면이 있다. |
-| 에이전트 스킬 | `skills/agent-board/` | 에이전트가 CLI로 트래커를 쓰는 시점과 방법을 정한 문서다. |
+| 에이전트 스킬 | `skills/tool-agb/` | 에이전트가 CLI로 트래커를 쓰는 시점과 방법을 정한 문서다. |
 
 서버와 CLI는 바이너리 하나(`agb`)다. `agb serve`가 서버를 실행하고, 그 밖의 명령은 서버에 접속하는 클라이언트로 동작한다. 서버에 `AGB_WEB_DIR`을 지정하면 웹 클라이언트 빌드를 `/v1` 밖의 경로에서 서빙하며, 이때 API와 웹 클라이언트는 같은 주소를 쓴다.
 
@@ -47,13 +47,13 @@ agb version
 
 ### 에이전트 스킬
 
-사용하는 에이전트 도구의 전역 스킬 폴더에 `agent-board/SKILL.md`로 저장한다. 전역 스킬 폴더의 위치는 도구마다 다르므로 도구의 문서에서 확인해 `SKILLS_DIR`에 지정한다.
+사용하는 에이전트 도구의 전역 스킬 폴더에 `tool-agb/SKILL.md`로 저장한다. 전역 스킬 폴더의 위치는 도구마다 다르므로 도구의 문서에서 확인해 `SKILLS_DIR`에 지정한다.
 
 ```bash
 SKILLS_DIR="<전역 스킬 폴더 경로>"
-mkdir -p "$SKILLS_DIR/agent-board"
-curl -fsSL -o "$SKILLS_DIR/agent-board/SKILL.md" \
-  https://raw.githubusercontent.com/abyss-works/agent-board/main/skills/agent-board/SKILL.md
+mkdir -p "$SKILLS_DIR/tool-agb"
+curl -fsSL -o "$SKILLS_DIR/tool-agb/SKILL.md" \
+  https://raw.githubusercontent.com/abyss-works/agent-board/main/skills/tool-agb/SKILL.md
 ```
 
 스킬은 세션 시작, 등록, 착수, 진행, 마침 단계별 `agb` 사용법과 이슈 종류별 제목 규칙, 본문 템플릿, 댓글 요약 규칙을 정한다. 프로젝트 키는 프로젝트의 AGENTS.md에 적힌 값을 쓰고, 행위자는 `agb actors`에 선언된 값 중 자기 도구에 맞는 것을 쓴다.
@@ -214,6 +214,6 @@ pnpm build
 | `internal/server` | 설정, 저장소, HTTP 핸들러, 백업을 한 프로세스로 묶는다. |
 | `internal/backup` | 데이터베이스 스냅샷을 압축해 오브젝트 저장소에 올리는 백업 실행기 |
 | `web/` | 웹 클라이언트 |
-| `skills/agent-board/` | 에이전트 스킬 |
+| `skills/tool-agb/` | 에이전트 스킬 |
 | `deploy/` | 운영 Compose 파일과 클러스터 매니페스트 |
 | `e2e/` | 실행 중인 서버에 HTTP로 요청하는 end-to-end 테스트 |
