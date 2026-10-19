@@ -7,7 +7,7 @@ import (
 
 const (
 	ackedIssueJSON   = `{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","body":"","type":"feature","status":"doing","priority":"P1","labels":[],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"status_reason":null,"acknowledged_at":"2026-10-17T08:00:00.000Z","acknowledged_by":"owner","version":4,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T08:00:00.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"claude","updated_by":"owner"}`
-	unackedIssueJSON = `{"key":"CLI-2","project":"CLI","number":2,"title":"둘째 이슈","body":"","type":"bug","status":"todo","priority":"P2","labels":[],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"status_reason":null,"acknowledged_at":null,"acknowledged_by":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"claude","created_by":"claude","updated_by":"claude"}`
+	unackedIssueJSON = `{"key":"CLI-2","project":"CLI","number":2,"title":"둘째 이슈","body":"","type":"bug","status":"backlog","priority":"P2","labels":[],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"status_reason":null,"acknowledged_at":null,"acknowledged_by":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"claude","created_by":"claude","updated_by":"claude"}`
 )
 
 func TestIssueAckPostsEveryKey(t *testing.T) {

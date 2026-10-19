@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	issueJSON = `{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","body":"## 배경\n\n본문","type":"feature","status":"todo","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":["doc:api.md"],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}`
-	listJSON  = `{"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"todo","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}],"total":1,"limit":50,"offset":0}`
+	issueJSON = `{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","body":"## 배경\n\n본문","type":"feature","status":"backlog","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":["doc:api.md"],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}`
+	listJSON  = `{"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"backlog","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}],"total":1,"limit":50,"offset":0}`
 	errJSON   = `{"error":{"code":"validation_failed","message":"요청 값이 규칙에 맞지 않습니다.","details":[{"field":"priority","message":"P0, P1, P2, P3 중 하나여야 합니다."},{"field":"depends_on[1]","reason":"not_found","message":"이슈 CLI-99가 없습니다."}]}}`
 )
 
@@ -155,12 +155,12 @@ func TestIssueListBuildsQuery(t *testing.T) {
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/issues", canned{body: listJSON})
 	h := newHarness(t, srv, false)
-	code := h.run("issue", "list", "--project", "CLI", "--status", "todo,doing", "--label", "api", "--label", "cli",
+	code := h.run("issue", "list", "--project", "CLI", "--status", "backlog,doing", "--label", "api", "--label", "cli",
 		"--type", "bug", "--priority", "P0,P1", "--parent", "none", "--created-by", "claude", "-q", "설계 api", "--sort", "-updated_at", "--limit", "5", "--offset", "10")
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	want := url.Values{"project": {"CLI"}, "status": {"todo,doing"}, "label": {"api", "cli"}, "type": {"bug"}, "priority": {"P0,P1"},
+	want := url.Values{"project": {"CLI"}, "status": {"backlog,doing"}, "label": {"api", "cli"}, "type": {"bug"}, "priority": {"P0,P1"},
 		"parent": {"none"}, "created_by": {"claude"}, "q": {"설계 api"}, "sort": {"-updated_at"}, "limit": {"5"}, "offset": {"10"}}
 	if got := srv.last().Query; got.Encode() != want.Encode() {
 		t.Errorf("query = %v, want %v", got, want)
@@ -436,10 +436,10 @@ func TestStatusAndViewCommands(t *testing.T) {
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/actors/me", canned{body: `{"id":"claude","kind":"agent"}`})
 	srv.on("GET", "/v1/actors", canned{body: `{"items":[{"id":"owner","kind":"user"},{"id":"claude","kind":"agent"}]}`})
-	srv.on("GET", "/v1/board", canned{body: `{"project":"CLI","columns":[{"status":"backlog","total":0,"issues":[]},{"status":"todo","total":1,"issues":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"todo","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}]}]}`})
-	srv.on("GET", "/v1/queue", canned{body: `{"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"todo","priority":"P1","labels":[],"parent":null,"depends_on":["CLI-2"],"refs":[],"recheck_condition":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"owner","created_by":"owner","updated_by":"owner","ready":false,"blocked_by":["CLI-2"]}],"total":1,"limit":1,"offset":0}`})
+	srv.on("GET", "/v1/board", canned{body: `{"project":"CLI","columns":[{"status":"backlog","total":0,"issues":[]},{"status":"doing","total":1,"issues":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"doing","priority":"P1","labels":["api"],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":3,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T07:10:21.000Z","closed_at":null,"status_changed_at":"2026-10-17T07:10:21.000Z","status_changed_by":"claude","created_by":"owner","updated_by":"claude"}]}]}`})
+	srv.on("GET", "/v1/queue", canned{body: `{"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"첫 이슈","type":"feature","status":"backlog","priority":"P1","labels":[],"parent":null,"depends_on":["CLI-2"],"refs":[],"recheck_condition":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"owner","created_by":"owner","updated_by":"owner","ready":false,"blocked_by":["CLI-2"]}],"total":1,"limit":1,"offset":0}`})
 	srv.on("GET", "/v1/labels", canned{body: `{"items":[{"label":"api","count":9},{"label":"cli","count":4}]}`})
-	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":501,"issue":"CLI-1","project":"CLI","kind":"updated","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:10:21.000Z","changes":{"status":{"from":"todo","to":"doing"}},"summary":null,"body":null},{"id":502,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"codex","session_id":"s","client_host":"h","at":"2026-10-17T07:11:21.000Z","changes":null,"summary":null,"body":"댓글 본문\n둘째 줄"},{"id":503,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:12:21.000Z","changes":null,"summary":"서버 랭킹 함수 구현","body":"랭킹 상세 본문"}],"total":3,"limit":50,"offset":0}`})
+	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":501,"issue":"CLI-1","project":"CLI","kind":"updated","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:10:21.000Z","changes":{"status":{"from":"backlog","to":"doing"}},"summary":null,"body":null},{"id":502,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"codex","session_id":"s","client_host":"h","at":"2026-10-17T07:11:21.000Z","changes":null,"summary":null,"body":"댓글 본문\n둘째 줄"},{"id":503,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:12:21.000Z","changes":null,"summary":"서버 랭킹 함수 구현","body":"랭킹 상세 본문"}],"total":3,"limit":50,"offset":0}`})
 	srv.on("GET", "/v1/issues", canned{body: listJSON})
 	h := newHarness(t, srv, true)
 
@@ -451,11 +451,11 @@ func TestStatusAndViewCommands(t *testing.T) {
 	}{
 		{[]string{"whoami"}, "/v1/actors/me", "", []string{"claude", "agent"}},
 		{[]string{"actors"}, "/v1/actors", "", []string{"owner", "user", "claude"}},
-		{[]string{"board", "--project", "CLI", "--closed-days", "0", "--limit", "5"}, "/v1/board", "closed_days=0&limit=5&project=CLI", []string{"todo", "CLI-1"}},
+		{[]string{"board", "--project", "CLI", "--closed-days", "0", "--limit", "5"}, "/v1/board", "closed_days=0&limit=5&project=CLI", []string{"doing", "CLI-1"}},
 		{[]string{"board"}, "/v1/board", "", []string{"backlog"}},
-		{[]string{"queue", "--project", "CLI", "--status", "todo,backlog", "--limit", "1"}, "/v1/queue", "limit=1&project=CLI&status=todo%2Cbacklog", []string{"CLI-1", "CLI-2"}},
+		{[]string{"queue", "--project", "CLI", "--status", "backlog,doing", "--limit", "1"}, "/v1/queue", "limit=1&project=CLI&status=backlog%2Cdoing", []string{"CLI-1", "CLI-2"}},
 		{[]string{"labels", "--project", "CLI"}, "/v1/labels", "project=CLI", []string{"api", "9", "cli", "4"}},
-		{[]string{"activity", "--project", "CLI", "--kind", "updated", "--field", "status", "--since", "2026-10-17T00:00:00Z", "--sort", "at"}, "/v1/activity", "field=status&kind=updated&project=CLI&since=2026-10-17T00%3A00%3A00Z&sort=at", []string{"claude", "todo", "doing", "댓글 본문", "서버 랭킹 함수 구현"}},
+		{[]string{"activity", "--project", "CLI", "--kind", "updated", "--field", "status", "--since", "2026-10-17T00:00:00Z", "--sort", "at"}, "/v1/activity", "field=status&kind=updated&project=CLI&since=2026-10-17T00%3A00%3A00Z&sort=at", []string{"claude", "backlog", "doing", "댓글 본문", "서버 랭킹 함수 구현"}},
 		{[]string{"search", "설계", "api", "--project", "CLI", "--status", "all"}, "/v1/issues", "project=CLI&q=%EC%84%A4%EA%B3%84+api&status=all", []string{"CLI-1"}},
 	}
 	for _, tc := range cases {
@@ -484,7 +484,7 @@ func TestProjectCommands(t *testing.T) {
 	srv.on("GET", "/v1/projects/CLI", canned{body: projectJSON})
 	srv.on("PATCH", "/v1/projects/CLI", canned{body: projectJSON})
 	srv.on("DELETE", "/v1/projects/CLI", canned{body: projectJSON})
-	srv.on("GET", "/v1/projects/CLI/overview", canned{body: `{"project":` + projectJSON + `,"generated_at":"2026-10-17T09:00:00.000Z","counts":{"total":2,"open":1,"by_status":{"backlog":1,"todo":0,"doing":0,"review":0,"done":1,"cancelled":0,"deleted":0},"by_type":{"feature":1,"bug":0,"design":0,"decision":0,"idea":0,"observation":0},"by_priority":{"P0":0,"P1":1,"P2":0,"P3":0}},"doing":{"total":0,"items":[]},"review":{"total":0,"items":[]},"blocked":{"total":0,"items":[]},"decisions":{"total":0,"items":[]},"next":{"total":1,"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"다음 할 일","type":"feature","status":"todo","priority":"P1","labels":[],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"owner","created_by":"owner","updated_by":"owner","ready":true,"blocked_by":[]}]},"recent_activity":{"total":0,"items":[]}}`})
+	srv.on("GET", "/v1/projects/CLI/overview", canned{body: `{"project":` + projectJSON + `,"generated_at":"2026-10-17T09:00:00.000Z","counts":{"total":2,"open":1,"by_status":{"backlog":1,"doing":0,"review":0,"done":1,"cancelled":0,"deleted":0},"by_type":{"feature":1,"bug":0,"design":0,"idea":0,"observation":0},"by_priority":{"P0":0,"P1":1,"P2":0,"P3":0}},"doing":{"total":0,"items":[]},"review":{"total":0,"items":[]},"blocked":{"total":0,"items":[]},"decisions":{"total":0,"items":[]},"next":{"total":1,"items":[{"key":"CLI-1","project":"CLI","number":1,"title":"다음 할 일","type":"feature","status":"backlog","priority":"P1","labels":[],"parent":null,"depends_on":[],"refs":[],"recheck_condition":null,"version":1,"created_at":"2026-10-17T05:46:06.000Z","updated_at":"2026-10-17T05:46:06.000Z","closed_at":null,"status_changed_at":"2026-10-17T05:46:06.000Z","status_changed_by":"owner","created_by":"owner","updated_by":"owner","ready":true,"blocked_by":[]}]},"recent_activity":{"total":0,"items":[]}}`})
 	h := newHarness(t, srv, true)
 
 	cases := []struct {

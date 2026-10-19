@@ -78,8 +78,8 @@ func TestDescribeActivityShowsFieldChanges(t *testing.T) {
 		{"milestone assigned", map[string]model.Change{"milestone": change("null", "2")}, "milestone: - → 2"},
 		{"milestone moved", map[string]model.Change{"milestone": change("2", "3")}, "milestone: 2 → 3"},
 		{"milestone cleared", map[string]model.Change{"milestone": change("3", "null")}, "milestone: 3 → -"},
-		{"strings are shown without quotes", map[string]model.Change{"status": change(`"todo"`, `"doing"`)}, "status: todo → doing"},
-		{"fields are sorted by name", map[string]model.Change{"status": change(`"todo"`, `"doing"`), "milestone": change("null", "2")}, "milestone: - → 2; status: todo → doing"},
+		{"strings are shown without quotes", map[string]model.Change{"status": change(`"backlog"`, `"doing"`)}, "status: backlog → doing"},
+		{"fields are sorted by name", map[string]model.Change{"status": change(`"backlog"`, `"doing"`), "milestone": change("null", "2")}, "milestone: - → 2; status: backlog → doing"},
 		{"a missing previous value", map[string]model.Change{"milestone": change("", "2")}, "milestone: - → 2"},
 	}
 	for _, tc := range cases {

@@ -461,14 +461,14 @@ func TestActivityShowsMilestoneChange(t *testing.T) {
 	}
 	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: `{"items":[` +
 		record(3, `{"milestone":{"from":2,"to":null}}`) + `,` +
-		record(2, `{"milestone":{"from":2,"to":3},"status":{"from":"todo","to":"doing"}}`) + `,` +
+		record(2, `{"milestone":{"from":2,"to":3},"status":{"from":"backlog","to":"doing"}}`) + `,` +
 		record(1, `{"milestone":{"from":null,"to":2}}`) + `],"total":3,"limit":50,"offset":0}`})
 	h := newHarness(t, srv, true)
 	h.app.TermWidth = 0
 	if code := h.run("issue", "activity", "CLI-1"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	for _, want := range []string{"milestone: 2 → -", "milestone: 2 → 3; status: todo → doing", "milestone: - → 2"} {
+	for _, want := range []string{"milestone: 2 → -", "milestone: 2 → 3; status: backlog → doing", "milestone: - → 2"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("activity lacks %q:\n%s", want, h.stdout)
 		}

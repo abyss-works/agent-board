@@ -76,7 +76,7 @@ var templateShowCmd = &command{
 	name: "show", summary: "한 종류의 본문 템플릿을 그대로 출력",
 	usage: `사용법: agb template show <type> [--json]
 
-종류(feature, bug, design, decision, idea, observation)의 본문 템플릿을 그대로 출력합니다.
+종류(feature, bug, design, idea, observation)의 본문 템플릿을 그대로 출력합니다.
 파이프로도 같은 글이 나오므로 채워서 바로 쓸 수 있습니다.
 
   agb template show feature > body.md
