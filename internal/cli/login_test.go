@@ -420,6 +420,20 @@ func TestLoginFailsWhenTheRequestIsRefused(t *testing.T) {
 	}
 }
 
+func TestLoginFailsWhenTheServerIsUnreachable(t *testing.T) {
+	e := newLoginEnv(t, true)
+	e.env["AGB_URL"] = "http://127.0.0.1:1"
+	if code := e.run("login"); code != 1 || e.stderr.Len() == 0 {
+		t.Fatalf("code=%d stderr=%q", code, e.stderr.String())
+	}
+	if len(e.slept) != 0 || len(e.opened) != 0 || e.stdout.Len() != 0 {
+		t.Errorf("slept=%v opened=%v stdout=%q", e.slept, e.opened, e.stdout.String())
+	}
+	if _, err := os.Stat(e.app.ConfigPath); err == nil {
+		t.Error("a login that never reached the server wrote the config file")
+	}
+}
+
 func TestLoginUsageErrors(t *testing.T) {
 	for name, tc := range map[string]struct {
 		prep func(e *loginEnv)
