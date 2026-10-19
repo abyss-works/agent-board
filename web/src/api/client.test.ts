@@ -60,7 +60,7 @@ describe('issueListQuery', () => {
     expect(
       issueListQuery({
         project: 'AGB',
-        status: ['todo', 'doing'],
+        status: ['backlog', 'doing'],
         type: ['feature'],
         priority: ['P0', 'P1'],
         label: ['api', 'cli'],
@@ -68,7 +68,7 @@ describe('issueListQuery', () => {
         sort: '-updated_at',
         limit: 100,
       }),
-    ).toBe('?project=AGB&status=todo%2Cdoing&type=feature&priority=P0%2CP1&label=api&label=cli&sort=-updated_at&limit=100')
+    ).toBe('?project=AGB&status=backlog%2Cdoing&type=feature&priority=P0%2CP1&label=api&label=cli&sort=-updated_at&limit=100')
   })
   it('주제 필터는 쉼표 OR로 만들고 비면 생략한다', () => {
     const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }

@@ -3,7 +3,7 @@ import type { IssueSummary } from '@/api/types'
 import { formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { IssueKey, LabelChip, PriorityIcon, TypeIcon } from './meta'
+import { DecisionBadge, IssueKey, LabelChip, PriorityIcon, TypeIcon } from './meta'
 
 interface Props {
   issue: IssueSummary
@@ -39,6 +39,7 @@ export function IssueCardBody({ issue, flash, overlay, className }: Props & { cl
         {issue.title}
       </IssueLink>
       <div className="mt-2 flex flex-wrap items-center gap-1">
+        {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
         {issue.labels.slice(0, 3).map((l) => (
           <LabelChip key={l} label={l} />
         ))}

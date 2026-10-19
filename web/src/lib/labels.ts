@@ -2,7 +2,6 @@ import type { ActivityKind, DeviceAuthorizationStatus, IssueStatus, IssueType, M
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   backlog: '백로그',
-  todo: '할 일',
   doing: '진행',
   review: '검토',
   done: '완료',
@@ -14,7 +13,6 @@ export const TYPE_LABEL: Record<IssueType, string> = {
   feature: '기능',
   bug: '버그',
   design: '설계',
-  decision: '결정 대기',
   idea: '아이디어',
   observation: '관측',
 }
@@ -62,6 +60,7 @@ export const FIELD_LABEL: Record<string, string> = {
   depends_on: '선행 이슈',
   refs: '참조',
   recheck_condition: '재검토 조건',
+  decision_needed: '결정 필요',
   topic: '주제',
   milestone: '마일스톤',
   status_reason: '상태 사유',
@@ -69,12 +68,16 @@ export const FIELD_LABEL: Record<string, string> = {
   project: '프로젝트',
 }
 
+/** 스키마 버전 6에서 없어졌지만 그 전의 활동 기록에 남아 있는 값의 이름 */
+const LEGACY_STATUS_LABEL: Record<string, string> = { todo: '할 일' }
+const LEGACY_TYPE_LABEL: Record<string, string> = { decision: '결정 대기' }
+
 export function statusLabel(s: string): string {
-  return (STATUS_LABEL as Record<string, string>)[s] ?? s
+  return (STATUS_LABEL as Record<string, string>)[s] ?? LEGACY_STATUS_LABEL[s] ?? s
 }
 
 export function typeLabel(t: string): string {
-  return (TYPE_LABEL as Record<string, string>)[t] ?? t
+  return (TYPE_LABEL as Record<string, string>)[t] ?? LEGACY_TYPE_LABEL[t] ?? t
 }
 
 export function fieldLabel(f: string): string {
