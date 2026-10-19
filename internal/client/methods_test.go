@@ -196,6 +196,21 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 			return c.Queue(ctx, QueueParams{Project: "CLI", Status: "todo,backlog", Page: Page{Limit: 1}})
 		}, "GET", "/v1/queue", "limit=1&project=CLI&status=todo%2Cbacklog", ""},
 		{"labels", func() (*Response, error) { return c.Labels(ctx, "CLI") }, "GET", "/v1/labels", "project=CLI", ""},
+		{"create device authorization", func() (*Response, error) {
+			return c.CreateDeviceAuthorization(ctx, "codex", "DESKTOP-RPLTFHM")
+		}, "POST", "/v1/device-authorizations", "", `{"actor":"codex","client_host":"DESKTOP-RPLTFHM"}`},
+		{"get device authorization", func() (*Response, error) { return c.GetDeviceAuthorization(ctx, "BDFG-HJKL") }, "GET", "/v1/device-authorizations/BDFG-HJKL", "", ""},
+		{"approve device authorization", func() (*Response, error) {
+			return c.PatchDeviceAuthorization(ctx, "BDFG-HJKL", "approved")
+		}, "PATCH", "/v1/device-authorizations/BDFG-HJKL", "", `{"status":"approved"}`},
+		{"deny device authorization", func() (*Response, error) {
+			return c.PatchDeviceAuthorization(ctx, "bdfghjkl", "denied")
+		}, "PATCH", "/v1/device-authorizations/bdfghjkl", "", `{"status":"denied"}`},
+		{"exchange token", func() (*Response, error) { return c.ExchangeToken(ctx, "Yq3-device_code") }, "POST", "/v1/tokens", "", `{"device_code":"Yq3-device_code"}`},
+		{"list tokens", func() (*Response, error) { return c.ListTokens(ctx, "") }, "GET", "/v1/tokens", "", ""},
+		{"list revoked tokens", func() (*Response, error) { return c.ListTokens(ctx, "revoked") }, "GET", "/v1/tokens", "status=revoked", ""},
+		{"revoke token", func() (*Response, error) { return c.RevokeToken(ctx, 7) }, "DELETE", "/v1/tokens/7", "", ""},
+		{"revoke current token", func() (*Response, error) { return c.RevokeCurrentToken(ctx) }, "DELETE", "/v1/tokens/current", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,6 +234,64 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 				t.Errorf("If-Match = %q", rec.header.Get("If-Match"))
 			}
 		})
+	}
+}
+
+// The two calls that start a login are made before the client has a token, so
+// they carry neither the token nor the trace headers. Every other call carries
+// all of them.
+func TestLoginCallsSendNoCredentials(t *testing.T) {
+	rec := newRecorder(t)
+	c := rec.client()
+	ctx := context.Background()
+	credentials := []string{"Authorization", "X-Actor", "X-Session-Id", "X-Client-Host"}
+	for name, call := range map[string]func() (*Response, error){
+		"create device authorization": func() (*Response, error) { return c.CreateDeviceAuthorization(ctx, "codex", "desk") },
+		"exchange token":              func() (*Response, error) { return c.ExchangeToken(ctx, "code") },
+	} {
+		rec.header = nil
+		if _, err := call(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, h := range credentials {
+			if v := rec.header.Get(h); v != "" {
+				t.Errorf("%s sent %s: %q", name, h, v)
+			}
+		}
+		if rec.header.Get("Content-Type") != "application/json; charset=utf-8" || rec.header.Get("User-Agent") != "agb/t" || rec.header.Get("Accept") != "application/json" {
+			t.Errorf("%s: headers = %v", name, rec.header)
+		}
+	}
+	for name, call := range map[string]func() (*Response, error){
+		"get device authorization":   func() (*Response, error) { return c.GetDeviceAuthorization(ctx, "BDFG-HJKL") },
+		"patch device authorization": func() (*Response, error) { return c.PatchDeviceAuthorization(ctx, "BDFG-HJKL", "approved") },
+		"list tokens":                func() (*Response, error) { return c.ListTokens(ctx, "all") },
+		"revoke token":               func() (*Response, error) { return c.RevokeToken(ctx, 7) },
+		"revoke current token":       func() (*Response, error) { return c.RevokeCurrentToken(ctx) },
+	} {
+		rec.header = nil
+		if _, err := call(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, h := range credentials {
+			if rec.header.Get(h) == "" {
+				t.Errorf("%s sent no %s", name, h)
+			}
+		}
+		if rec.header.Get("Authorization") != "Bearer "+testToken {
+			t.Errorf("%s: Authorization = %q", name, rec.header.Get("Authorization"))
+		}
+	}
+}
+
+func TestLoginCallsKeepTheServerError(t *testing.T) {
+	rec := newRecorder(t)
+	rec.status = 400
+	rec.reply = `{"error":{"code":"authorization_pending","message":"아직 승인되지 않았습니다."}}`
+	_, err := rec.client().ExchangeToken(context.Background(), "code")
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 || apiErr.Code != "authorization_pending" || string(apiErr.Body) != rec.reply {
+		t.Errorf("err = %v (%+v)", err, apiErr)
 	}
 }
 

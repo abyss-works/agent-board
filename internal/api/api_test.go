@@ -20,29 +20,65 @@ const testToken = "test-token-0123456789abcdef0123456789" // dummy
 var testActors = []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}}
 
 type env struct {
-	h   http.Handler
-	log *bytes.Buffer
-	st  *store.Store
+	h      http.Handler
+	log    *bytes.Buffer
+	st     *store.Store
+	actors []model.Actor
+	// tokens holds the secret of the actor token issued for each agent actor
+	// that sent a request with the default credentials.
+	tokens map[string]string
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, testActors, nil) }
+
+// newEnvWith builds an environment that declares the given actors, which must
+// include owner. tweak, when not nil, changes the handler options before the
+// handler is built.
+func newEnvWith(t *testing.T, actors []model.Actor, tweak func(*Options)) *env {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "agb.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.EnsureActors(t.Context(), testActors); err != nil {
+	if err := st.EnsureActors(t.Context(), actors); err != nil {
 		t.Fatal(err)
 	}
 	buf := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(buf, nil))
-	h := New(Options{Token: testToken, Actors: testActors, Version: "test", Logger: logger, Store: st})
-	return &env{h: h, log: buf, st: st}
+	opts := Options{Token: testToken, Actors: actors, Version: "test", Logger: logger, Store: st}
+	if tweak != nil {
+		tweak(&opts)
+	}
+	return &env{h: New(opts), log: buf, st: st, actors: actors, tokens: map[string]string{}}
+}
+
+// bearer is the token a request of the actor carries by default: the shared
+// token for a user, and for an agent the secret of an actor token that the
+// environment issues once. An actor that is not declared gets the shared token,
+// so the rejections of the trace headers stay what they are.
+func (e *env) bearer(t *testing.T, actor string) string {
+	t.Helper()
+	for _, a := range e.actors {
+		if a.ID != actor || a.Kind != model.ActorAgent {
+			continue
+		}
+		secret, ok := e.tokens[actor]
+		if !ok {
+			secret = "test-actor-token-" + actor + "-0123456789abcdef" // dummy
+			if _, err := e.st.CreateToken(t.Context(), store.TokenInput{Actor: actor, ClientHost: "api-test", Secret: secret, CreatedBy: "owner"}); err != nil {
+				t.Fatal(err)
+			}
+			e.tokens[actor] = secret
+		}
+		return secret
+	}
+	return testToken
 }
 
 // do sends a request with the given headers. Headers with the value "-" are
-// omitted, which lets tests remove one of the default good headers.
+// omitted, which lets tests remove one of the default good headers. Unless the
+// test sets Authorization, the request carries the token of its actor.
 func (e *env) do(t *testing.T, method, target string, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	var rd io.Reader
@@ -54,13 +90,15 @@ func (e *env) do(t *testing.T, method, target string, body string, headers map[s
 		req.Header.Set("Content-Type", "application/json")
 	}
 	good := map[string]string{
-		"Authorization": "Bearer " + testToken,
 		"X-Actor":       "claude",
 		"X-Session-Id":  "sess-1",
 		"X-Client-Host": "desk-win10",
 	}
 	for k, v := range headers {
 		good[k] = v
+	}
+	if _, set := good["Authorization"]; !set {
+		good["Authorization"] = "Bearer " + e.bearer(t, good["X-Actor"])
 	}
 	for k, v := range good {
 		if v != "-" {

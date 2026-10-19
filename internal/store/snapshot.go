@@ -23,21 +23,25 @@ func (s *Store) Snapshot(ctx context.Context, dst string) error {
 // FingerprintNow returns a string that changes whenever the database
 // content changes: every issue write appends an activity row, every
 // project, topic or milestone write bumps updated_at there (topics and
-// milestones have no activity record), and migrations bump user_version.
+// milestones have no activity record), a token write raises the highest
+// token id or the number of revoked tokens, and migrations bump
+// user_version. Recording the last use of a token changes none of these.
 func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
-	var maxActivity sql.NullInt64
+	var maxActivity, maxToken sql.NullInt64
 	var maxProject, maxTopic, maxMilestone sql.NullString
-	var projects, actors, topics, milestones int
+	var projects, actors, topics, milestones, revokedTokens int
 	var version int
 	if err := s.db.QueryRowContext(ctx, `select (select max(id) from activity), (select max(updated_at) from project),
 		(select count(*) from project), (select count(*) from actor), (select max(updated_at) from topic), (select count(*) from topic),
-		(select max(updated_at) from milestone), (select count(*) from milestone)`).
-		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics, &maxMilestone, &milestones); err != nil {
+		(select max(updated_at) from milestone), (select count(*) from milestone),
+		(select max(id) from token), (select count(*) from token where revoked_at is not null)`).
+		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics, &maxMilestone, &milestones, &maxToken, &revokedTokens); err != nil {
 		return "", err
 	}
 	if err := s.db.QueryRowContext(ctx, `pragma user_version`).Scan(&version); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d",
-		version, maxActivity.Int64, maxProject.String, projects, actors, maxTopic.String, topics, maxMilestone.String, milestones), nil
+	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:k%d:kr%d",
+		version, maxActivity.Int64, maxProject.String, projects, actors, maxTopic.String, topics, maxMilestone.String, milestones,
+		maxToken.Int64, revokedTokens), nil
 }

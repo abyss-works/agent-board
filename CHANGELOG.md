@@ -11,6 +11,12 @@
 - `/v1/projects/{key}/milestones`(목록, 생성)와 `/v1/milestones/{id}`(단건, 수정, 소프트 삭제). 목록은 `status`(`open` 기본, `closed`, `deleted`, `all`)로 거르고 목표일 순으로 돌려준다.
 - 이슈의 `milestone`(마일스톤 ID 또는 `null`)과 서버가 채우는 `milestone_name`, 이슈 목록의 `milestone` 필터(ID 쉼표 OR, `none`). 이슈의 마일스톤 변경은 활동 기록의 `changes.milestone`에 남는다.
 - 스키마 버전 4(`milestone` 테이블, `issue.milestone_id`). 서버를 시작할 때 자동으로 마이그레이션한다. 마일스톤 변경도 백업 변경 감지에 포함한다.
+- 행위자 토큰: 에이전트 행위자는 기기 승인으로 받은 행위자 토큰으로만 쓸 수 있다. 토큰은 행위자 하나에 묶이고, `X-Actor`가 토큰의 행위자와 다르면 403(`forbidden`, reason `actor_mismatch`)이다. 데이터베이스에는 SHA-256 해시만 남기고, 토큰 값은 발급 응답에서 한 번만 보인다. 요청 로그에 행위자 토큰으로 인증한 요청의 `token_id`가 더해진다.
+- 공용 토큰(`AGB_TOKEN`)은 `user` 종류 행위자 전용이다. 공용 토큰으로 에이전트 행위자를 쓰던 기존 설정은 403이 되므로, 에이전트 도구마다 기기마다 기기 승인으로 행위자 토큰을 한 번 받아야 한다.
+- 기기 승인(OAuth 2.0 Device Authorization Grant 방식): `POST /v1/device-authorizations`(인증 없음)로 요청을 만들고 `device_code`와 `user_code`를 받는다. 사용자 행위자가 `GET`, `PATCH /v1/device-authorizations/{user_code}`로 확인하고 승인하거나 거부한다. `POST /v1/tokens`(인증 없음)로 `device_code`를 행위자 토큰으로 교환한다. 요청은 서버 메모리에만 두고 600초 뒤 만료하며, 승인을 기다리는 요청이 20건이면 429다. 서버를 다시 시작하면 요청이 사라진다.
+- 토큰 관리: `GET /v1/tokens`(`status` `active` 기본, `revoked`, `all`)와 `DELETE /v1/tokens/{id}`는 사용자 행위자만 부르고, `DELETE /v1/tokens/current`는 요청에 쓴 행위자 토큰을 폐기한다. 같은 행위자가 같은 기기에서 다시 로그인하면 이전 토큰을 폐기한다. 토큰의 `last_used_at`은 60초 이상 지났을 때만 갱신한다.
+- 오류 코드 `forbidden`(403), `too_many_requests`(429), `authorization_pending`, `access_denied`, `expired_token`(400)과 conflict의 reason `not_pending`.
+- 스키마 버전 5(`token` 테이블). 서버를 시작할 때 자동으로 마이그레이션한다. 토큰의 발급과 폐기는 백업 변경 감지에 포함하고, `last_used_at` 갱신만으로는 백업을 올리지 않는다.
 
 ### CLI
 

@@ -67,6 +67,46 @@ type Milestone struct {
 	UpdatedBy   string            `json:"updated_by"`
 }
 
+// Token is an actor token as the API lists it. The secret is not part of it;
+// only the exchange that issues the token shows the secret, once.
+type Token struct {
+	ID         int64   `json:"id"`
+	Actor      string  `json:"actor"`
+	ClientHost string  `json:"client_host"`
+	CreatedAt  Time    `json:"created_at"`
+	CreatedBy  string  `json:"created_by"`
+	LastUsedAt *Time   `json:"last_used_at"`
+	RevokedAt  *Time   `json:"revoked_at"`
+	RevokedBy  *string `json:"revoked_by"`
+}
+
+// IssuedToken is the token exchange response: the token and its secret.
+type IssuedToken struct {
+	Token
+	Secret string `json:"token"`
+}
+
+// DeviceAuthorization is a request to give an agent actor a token on one
+// device. A user decides it by its user code.
+type DeviceAuthorization struct {
+	UserCode   string       `json:"user_code"`
+	Actor      string       `json:"actor"`
+	ClientHost string       `json:"client_host"`
+	Status     DeviceStatus `json:"status"`
+	CreatedAt  Time         `json:"created_at"`
+	ExpiresAt  Time         `json:"expires_at"`
+}
+
+// DeviceGrant is the response to creating a device authorization: the secret
+// device code the client exchanges for a token, the user code the user
+// enters, and the lifetime and polling interval in seconds.
+type DeviceGrant struct {
+	DeviceCode string `json:"device_code"`
+	UserCode   string `json:"user_code"`
+	ExpiresIn  int    `json:"expires_in"`
+	Interval   int    `json:"interval"`
+}
+
 // Issue is a full issue resource including the body.
 type Issue struct {
 	Key              string      `json:"key"`

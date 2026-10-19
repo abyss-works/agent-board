@@ -242,6 +242,20 @@ func ValidateMilestone(name, description string, targetDate *string) error {
 	return e.orNil()
 }
 
+// ValidateDeviceRequest checks a request for a device authorization: the
+// actor must be a declared agent and the client host must follow the rule of
+// the X-Client-Host header.
+func ValidateDeviceRequest(actor, clientHost string, actors map[string]Actor) error {
+	var e ValidationError
+	if a, ok := actors[actor]; !ok || a.Kind != ActorAgent {
+		e.add("actor", "선언된 agent 종류 행위자여야 합니다.")
+	}
+	if !ValidClientHost(clientHost) {
+		e.add("client_host", "X-Client-Host와 같은 규칙의 기기 이름(1~64자)이어야 합니다.")
+	}
+	return e.orNil()
+}
+
 // ValidateProject checks the key and name of a project.
 func ValidateProject(key, name string) error {
 	var e ValidationError

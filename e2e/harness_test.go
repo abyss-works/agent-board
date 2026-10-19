@@ -30,10 +30,14 @@ const (
 
 var (
 	baseURL   string
-	token     string
+	token     string // the shared token; only user actors may use it
 	runID     string // five characters of [A-Z0-9], unique per run
 	sessionID string // X-Session-Id shared by the run
 	httpc     = &http.Client{Timeout: 15 * time.Second}
+
+	// actorTokens holds the actor token of each agent actor the server
+	// declares. TestMain fills it before any test runs.
+	actorTokens = map[string]string{}
 
 	timeRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 )
@@ -48,7 +52,52 @@ func TestMain(m *testing.M) {
 	runID = randomID(5)
 	sessionID = "e2e-" + runID
 	owner = as("owner")
+	if err := loginAgents(); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
+		os.Exit(2)
+	}
 	os.Exit(m.Run())
+}
+
+// bearer is the token a caller authenticates with. An agent actor has no
+// right to the shared token, so it uses the actor token its login produced.
+// Everything else, the user actors and names the server does not declare,
+// uses the shared token and meets the server's rules for it.
+func bearer(actor string) string {
+	if t, ok := actorTokens[actor]; ok {
+		return t
+	}
+	return token
+}
+
+// loginAgents logs in every agent actor the server declares, as the CLI will:
+// ask for a device authorization, approve it as owner with the shared token,
+// exchange the device code. A run does this once, on defaultHost.
+func loginAgents() error {
+	r, err := sendRaw("GET", "/v1/actors", nil, owner.headers(false))
+	if err != nil {
+		return err
+	}
+	if r.status != 200 {
+		return fmt.Errorf("GET /v1/actors: %s", r)
+	}
+	var actors struct {
+		Items []actor `json:"items"`
+	}
+	if err := json.Unmarshal(r.body, &actors); err != nil {
+		return fmt.Errorf("GET /v1/actors: %w (%s)", err, r)
+	}
+	for _, a := range actors.Items {
+		if a.Kind != "agent" {
+			continue
+		}
+		tok, err := deviceLogin(a.ID, defaultHost)
+		if err != nil {
+			return fmt.Errorf("log in %s: %w", a.ID, err)
+		}
+		actorTokens[a.ID] = tok.Token
+	}
+	return nil
 }
 
 func randomID(n int) string {
@@ -103,36 +152,46 @@ func (r response) String() string {
 	return fmt.Sprintf("status %d body %s", r.status, b)
 }
 
-// send performs a request with exactly the given headers; nothing is added.
-func send(t testing.TB, method, path string, raw []byte, hdr http.Header) response {
-	t.Helper()
+// sendRaw performs a request with exactly the given headers; nothing is
+// added. TestMain uses it before there is a test to fail.
+func sendRaw(method, path string, raw []byte, hdr http.Header) (response, error) {
 	var rd io.Reader
 	if raw != nil {
 		rd = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequest(method, baseURL+path, rd)
 	if err != nil {
-		t.Fatalf("build request: %v", err)
+		return response{}, fmt.Errorf("build request: %w", err)
 	}
 	for k, vs := range hdr {
 		req.Header[k] = append([]string(nil), vs...)
 	}
 	resp, err := httpc.Do(req)
 	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
+		return response{}, fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("%s %s: read body: %v", method, path, err)
+		return response{}, fmt.Errorf("%s %s: read body: %w", method, path, err)
 	}
-	return response{status: resp.StatusCode, header: resp.Header, body: body}
+	return response{status: resp.StatusCode, header: resp.Header, body: body}, nil
+}
+
+// send performs a request with exactly the given headers; nothing is added.
+func send(t testing.TB, method, path string, raw []byte, hdr http.Header) response {
+	t.Helper()
+	r, err := sendRaw(method, path, raw, hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 // headers returns the full header set of an authenticated request.
 func (c caller) headers(raw bool) http.Header {
 	h := http.Header{}
-	h.Set("Authorization", "Bearer "+token)
+	h.Set("Authorization", "Bearer "+bearer(c.actor))
 	h.Set("X-Actor", c.actor)
 	h.Set("X-Session-Id", c.session)
 	h.Set("X-Client-Host", c.host)
@@ -321,6 +380,40 @@ type actor struct {
 	Kind string `json:"kind"`
 }
 
+type deviceGrant struct {
+	DeviceCode string `json:"device_code"`
+	UserCode   string `json:"user_code"`
+	ExpiresIn  int    `json:"expires_in"`
+	Interval   int    `json:"interval"`
+}
+
+type deviceAuth struct {
+	UserCode   string `json:"user_code"`
+	Actor      string `json:"actor"`
+	ClientHost string `json:"client_host"`
+	Status     string `json:"status"`
+	CreatedAt  string `json:"created_at"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
+// tokenInfo covers a listed token and the exchange response, which alone
+// carries Token.
+type tokenInfo struct {
+	ID         int64   `json:"id"`
+	Actor      string  `json:"actor"`
+	ClientHost string  `json:"client_host"`
+	CreatedAt  string  `json:"created_at"`
+	CreatedBy  string  `json:"created_by"`
+	LastUsedAt *string `json:"last_used_at"`
+	RevokedAt  *string `json:"revoked_at"`
+	RevokedBy  *string `json:"revoked_by"`
+	Token      string  `json:"token"`
+}
+
+type tokenList struct {
+	Items []tokenInfo `json:"items"`
+}
+
 type list[T any] struct {
 	Items  []T `json:"items"`
 	Total  int `json:"total"`
@@ -369,6 +462,72 @@ type labelCount struct {
 }
 
 // Fixtures.
+
+// anonymousRaw sends a request with neither the token nor the trace headers,
+// as the CLI does before it has a token.
+func anonymousRaw(method, path string, raw []byte) (response, error) {
+	h := http.Header{"Accept": {"application/json"}}
+	if raw != nil {
+		h.Set("Content-Type", jsonType)
+	}
+	return sendRaw(method, path, raw, h)
+}
+
+// anonymous is anonymousRaw for a test, with body marshalled to JSON.
+func anonymous(t testing.TB, method, path string, body any) response {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		var err error
+		if raw, err = json.Marshal(body); err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+	}
+	r, err := anonymousRaw(method, path, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// deviceLogin gives an agent actor a token on a device the way the CLI will:
+// ask for a device authorization, approve it as owner with the shared token,
+// exchange the device code. It returns the token with its secret.
+func deviceLogin(actorID, host string) (tokenInfo, error) {
+	step := func(what string, r response, err error, want int) error {
+		if err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		if r.status != want {
+			return fmt.Errorf("%s: want status %d, got %s", what, want, r)
+		}
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{"actor": actorID, "client_host": host})
+	r, err := anonymousRaw("POST", "/v1/device-authorizations", body)
+	if err := step("ask for a device authorization", r, err, 201); err != nil {
+		return tokenInfo{}, err
+	}
+	var grant deviceGrant
+	if err := json.Unmarshal(r.body, &grant); err != nil {
+		return tokenInfo{}, fmt.Errorf("device authorization: %w (%s)", err, r)
+	}
+	body, _ = json.Marshal(map[string]any{"status": "approved"})
+	r, err = sendRaw("PATCH", "/v1/device-authorizations/"+grant.UserCode, body, owner.headers(true))
+	if err := step("approve the device authorization", r, err, 200); err != nil {
+		return tokenInfo{}, err
+	}
+	body, _ = json.Marshal(map[string]any{"device_code": grant.DeviceCode})
+	r, err = anonymousRaw("POST", "/v1/tokens", body)
+	if err := step("exchange the device code", r, err, 201); err != nil {
+		return tokenInfo{}, err
+	}
+	var tok tokenInfo
+	if err := json.Unmarshal(r.body, &tok); err != nil || tok.Token == "" {
+		return tokenInfo{}, fmt.Errorf("token: %v (%s)", err, r)
+	}
+	return tok, nil
+}
 
 func createProject(t testing.TB, suffix string) project {
 	t.Helper()
