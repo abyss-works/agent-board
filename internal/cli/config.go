@@ -114,7 +114,7 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 	}
 	s := Settings{
 		URL:        strings.TrimRight(pick(g.url, "AGB_URL", file.URL), "/"),
-		Actor:      pick(g.actor, "AGB_ACTOR", file.Actor),
+		Actor:      actorOf(g, getenv, file),
 		SessionID:  pick(g.sessionID, "AGB_SESSION_ID", file.SessionID),
 		ClientHost: pick(g.clientHost, "AGB_CLIENT_HOST", file.ClientHost),
 	}
@@ -141,6 +141,17 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 		return s, usageErrorf("클라이언트 호스트 형식이 아닙니다 (점으로 나뉜 영숫자·하이픈 라벨, 64자 이내).")
 	}
 	return s, nil
+}
+
+// actorOf is the actor a run acts as: the flag, else AGB_ACTOR, else the file.
+func actorOf(g *globals, getenv func(string) string, file Config) string {
+	if g.actor != "" {
+		return g.actor
+	}
+	if v := getenv("AGB_ACTOR"); v != "" {
+		return v
+	}
+	return file.Actor
 }
 
 // requireAuth checks that the settings can make an authenticated request.
