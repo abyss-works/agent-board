@@ -56,8 +56,8 @@ func TestIssueAcknowledge(t *testing.T) {
 			t.Errorf("a later change must keep the mark: %+v", got)
 		}
 		unmarked := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "still unacknowledged", "body": templateBody(t, "feature")})
-		moved := patchIssue(t, as("claude"), unmarked.Key, map[string]any{"status": "todo"})
-		if moved.Status != "todo" || moved.AcknowledgedAt != nil {
+		moved := patchIssue(t, as("claude"), unmarked.Key, map[string]any{"status": "doing"})
+		if moved.Status != "doing" || moved.AcknowledgedAt != nil {
 			t.Errorf("status change of an unacknowledged issue = %+v", moved)
 		}
 	})
@@ -72,6 +72,23 @@ func TestIssueAcknowledge(t *testing.T) {
 		o := decodeAs[overview](t, owner.do(t, "GET", "/v1/projects/"+p.Key+"/overview", nil), 200)
 		if o.Unacknowledged.Total != 1 || len(o.Unacknowledged.Items) != 1 || o.Unacknowledged.Items[0].AcknowledgedAt != nil {
 			t.Errorf("unacknowledged section = %+v", o.Unacknowledged)
+		}
+	})
+	t.Run("a change of the spec clears the mark", func(t *testing.T) {
+		marked := createIssue(t, as("claude"), map[string]any{"project": p.Key, "title": "spec", "body": templateBody(t, "feature")})
+		decodeAs[issue](t, owner.do(t, "POST", "/v1/issues/"+marked.Key+"/acknowledge", nil), 200)
+		kept := patchIssue(t, as("claude"), marked.Key, map[string]any{"labels": strs("api"), "decision_needed": "어느 쪽으로 할지"})
+		if kept.AcknowledgedAt == nil {
+			t.Errorf("labels and a question must keep the mark: %+v", kept)
+		}
+		cleared := patchIssue(t, as("claude"), marked.Key, map[string]any{"title": "spec changed"})
+		if cleared.AcknowledgedAt != nil || cleared.AcknowledgedBy != nil || cleared.Version != kept.Version+1 {
+			t.Errorf("a new title must clear the mark in the same write: %+v", cleared)
+		}
+		acts := decodeAs[list[activity]](t, owner.do(t, "GET", "/v1/issues/"+marked.Key+"/activity", nil), 200)
+		ch := (*acts.Items[0].Changes)["acknowledged"]
+		if string(ch.From) != "true" || string(ch.To) != "false" {
+			t.Errorf("activity = %+v", acts.Items[0])
 		}
 	})
 	t.Run("unknown issue is 404", func(t *testing.T) {

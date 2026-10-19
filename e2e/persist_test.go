@@ -24,7 +24,7 @@ func TestPersistence(t *testing.T) {
 		if p.Key != key {
 			t.Fatalf("project = %+v", p)
 		}
-		iss := createIssue(t, c, map[string]any{"project": key, "title": "재시작 전 이슈", "body": templateBody(t, "feature"), "labels": strs("persist"), "status": "todo"})
+		iss := createIssue(t, c, map[string]any{"project": key, "title": "재시작 전 이슈", "body": templateBody(t, "feature"), "labels": strs("persist")})
 		if iss.Key != key+"-1" {
 			t.Fatalf("issue = %s", iss.Key)
 		}
@@ -37,7 +37,7 @@ func TestPersistence(t *testing.T) {
 			t.Errorf("project = %+v", p)
 		}
 		iss := getIssue(t, key+"-1")
-		if iss.Title != "재시작 전 이슈" || iss.Body == nil || *iss.Body != templateBody(t, "feature") || !equalStrings(iss.Labels, []string{"persist"}) || iss.Status != "todo" || iss.Priority != "P0" || iss.Version != 2 {
+		if iss.Title != "재시작 전 이슈" || iss.Body == nil || *iss.Body != templateBody(t, "feature") || !equalStrings(iss.Labels, []string{"persist"}) || iss.Status != "backlog" || iss.Priority != "P0" || iss.Version != 2 {
 			t.Errorf("issue = %+v", iss)
 		}
 		acts := decodeAs[list[activity]](t, c.do(t, "GET", "/v1/activity?session=persist-"+key+"&sort=at", nil), 200)

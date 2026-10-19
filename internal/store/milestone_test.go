@@ -402,8 +402,8 @@ func TestMilestoneProgress(t *testing.T) {
 	}
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "in the other milestone", Status: model.StatusDone, Milestone: &v2.ID})
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "in none", Status: model.StatusDone})
-	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 5, Done: 1}) {
-		t.Errorf("progress = %+v, want 5 in total with 1 done", p)
+	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 4, Done: 1}) {
+		t.Errorf("progress = %+v, want 4 in total with 1 done", p)
 	}
 	if p := progress(v2.ID); p != (model.MilestoneProgress{Total: 1, Done: 1}) {
 		t.Errorf("other milestone progress = %+v", p)
@@ -414,44 +414,44 @@ func TestMilestoneProgress(t *testing.T) {
 	if _, _, err := s.UpdateIssue(ctx, trOwner, issues[model.StatusDoing].Key, IssuePatch{Status: &done}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 5, Done: 2}) {
+	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 4, Done: 2}) {
 		t.Errorf("after finishing an issue = %+v", p)
 	}
 	cancelled := model.StatusCancelled
-	if _, _, err := s.UpdateIssue(ctx, trOwner, issues[model.StatusTodo].Key, IssuePatch{Status: &cancelled, StatusReason: str("정리")}, nil); err != nil {
+	if _, _, err := s.UpdateIssue(ctx, trOwner, issues[model.StatusReview].Key, IssuePatch{Status: &cancelled, StatusReason: str("정리")}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 4, Done: 2}) {
+	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 3, Done: 2}) {
 		t.Errorf("after cancelling an issue = %+v", p)
 	}
 	if _, _, err := s.UpdateIssue(ctx, trOwner, issues[model.StatusDone].Key, IssuePatch{Milestone: Optional[int64]{Set: true, Value: &v2.ID}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if a, b := progress(v1.ID), progress(v2.ID); a != (model.MilestoneProgress{Total: 3, Done: 1}) || b != (model.MilestoneProgress{Total: 2, Done: 2}) {
+	if a, b := progress(v1.ID), progress(v2.ID); a != (model.MilestoneProgress{Total: 2, Done: 1}) || b != (model.MilestoneProgress{Total: 2, Done: 2}) {
 		t.Errorf("after moving a finished issue: %+v and %+v", a, b)
 	}
 	if _, _, err := s.UpdateIssue(ctx, trOwner, issues[model.StatusBacklog].Key, IssuePatch{Milestone: Optional[int64]{Set: true}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 2, Done: 1}) {
+	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 1, Done: 1}) {
 		t.Errorf("after taking an issue out = %+v", p)
 	}
 	reopened := model.StatusReview
 	if _, _, err := s.UpdateIssue(ctx, trOwner, issues[model.StatusCancelled].Key, IssuePatch{Status: &reopened}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 3, Done: 1}) {
+	if p := progress(v1.ID); p != (model.MilestoneProgress{Total: 2, Done: 1}) {
 		t.Errorf("after reviving a cancelled issue = %+v", p)
 	}
 
 	// Every read of a milestone carries the progress, including a closed or deleted one.
 	setMilestoneStatus(t, s, v1.ID, model.MilestoneClosed)
 	gone := setMilestoneStatus(t, s, v1.ID, model.MilestoneDeleted)
-	if gone.Progress != (model.MilestoneProgress{Total: 3, Done: 1}) {
+	if gone.Progress != (model.MilestoneProgress{Total: 2, Done: 1}) {
 		t.Errorf("update result progress = %+v", gone.Progress)
 	}
 	items, err := s.ListMilestones(ctx, "AGB", model.MilestoneStatuses)
-	if err != nil || len(items) != 2 || items[0].Name != "v1" || items[0].Progress != (model.MilestoneProgress{Total: 3, Done: 1}) ||
+	if err != nil || len(items) != 2 || items[0].Name != "v1" || items[0].Progress != (model.MilestoneProgress{Total: 2, Done: 1}) ||
 		items[1].Name != "v2" || items[1].Progress != (model.MilestoneProgress{Total: 2, Done: 2}) {
 		t.Errorf("list = %+v, %v", items, err)
 	}

@@ -39,7 +39,7 @@ func templateBody(t testing.TB, typ string) string {
 }
 
 func TestTemplates(t *testing.T) {
-	t.Run("the server lists six templates in type order", func(t *testing.T) {
+	t.Run("the server lists five templates in type order", func(t *testing.T) {
 		raw := decodeAs[struct {
 			Items []template `json:"items"`
 		}](t, owner.do(t, "GET", "/v1/templates", nil), 200)
@@ -55,7 +55,7 @@ func TestTemplates(t *testing.T) {
 				}
 			}
 		}
-		if !equalStrings(types, []string{"feature", "bug", "design", "decision", "idea", "observation"}) {
+		if !equalStrings(types, []string{"feature", "bug", "design", "idea", "observation"}) {
 			t.Errorf("types = %v", types)
 		}
 	})

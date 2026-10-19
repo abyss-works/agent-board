@@ -32,6 +32,7 @@ type IssueInput struct {
 	DependsOn        []string
 	Refs             []string
 	RecheckCondition *string
+	DecisionNeeded   *string
 	Topic            *int64
 	Milestone        *int64
 }
@@ -49,6 +50,7 @@ type IssuePatch struct {
 	DependsOn        *[]string
 	Refs             *[]string
 	RecheckCondition Optional[string]
+	DecisionNeeded   Optional[string]
 	Topic            Optional[int64]
 	Milestone        Optional[int64]
 	StatusReason     *string // only valid together with a status change
@@ -75,7 +77,8 @@ type IssueFilter struct {
 	Limit           int
 	Offset          int
 
-	closedSince *model.Time // board: only issues closed at or after this time
+	closedSince    *model.Time // board: only issues closed at or after this time
+	decisionNeeded bool        // overview: only issues that ask for a decision
 }
 
 // issueRow is an issue with the internal ids needed inside transactions.
@@ -101,7 +104,7 @@ func issueCols(withBody bool) string {
 		body = "''"
 	}
 	return `i.id, i.project_id, p.key, p.status, i.number, i.key, i.title, ` + body + `, i.type, i.status, i.priority,
-		i.parent_id, par.key, i.recheck_condition, i.topic_id,
+		i.parent_id, par.key, i.recheck_condition, i.decision_needed, i.topic_id,
 		case when tp.id is null then null when tpp.id is null then tp.name else tpp.name || '/' || tp.name end,
 		i.milestone_id, ms.name,
 		i.status_reason, i.acknowledged_at, i.acknowledged_by, i.version, i.created_at, i.updated_at, i.closed_at,
@@ -115,7 +118,7 @@ type rowScanner interface{ Scan(...any) error }
 type issueScan struct {
 	parentKey, recheck, reason, closedAt sql.NullString
 	topicPath, ackAt, ackBy              sql.NullString
-	milestoneName                        sql.NullString
+	milestoneName, decision              sql.NullString
 	topicID, milestoneID                 sql.NullInt64
 	created, updated, statusChanged      string
 }
@@ -126,7 +129,7 @@ func scanIssue(sc rowScanner, extra ...any) (*issueRow, error) {
 	var r issueRow
 	var raw issueScan
 	dest := []any{&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
-		&r.parentID, &raw.parentKey, &raw.recheck, &raw.topicID, &raw.topicPath, &raw.milestoneID, &raw.milestoneName,
+		&r.parentID, &raw.parentKey, &raw.recheck, &raw.decision, &raw.topicID, &raw.topicPath, &raw.milestoneID, &raw.milestoneName,
 		&raw.reason, &raw.ackAt, &raw.ackBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
 		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy}
 	if err := sc.Scan(append(dest, extra...)...); err != nil {
@@ -145,6 +148,9 @@ func (r *issueRow) finishScan(raw issueScan) error {
 	}
 	if raw.recheck.Valid {
 		r.RecheckCondition = &raw.recheck.String
+	}
+	if raw.decision.Valid {
+		r.DecisionNeeded = &raw.decision.String
 	}
 	if raw.topicID.Valid {
 		r.Topic = &raw.topicID.Int64
@@ -267,7 +273,7 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		Project: in.Project, Title: in.Title, Body: in.Body,
 		Type: in.Type, Status: in.Status, Priority: in.Priority,
 		Labels: in.Labels, Parent: in.Parent, DependsOn: in.DependsOn, Refs: in.Refs, RecheckCondition: in.RecheckCondition,
-		Topic: in.Topic, Milestone: in.Milestone, Version: 1, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
+		DecisionNeeded: in.DecisionNeeded, Topic: in.Topic, Milestone: in.Milestone, Version: 1, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
 		StatusChangedBy: tr.Actor, CreatedBy: tr.Actor, UpdatedBy: tr.Actor,
 	}
 	if issue.Type == "" {
@@ -330,10 +336,10 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		if kind == model.ActorUser {
 			ackAt, ackBy = now.String(), tr.Actor
 		}
-		res, err := tx.ExecContext(ctx, `insert into issue(project_id, number, key, title, body, type, status, priority, parent_id, recheck_condition, topic_id, milestone_id,
+		res, err := tx.ExecContext(ctx, `insert into issue(project_id, number, key, title, body, type, status, priority, parent_id, recheck_condition, decision_needed, topic_id, milestone_id,
 			acknowledged_at, acknowledged_by, version, created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
-			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
-			projectID, number, key, issue.Title, issue.Body, string(issue.Type), string(issue.Status), string(issue.Priority), parentID, issue.RecheckCondition, issue.Topic, issue.Milestone,
+			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+			projectID, number, key, issue.Title, issue.Body, string(issue.Type), string(issue.Status), string(issue.Priority), parentID, issue.RecheckCondition, issue.DecisionNeeded, issue.Topic, issue.Milestone,
 			ackAt, ackBy, now.String(), now.String(), timePtr(issue.ClosedAt), now.String(), tr.Actor, tr.Actor, tr.Actor)
 		if err != nil {
 			return err
@@ -362,6 +368,9 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 // UpdateIssue applies a merge patch. It returns the resulting issue and
 // whether anything changed; an unchanged issue gets no activity record and
 // keeps its version. ifMatch, when non-nil, must equal the current version.
+//
+// An acknowledged issue whose spec changes loses the acknowledgement in the
+// same write: see changesSpec.
 func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, patch IssuePatch, ifMatch *int64) (*model.Issue, bool, error) {
 	kind, err := actorKind(ctx, s.db, tr.Actor)
 	if err != nil {
@@ -407,6 +416,9 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if patch.RecheckCondition.Set {
 			next.RecheckCondition = patch.RecheckCondition.Value
 		}
+		if patch.DecisionNeeded.Set {
+			next.DecisionNeeded = patch.DecisionNeeded.Value
+		}
 		if patch.Topic.Set {
 			next.Topic = patch.Topic.Value
 		}
@@ -434,6 +446,10 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if statusChanged {
 			// Always listed with the status, even when the text repeats.
 			changes["status_reason"] = model.Change{From: rawJSON(cur.StatusReason), To: rawJSON(next.StatusReason)}
+		}
+		if cur.AcknowledgedAt != nil && changesSpec(changes, cur.Status, next.Status) {
+			next.AcknowledgedAt, next.AcknowledgedBy = nil, nil
+			changes["acknowledged"] = model.Change{From: rawJSON(true), To: rawJSON(false)}
 		}
 		if cur.projectStatus != model.ProjectActive {
 			return ErrProjectNotActive
@@ -470,10 +486,12 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 				next.ClosedAt = &now
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `update issue set title = ?, body = ?, type = ?, status = ?, priority = ?, parent_id = ?, recheck_condition = ?,
-			topic_id = ?, milestone_id = ?, status_reason = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?, status_changed_at = ?, status_changed_by = ? where id = ?`,
-			next.Title, next.Body, string(next.Type), string(next.Status), string(next.Priority), parentID, next.RecheckCondition,
-			next.Topic, next.Milestone, next.StatusReason, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt), next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `update issue set title = ?, body = ?, type = ?, status = ?, priority = ?, parent_id = ?, recheck_condition = ?, decision_needed = ?,
+			topic_id = ?, milestone_id = ?, status_reason = ?, acknowledged_at = ?, acknowledged_by = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?,
+			status_changed_at = ?, status_changed_by = ? where id = ?`,
+			next.Title, next.Body, string(next.Type), string(next.Status), string(next.Priority), parentID, next.RecheckCondition, next.DecisionNeeded,
+			next.Topic, next.Milestone, next.StatusReason, timePtr(next.AcknowledgedAt), next.AcknowledgedBy, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt),
+			next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
 			return err
 		}
 		for _, table := range []string{"issue_label", "issue_dependency", "issue_ref"} {
@@ -497,6 +515,19 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 	return issue, changed, err
 }
 
+// changesSpec reports whether an update changes what the issue says, which
+// makes the user's acknowledgement of the old spec stale: its title, body or
+// type, or a return from review to doing, which is a rejection. Anything else
+// leaves the acknowledgement alone.
+func changesSpec(changes map[string]model.Change, from, to model.IssueStatus) bool {
+	for _, f := range []string{"title", "body", "type"} {
+		if _, ok := changes[f]; ok {
+			return true
+		}
+	}
+	return from == model.StatusReview && to == model.StatusDoing
+}
+
 func timePtr(t *model.Time) any {
 	if t == nil {
 		return nil
@@ -514,7 +545,7 @@ func rawJSON(v any) json.RawMessage {
 func fieldValues(i *model.Issue) map[string]any {
 	return map[string]any{
 		"title": i.Title, "body": i.Body, "type": i.Type, "status": i.Status, "priority": i.Priority,
-		"labels": i.Labels, "parent": i.Parent, "depends_on": i.DependsOn, "refs": i.Refs, "recheck_condition": i.RecheckCondition, "topic": i.Topic,
+		"labels": i.Labels, "parent": i.Parent, "depends_on": i.DependsOn, "refs": i.Refs, "recheck_condition": i.RecheckCondition, "decision_needed": i.DecisionNeeded, "topic": i.Topic,
 		"milestone": i.Milestone,
 	}
 }
@@ -699,6 +730,9 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 	if f.closedSince != nil {
 		where = append(where, "i.closed_at >= ?")
 		args = append(args, f.closedSince.String())
+	}
+	if f.decisionNeeded {
+		where = append(where, "i.decision_needed is not null")
 	}
 	cond := ""
 	if len(where) > 0 {

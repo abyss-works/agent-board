@@ -9,13 +9,13 @@ import (
 func TestBoard(t *testing.T) {
 	p := createProject(t, "BD")
 	q := createProject(t, "BD2")
-	b1 := newIssue(t, p.Key, "backlog", map[string]any{"priority": "P2"})
+	b1 := newIssue(t, p.Key, "backlog P2", map[string]any{"priority": "P2"})
 	tick()
-	b2 := newIssue(t, p.Key, "todo P1", map[string]any{"status": "todo", "priority": "P1"})
+	b2 := newIssue(t, p.Key, "backlog P1", map[string]any{"priority": "P1"})
 	tick()
-	b3 := newIssue(t, p.Key, "todo P0", map[string]any{"status": "todo", "priority": "P0"})
+	b3 := newIssue(t, p.Key, "backlog P0", map[string]any{"priority": "P0"})
 	tick()
-	b4 := newIssue(t, p.Key, "todo P1 later", map[string]any{"status": "todo", "priority": "P1"})
+	b4 := newIssue(t, p.Key, "backlog P1 later", map[string]any{"priority": "P1"})
 	tick()
 	b5 := newIssue(t, p.Key, "doing", map[string]any{"status": "doing"})
 	b6 := newIssue(t, p.Key, "done", map[string]any{"status": "done"})
@@ -40,18 +40,17 @@ func TestBoard(t *testing.T) {
 		for i, c := range b.Columns {
 			order[i] = c.Status
 		}
-		if !equalStrings(order, []string{"backlog", "todo", "doing", "review", "done", "cancelled", "deleted"}) {
+		if !equalStrings(order, []string{"backlog", "doing", "review", "done", "cancelled", "deleted"}) {
 			t.Fatalf("column order = %v", order)
 		}
 		cols := columns(b)
-		wantKeys(t, cols["backlog"].Issues, b1.Key)
-		wantKeys(t, cols["todo"].Issues, b3.Key, b2.Key, b4.Key)
+		wantKeys(t, cols["backlog"].Issues, b3.Key, b2.Key, b4.Key, b1.Key)
 		wantKeys(t, cols["doing"].Issues, b5.Key)
 		wantKeys(t, cols["review"].Issues)
 		wantKeys(t, cols["done"].Issues, b6.Key)
 		wantKeys(t, cols["cancelled"].Issues, b7.Key)
 		wantKeys(t, cols["deleted"].Issues, b8.Key)
-		for _, st := range []string{"backlog", "todo", "doing", "review", "done", "cancelled", "deleted"} {
+		for _, st := range []string{"backlog", "doing", "review", "done", "cancelled", "deleted"} {
 			if cols[st].Total != len(cols[st].Issues) {
 				t.Errorf("%s total %d vs %d issues", st, cols[st].Total, len(cols[st].Issues))
 			}
@@ -59,16 +58,16 @@ func TestBoard(t *testing.T) {
 				t.Errorf("%s issues is null", st)
 			}
 		}
-		if cols["todo"].Issues[0].Body != nil {
+		if cols["backlog"].Issues[0].Body != nil {
 			t.Errorf("board items must be summaries")
 		}
 	})
 	t.Run("per-column limit keeps the full total", func(t *testing.T) {
 		b := decodeAs[board](t, owner.do(t, "GET", "/v1/board?project="+p.Key+"&limit=1", nil), 200)
 		cols := columns(b)
-		wantKeys(t, cols["todo"].Issues, b3.Key)
-		if cols["todo"].Total != 3 {
-			t.Errorf("todo total = %d", cols["todo"].Total)
+		wantKeys(t, cols["backlog"].Issues, b3.Key)
+		if cols["backlog"].Total != 4 {
+			t.Errorf("backlog total = %d", cols["backlog"].Total)
 		}
 	})
 	t.Run("closed_days", func(t *testing.T) {
@@ -87,14 +86,14 @@ func TestBoard(t *testing.T) {
 		if b.Project == nil || *b.Project != p.Key+","+q.Key {
 			t.Errorf("project = %v", b.Project)
 		}
-		wantKeys(t, columns(b)["backlog"].Issues, b1.Key, other.Key)
+		wantKeys(t, columns(b)["backlog"].Issues, b3.Key, b2.Key, b4.Key, b1.Key, other.Key)
 	})
 	t.Run("no project means every project", func(t *testing.T) {
 		b := decodeAs[board](t, owner.do(t, "GET", "/v1/board?limit=200", nil), 200)
 		if b.Project != nil {
 			t.Errorf("project = %q, want null", *b.Project)
 		}
-		if len(b.Columns) != 7 {
+		if len(b.Columns) != 6 {
 			t.Errorf("columns = %d", len(b.Columns))
 		}
 		found := false
@@ -116,17 +115,17 @@ func TestBoard(t *testing.T) {
 
 func TestQueue(t *testing.T) {
 	p := createProject(t, "QU")
-	a := newIssue(t, p.Key, "A todo P1", map[string]any{"status": "todo", "priority": "P1"})
+	a := newIssue(t, p.Key, "A backlog P1", map[string]any{"priority": "P1"})
 	tick()
-	b := newIssue(t, p.Key, "B todo P0 after A", map[string]any{"status": "todo", "priority": "P0", "depends_on": strs(a.Key)})
+	b := newIssue(t, p.Key, "B backlog P0 after A", map[string]any{"priority": "P0", "depends_on": strs(a.Key)})
 	tick()
-	c := newIssue(t, p.Key, "C todo P0", map[string]any{"status": "todo", "priority": "P0"})
+	c := newIssue(t, p.Key, "C backlog P0", map[string]any{"priority": "P0"})
 	tick()
 	e := newIssue(t, p.Key, "E done P3", map[string]any{"status": "done", "priority": "P3"})
 	tick()
-	d := newIssue(t, p.Key, "D todo P2 after A and E", map[string]any{"status": "todo", "priority": "P2", "depends_on": strs(a.Key, e.Key)})
+	d := newIssue(t, p.Key, "D backlog P2 after A and E", map[string]any{"priority": "P2", "depends_on": strs(a.Key, e.Key)})
 	tick()
-	f := newIssue(t, p.Key, "F backlog P0", map[string]any{"priority": "P0"})
+	f := newIssue(t, p.Key, "F doing P0", map[string]any{"status": "doing", "priority": "P0"})
 
 	queue := func(t *testing.T, q string) list[issue] {
 		t.Helper()
@@ -141,7 +140,7 @@ func TestQueue(t *testing.T) {
 		t.Fatalf("%s not in queue", key)
 		return issue{}
 	}
-	t.Run("default status todo ordered by priority, ready, created_at", func(t *testing.T) {
+	t.Run("default status backlog ordered by priority, ready, created_at", func(t *testing.T) {
 		got := queue(t, "")
 		wantKeys(t, got.Items, c.Key, b.Key, a.Key, d.Key)
 		if got.Total != 4 || got.Limit != 50 || got.Offset != 0 {
@@ -165,11 +164,11 @@ func TestQueue(t *testing.T) {
 		}
 	})
 	t.Run("status filters and aliases", func(t *testing.T) {
-		wantKeys(t, queue(t, "&status=todo,backlog").Items, c.Key, f.Key, b.Key, a.Key, d.Key)
+		wantKeys(t, queue(t, "&status=backlog,doing").Items, c.Key, f.Key, b.Key, a.Key, d.Key)
 		wantKeys(t, queue(t, "&status=open").Items, c.Key, f.Key, b.Key, a.Key, d.Key)
 		wantKeys(t, queue(t, "&status=closed").Items, e.Key)
 		wantKeys(t, queue(t, "&status=all").Items, c.Key, f.Key, b.Key, a.Key, d.Key, e.Key)
-		wantKeys(t, queue(t, "&status=backlog").Items, f.Key)
+		wantKeys(t, queue(t, "&status=doing").Items, f.Key)
 	})
 	t.Run("closing a dependency makes dependants ready", func(t *testing.T) {
 		patchIssue(t, owner, a.Key, map[string]any{"status": "done"})
@@ -183,7 +182,7 @@ func TestQueue(t *testing.T) {
 		if got := getIssue(t, b.Key); got.Version != 1 {
 			t.Errorf("closing a dependency wrote to the dependant: version %d", got.Version)
 		}
-		patchIssue(t, owner, a.Key, map[string]any{"status": "todo"})
+		patchIssue(t, owner, a.Key, map[string]any{"status": "backlog"})
 		wantKeys(t, queue(t, "").Items, c.Key, b.Key, a.Key, d.Key)
 	})
 	t.Run("pagination", func(t *testing.T) {
@@ -200,7 +199,7 @@ func TestQueue(t *testing.T) {
 		}
 	})
 	t.Run("bad query parameters are 400", func(t *testing.T) {
-		for _, q := range []string{"status=nope", "project=bad", "limit=0", "limit=201", "sort=priority", "label=x", "project=A&project=B"} {
+		for _, q := range []string{"status=nope", "status=todo", "project=bad", "limit=0", "limit=201", "sort=priority", "label=x", "project=A&project=B"} {
 			wantError(t, owner.do(t, "GET", "/v1/queue?"+q, nil), 400, "bad_request")
 		}
 	})
@@ -211,7 +210,7 @@ func TestLabels(t *testing.T) {
 	q := createProject(t, "TL2")
 	la, lb, lc, ld := label("alpha"), label("beta"), label("gamma"), label("delta")
 	newIssue(t, p.Key, "1", map[string]any{"labels": strs(la, lb)})
-	newIssue(t, p.Key, "2", map[string]any{"labels": strs(la), "status": "todo"})
+	newIssue(t, p.Key, "2", map[string]any{"labels": strs(la), "status": "review"})
 	newIssue(t, p.Key, "3", map[string]any{"labels": strs(la, lc), "status": "done"})
 	newIssue(t, p.Key, "4", map[string]any{"labels": strs(ld, lb), "status": "doing"})
 	newIssue(t, q.Key, "5", map[string]any{"labels": strs(lc)})

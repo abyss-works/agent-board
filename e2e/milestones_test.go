@@ -155,7 +155,7 @@ func TestMilestones(t *testing.T) {
 		}
 	})
 	t.Run("progress follows the issues", func(t *testing.T) {
-		todo := newIssue(t, p.Key, "할 일", map[string]any{"status": "todo", "milestone": v2.ID})
+		review := newIssue(t, p.Key, "검토", map[string]any{"status": "review", "milestone": v2.ID})
 		doing := newIssue(t, p.Key, "진행", map[string]any{"status": "doing", "milestone": v2.ID})
 		newIssue(t, p.Key, "완료", map[string]any{"status": "done", "milestone": v2.ID})
 		dropped := newIssue(t, p.Key, "취소할 것", map[string]any{"milestone": v2.ID})
@@ -165,7 +165,7 @@ func TestMilestones(t *testing.T) {
 		if got := progress(); got != (milestoneProgress{Total: 4, Done: 1}) {
 			t.Errorf("progress = %+v", got)
 		}
-		patchIssue(t, owner, todo.Key, statusPatch("done"))
+		patchIssue(t, owner, review.Key, statusPatch("done"))
 		patchIssue(t, owner, dropped.Key, statusPatch("cancelled"))
 		if got := progress(); got != (milestoneProgress{Total: 3, Done: 2}) {
 			t.Errorf("progress after finishing one and cancelling one = %+v", got)

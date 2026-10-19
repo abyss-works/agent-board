@@ -73,7 +73,7 @@ func TestCreateIssue(t *testing.T) {
 		t.Errorf("json shape: %s", rec.Body.String())
 	}
 
-	full := e.createIssue(t, `{"project":"AGB","title":"full","type":"observation","status":"todo","priority":"P0",
+	full := e.createIssue(t, `{"project":"AGB","title":"full","type":"observation","status":"doing","priority":"P0",
 		"labels":["cli","api"],"parent":"AGB-1","depends_on":["AGB-1"],"refs":["repo:wsk0715/agent-board"],"recheck_condition":"later"}`)
 	if tpl, _ := model.TemplateFor(model.TypeObservation); full.Key != "AGB-2" || full.Body != tpl.Body || *full.Parent != "AGB-1" || full.Labels[0] != "api" || *full.RecheckCondition != "later" || full.Priority != model.P0 {
 		t.Errorf("full = %+v", full)
@@ -133,7 +133,7 @@ func TestCreateIssue(t *testing.T) {
 func TestGetPatchDeleteIssue(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
-	e.createIssue(t, `{"project":"AGB","title":"a","status":"todo","labels":["api"]}`)
+	e.createIssue(t, `{"project":"AGB","title":"a","labels":["api"]}`)
 	e.createIssue(t, `{"project":"AGB","title":"b","parent":"AGB-1"}`)
 
 	rec := e.do(t, "GET", "/v1/issues/AGB-1", "", nil)
@@ -224,7 +224,7 @@ func TestListIssues(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
 	e.createProject(t, "OTH", "other")
-	e.createIssue(t, `{"project":"AGB","title":"REST API 설계","status":"todo","priority":"P1","labels":["api"]}`)
+	e.createIssue(t, `{"project":"AGB","title":"REST API 설계","status":"doing","priority":"P1","labels":["api"]}`)
 	e.createIssue(t, `{"project":"AGB","title":"드라이버 검증","priority":"P0","labels":["api","cli"],"type":"bug"}`)
 	e.createIssue(t, `{"project":"OTH","title":"done thing","status":"done"}`)
 	e.createIssue(t, `{"project":"AGB","title":"gone","status":"deleted","parent":"AGB-1"}`)

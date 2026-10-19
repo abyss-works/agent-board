@@ -180,7 +180,7 @@ type LabelCount struct {
 
 // Labels counts labels over open issues, most used first.
 func (s *Store) Labels(ctx context.Context, projects []string) ([]LabelCount, error) {
-	cond := " where i.status in ('backlog','todo','doing','review')"
+	cond := " where i.status in ('backlog','doing','review')"
 	var args []any
 	if len(projects) > 0 {
 		cond += " and p.key in (" + placeholders(len(projects)) + ")"
@@ -207,7 +207,7 @@ func (s *Store) Labels(ctx context.Context, projects []string) ([]LabelCount, er
 
 // notDeleted are the statuses of issues that have not been soft deleted.
 var notDeleted = []model.IssueStatus{
-	model.StatusBacklog, model.StatusTodo, model.StatusDoing, model.StatusReview, model.StatusDone, model.StatusCancelled,
+	model.StatusBacklog, model.StatusDoing, model.StatusReview, model.StatusDone, model.StatusCancelled,
 }
 
 // Section is a capped list with its full count.
@@ -278,7 +278,7 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 		o.Counts.ByPriority[p] = 0
 	}
 	rows, err = s.db.QueryContext(ctx, `select i.type, i.priority, count(*) from issue i join project p on p.id = i.project_id
-		where p.key = ? and i.status in ('backlog','todo','doing','review') group by i.type, i.priority`, key)
+		where p.key = ? and i.status in ('backlog','doing','review') group by i.type, i.priority`, key)
 	if err != nil {
 		return nil, err
 	}
@@ -314,12 +314,12 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 		return nil, err
 	}
 	o.Blocked = Section[model.QueueItem]{Total: total, Items: items}
-	decisions, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: model.OpenStatuses, Types: []model.IssueType{model.TypeDecision}, Limit: limit})
+	decisions, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: model.OpenStatuses, decisionNeeded: true, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
 	o.Decisions = Section[model.IssueSummary]{Total: total, Items: decisions}
-	next, total, err := s.Queue(ctx, QueueFilter{Projects: projects, Statuses: []model.IssueStatus{model.StatusTodo}, OnlyReady: true, Limit: limit})
+	next, total, err := s.Queue(ctx, QueueFilter{Projects: projects, Statuses: []model.IssueStatus{model.StatusBacklog}, OnlyReady: true, Limit: limit})
 	if err != nil {
 		return nil, err
 	}

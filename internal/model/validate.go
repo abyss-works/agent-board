@@ -18,6 +18,7 @@ const (
 	MaxDependsOn        = 20
 	MaxRefs             = 50
 	MaxRecheckRunes     = 500
+	MaxDecisionRunes    = 500
 	MaxSummaryRunes     = 30
 	MaxReasonRunes      = 500
 	MaxTopicNameRunes   = 50
@@ -152,6 +153,11 @@ func ValidateIssue(i *Issue) error {
 		}
 	} else if i.RecheckCondition != nil {
 		e.add("recheck_condition", "종류가 observation일 때만 쓸 수 있습니다.")
+	}
+	if i.DecisionNeeded != nil {
+		if n := utf8.RuneCountInString(*i.DecisionNeeded); n < 1 || n > MaxDecisionRunes {
+			e.add("decision_needed", "1~%d자여야 합니다.", MaxDecisionRunes)
+		}
 	}
 	return e.orNil()
 }
