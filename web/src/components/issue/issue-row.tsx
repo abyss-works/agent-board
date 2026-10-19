@@ -34,7 +34,8 @@ interface Props {
 
 export function IssueRow({ issue, flash, compact, showReady }: Props) {
   const queue = 'ready' in issue ? issue : null
-  const labels = issue.labels.slice(0, compact ? 2 : 4)
+  // 좁은 행(현황 칸)은 라벨을 빼 제목 자리를 남긴다.
+  const labels = compact ? [] : issue.labels.slice(0, 4)
   const more = issue.labels.length - labels.length
   return (
     <IssueLink
@@ -59,7 +60,6 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
               {queue.blocked_by.join(', ')}
             </span>
           ) : null}
-          {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
         </div>
         {issue.snippet ? (
           <div className="truncate">
@@ -67,6 +67,8 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
           </div>
         ) : null}
       </div>
+      {/* 줄어드는 제목 칸 밖에 두어야 좁은 행에서 옆 항목과 겹치지 않는다. */}
+      {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
       {!compact && issue.topic_path ? (
         <span className="hidden max-w-44 shrink-0 truncate text-[0.625rem] text-muted-foreground lg:inline" title={`주제 ${issue.topic_path}`}>
           {issue.topic_path}
