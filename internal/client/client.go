@@ -54,9 +54,6 @@ type Response struct {
 	Body   []byte
 }
 
-// ETag returns the ETag header, or "" when the response has none.
-func (r *Response) ETag() string { return r.Header.Get("ETag") }
-
 // Decode unmarshals the body into out.
 func (r *Response) Decode(out any) error { return json.Unmarshal(r.Body, out) }
 
