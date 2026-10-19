@@ -97,7 +97,7 @@ func TestTemplateShowFeedsIssueCreate(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 	var sent map[string]any
-	if err := json.Unmarshal([]byte(srv.last().Body), &sent); err != nil || sent["body"] != model.Templates[4].Body {
+	if err := json.Unmarshal([]byte(srv.last().Body), &sent); err != nil || sent["body"] != model.Templates[3].Body {
 		t.Errorf("body sent = %v (%v)", sent["body"], err)
 	}
 	for _, args := range [][]string{{"issue", "create", "--help"}, {"issue", "update", "--help"}} {

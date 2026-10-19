@@ -122,6 +122,7 @@ type Issue struct {
 	DependsOn        []string    `json:"depends_on"`
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
+	DecisionNeeded   *string     `json:"decision_needed"`
 	Topic            *int64      `json:"topic"`
 	TopicPath        *string     `json:"topic_path"`
 	Milestone        *int64      `json:"milestone"`
@@ -154,6 +155,7 @@ type IssueSummary struct {
 	DependsOn        []string    `json:"depends_on"`
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
+	DecisionNeeded   *string     `json:"decision_needed"`
 	Topic            *int64      `json:"topic"`
 	TopicPath        *string     `json:"topic_path"`
 	Milestone        *int64      `json:"milestone"`
@@ -178,7 +180,7 @@ func (i *Issue) Summary() IssueSummary {
 		Key: i.Key, Project: i.Project, Number: i.Number, Title: i.Title,
 		Type: i.Type, Status: i.Status, Priority: i.Priority,
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
-		RecheckCondition: i.RecheckCondition, Topic: i.Topic, TopicPath: i.TopicPath,
+		RecheckCondition: i.RecheckCondition, DecisionNeeded: i.DecisionNeeded, Topic: i.Topic, TopicPath: i.TopicPath,
 		Milestone: i.Milestone, MilestoneName: i.MilestoneName, StatusReason: i.StatusReason,
 		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,

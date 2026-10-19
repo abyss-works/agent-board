@@ -391,7 +391,7 @@ func TestMilestoneProgressOnTheAPI(t *testing.T) {
 		return decodeMilestone(t, e.do(t, "GET", milestonePath(id), "", nil)).Progress
 	}
 
-	todo := issue("todo", m.ID)
+	review := issue("review", m.ID)
 	issue("doing", m.ID)
 	done := issue("done", m.ID)
 	cancelled := issue("backlog", m.ID)
@@ -399,7 +399,7 @@ func TestMilestoneProgressOnTheAPI(t *testing.T) {
 	if p := progress(m.ID); p != (model.MilestoneProgress{Total: 4, Done: 1}) {
 		t.Errorf("progress = %+v", p)
 	}
-	if rec := e.do(t, "PATCH", "/v1/issues/"+todo.Key, `{"status":"done"}`, nil); rec.Code != 200 {
+	if rec := e.do(t, "PATCH", "/v1/issues/"+review.Key, `{"status":"done"}`, nil); rec.Code != 200 {
 		t.Fatalf("finish: %d %s", rec.Code, rec.Body.String())
 	}
 	if p := progress(m.ID); p != (model.MilestoneProgress{Total: 4, Done: 2}) {
@@ -414,7 +414,7 @@ func TestMilestoneProgressOnTheAPI(t *testing.T) {
 	if p := progress(m.ID); p != (model.MilestoneProgress{Total: 2, Done: 1}) {
 		t.Errorf("after cancelling and deleting = %+v", p)
 	}
-	if rec := e.do(t, "PATCH", "/v1/issues/"+todo.Key, fmt.Sprintf(`{"milestone":%d}`, other.ID), nil); rec.Code != 200 {
+	if rec := e.do(t, "PATCH", "/v1/issues/"+review.Key, fmt.Sprintf(`{"milestone":%d}`, other.ID), nil); rec.Code != 200 {
 		t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
 	}
 	if a, b := progress(m.ID), progress(other.ID); a != (model.MilestoneProgress{Total: 1, Done: 0}) || b != (model.MilestoneProgress{Total: 2, Done: 2}) {

@@ -11,15 +11,15 @@ func TestOverview(t *testing.T) {
 	p := createProject(t, "OV")
 	other := createProject(t, "OV2")
 	// Ten issues; the comments say which overview sections they land in.
-	i1 := newIssue(t, p.Key, "I1 todo P1 feature", map[string]any{"status": "todo", "priority": "P1"}) // next
+	i1 := newIssue(t, p.Key, "I1 backlog P1 feature", map[string]any{"priority": "P1"}) // next
 	tick()
-	i2 := newIssue(t, p.Key, "I2 todo P0 bug after I1", map[string]any{"status": "todo", "priority": "P0", "type": "bug", "depends_on": strs(i1.Key)}) // blocked
+	i2 := newIssue(t, p.Key, "I2 backlog P0 bug after I1", map[string]any{"priority": "P0", "type": "bug", "depends_on": strs(i1.Key)}) // blocked
 	tick()
 	i3 := newIssue(t, p.Key, "I3 doing P2 design", map[string]any{"status": "doing", "type": "design"}) // doing
 	tick()
-	i4 := newIssue(t, p.Key, "I4 review P1 decision", map[string]any{"status": "review", "priority": "P1", "type": "decision"}) // review, decisions
+	i4 := newIssue(t, p.Key, "I4 review P1 feature with a question", map[string]any{"status": "review", "priority": "P1", "decision_needed": "I4를 어떻게 할지"}) // review, decisions
 	tick()
-	i5 := newIssue(t, p.Key, "I5 backlog P3 decision", map[string]any{"priority": "P3", "type": "decision"}) // decisions
+	i5 := newIssue(t, p.Key, "I5 backlog P3 feature with a question", map[string]any{"priority": "P3", "decision_needed": "I5를 할지"}) // next, decisions
 	tick()
 	i6 := newIssue(t, p.Key, "I6 done P2 feature", map[string]any{"status": "done"})
 	tick()
@@ -27,7 +27,7 @@ func TestOverview(t *testing.T) {
 	tick()
 	i8 := newIssue(t, p.Key, "I8 deleted P2 feature", nil)
 	tick()
-	i9 := newIssue(t, p.Key, "I9 todo P2 observation after I6", map[string]any{"status": "todo", "type": "observation", "recheck_condition": "I6 뒤 재검토", "depends_on": strs(i6.Key)}) // next (I6 is closed)
+	i9 := newIssue(t, p.Key, "I9 backlog P2 observation after I6", map[string]any{"type": "observation", "recheck_condition": "I6 뒤 재검토", "depends_on": strs(i6.Key)}) // next (I6 is closed)
 	tick()
 	i10 := newIssue(t, p.Key, "I10 backlog P0 bug after I2", map[string]any{"priority": "P0", "type": "bug", "depends_on": strs(i2.Key)}) // blocked
 	tick()
@@ -35,7 +35,7 @@ func TestOverview(t *testing.T) {
 	tick()
 	comment := decodeAs[activity](t, as("claude").do(t, "POST", "/v1/issues/"+i3.Key+"/comments", map[string]any{"body": "진행 중"}), 201)
 	// Another project's issue depending on ours must not leak in.
-	newIssue(t, other.Key, "other todo", map[string]any{"status": "todo", "depends_on": strs(i1.Key)})
+	newIssue(t, other.Key, "other backlog", map[string]any{"depends_on": strs(i1.Key)})
 	_ = i7
 
 	check := func(t *testing.T, o overview, status string) {
@@ -47,11 +47,11 @@ func TestOverview(t *testing.T) {
 		if o.Counts.Total != 10 || o.Counts.Open != 7 {
 			t.Errorf("counts total %d open %d", o.Counts.Total, o.Counts.Open)
 		}
-		wantStatus := map[string]int{"backlog": 2, "todo": 3, "doing": 1, "review": 1, "done": 1, "cancelled": 1, "deleted": 1}
+		wantStatus := map[string]int{"backlog": 5, "doing": 1, "review": 1, "done": 1, "cancelled": 1, "deleted": 1}
 		if !reflect.DeepEqual(o.Counts.ByStatus, wantStatus) {
 			t.Errorf("by_status = %v, want %v", o.Counts.ByStatus, wantStatus)
 		}
-		wantType := map[string]int{"feature": 1, "bug": 2, "design": 1, "decision": 2, "idea": 0, "observation": 1}
+		wantType := map[string]int{"feature": 3, "bug": 2, "design": 1, "idea": 0, "observation": 1}
 		if !reflect.DeepEqual(o.Counts.ByType, wantType) {
 			t.Errorf("by_type = %v, want %v", o.Counts.ByType, wantType)
 		}
@@ -84,10 +84,10 @@ func TestOverview(t *testing.T) {
 			t.Errorf("decisions total = %d", o.Decisions.Total)
 		}
 		wantKeys(t, o.Decisions.Items, i4.Key, i5.Key)
-		if o.Next.Total != 2 {
+		if o.Next.Total != 3 {
 			t.Errorf("next total = %d", o.Next.Total)
 		}
-		wantKeys(t, o.Next.Items, i1.Key, i9.Key)
+		wantKeys(t, o.Next.Items, i1.Key, i9.Key, i5.Key)
 		for _, it := range o.Next.Items {
 			if it.Ready == nil || !*it.Ready || it.BlockedBy == nil || len(it.BlockedBy) != 0 {
 				t.Errorf("next %s = ready %v blocked_by %v", it.Key, it.Ready, it.BlockedBy)
@@ -140,7 +140,7 @@ func TestOverview(t *testing.T) {
 		if o.Decisions.Total != 2 || len(o.Decisions.Items) != 1 || o.Decisions.Items[0].Key != i4.Key {
 			t.Errorf("decisions = total %d items %v", o.Decisions.Total, keys(o.Decisions.Items))
 		}
-		if o.Next.Total != 2 || len(o.Next.Items) != 1 || o.Next.Items[0].Key != i1.Key {
+		if o.Next.Total != 3 || len(o.Next.Items) != 1 || o.Next.Items[0].Key != i1.Key {
 			t.Errorf("next = total %d items %v", o.Next.Total, keys(o.Next.Items))
 		}
 		if o.RecentActivity.Total != 12 || len(o.RecentActivity.Items) != 1 {
@@ -166,9 +166,9 @@ func TestOverview(t *testing.T) {
 		decodeAs[project](t, owner.do(t, "PATCH", "/v1/projects/"+p.Key, map[string]any{"status": "active"}), 200)
 		patchIssue(t, owner, i1.Key, map[string]any{"status": "done"})
 		o := decodeAs[overview](t, owner.do(t, "GET", "/v1/projects/"+p.Key+"/overview", nil), 200)
-		wantKeys(t, o.Next.Items, i2.Key, i9.Key)
+		wantKeys(t, o.Next.Items, i2.Key, i9.Key, i5.Key)
 		wantKeys(t, o.Blocked.Items, i10.Key)
-		if o.Counts.Open != 6 || o.Counts.ByStatus["done"] != 2 || o.Counts.ByType["feature"] != 0 || o.Counts.ByPriority["P1"] != 1 {
+		if o.Counts.Open != 6 || o.Counts.ByStatus["done"] != 2 || o.Counts.ByType["feature"] != 2 || o.Counts.ByPriority["P1"] != 1 {
 			t.Errorf("counts after closing I1 = %+v", o.Counts)
 		}
 		if o.RecentActivity.Total != 13 || o.RecentActivity.Items[0].Issue != i1.Key {
@@ -178,7 +178,7 @@ func TestOverview(t *testing.T) {
 	t.Run("empty project", func(t *testing.T) {
 		e := createProject(t, "OV3")
 		o := decodeAs[overview](t, owner.do(t, "GET", "/v1/projects/"+e.Key+"/overview", nil), 200)
-		if o.Counts.Total != 0 || o.Counts.Open != 0 || len(o.Counts.ByStatus) != 7 || len(o.Counts.ByType) != 6 || len(o.Counts.ByPriority) != 4 {
+		if o.Counts.Total != 0 || o.Counts.Open != 0 || len(o.Counts.ByStatus) != 6 || len(o.Counts.ByType) != 5 || len(o.Counts.ByPriority) != 4 {
 			t.Errorf("empty counts = %+v", o.Counts)
 		}
 		for name, sec := range map[string]int{"doing": o.Doing.Total, "review": o.Review.Total, "blocked": o.Blocked.Total, "decisions": o.Decisions.Total, "next": o.Next.Total, "recent_activity": o.RecentActivity.Total} {

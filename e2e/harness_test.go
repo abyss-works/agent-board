@@ -337,6 +337,7 @@ type issue struct {
 	DependsOn        []string `json:"depends_on"`
 	Refs             []string `json:"refs"`
 	RecheckCondition *string  `json:"recheck_condition"`
+	DecisionNeeded   *string  `json:"decision_needed"`
 	Version          int64    `json:"version"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`

@@ -46,6 +46,22 @@ func TestTemplateCheckOnTheAPI(t *testing.T) {
 	if code, body := post(nil, map[string]any{"title": "x", "type": "bug", "body": feature.Body}); code != 422 {
 		t.Errorf("another type's template: %d %s", code, body)
 	}
+	// Every type that remains has its template checked: the template itself passes,
+	// and the same body without its last heading does not.
+	for _, tpl := range model.Templates {
+		fields := map[string]any{"title": "ok " + string(tpl.Type), "type": string(tpl.Type), "body": tpl.Body}
+		if tpl.Type == model.TypeObservation {
+			fields["recheck_condition"] = "다음 릴리즈"
+		}
+		if code, body := post(nil, fields); code != 201 {
+			t.Errorf("%s template body: %d %s", tpl.Type, code, body)
+		}
+		last := tpl.Headings[len(tpl.Headings)-1]
+		fields["body"] = tpl.Body[:strings.LastIndex(tpl.Body, "## "+last)]
+		if code, body := post(nil, fields); code != 422 || !strings.Contains(messageOf(body), "빠진 제목: ## "+last) {
+			t.Errorf("%s without its last heading: %d %s", tpl.Type, code, body)
+		}
+	}
 	// Other violations come along with it.
 	rec := e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"","priority":"P9","body":"메모"}`, nil)
 	if b := decodeErr(t, rec); rec.Code != 422 || len(b.Error.Details) != 3 || b.Error.Details[2].Field != "body" {
