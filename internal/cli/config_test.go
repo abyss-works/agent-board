@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -86,6 +87,57 @@ func TestResolveSettingsMissingValues(t *testing.T) {
 	}
 }
 
+func TestResolveSettingsTokenOrder(t *testing.T) {
+	file := Config{
+		URL: "http://file:1", Actor: "owner", Token: "shared-file-token",
+		Tokens: map[string]string{"codex": "codex-file-token", "claude": "claude-file-token"},
+	}
+	cases := []struct {
+		name string
+		g    *globals
+		env  map[string]string
+		file Config
+		want string
+	}{
+		{"AGB_TOKEN beats the actor token and the shared token", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "env-token"},
+		{"actor token from the --actor flag", &globals{actor: "codex"}, nil, file, "codex-file-token"},
+		{"actor token from AGB_ACTOR", &globals{}, map[string]string{"AGB_ACTOR": "claude"}, file, "claude-file-token"},
+		{"the flag actor picks its own token over the AGB_ACTOR one", &globals{actor: "codex"}, map[string]string{"AGB_ACTOR": "claude"}, file, "codex-file-token"},
+		{"actor from the file without its own token uses the shared token", &globals{}, nil, file, "shared-file-token"},
+		{"actor without its own token uses the shared token", &globals{actor: "gemini"}, nil, file, "shared-file-token"},
+		{"no actor tokens at all uses the shared token", &globals{actor: "codex"}, nil, Config{URL: "http://x", Token: "shared-file-token"}, "shared-file-token"},
+		{"no token anywhere", &globals{actor: "codex"}, nil, Config{URL: "http://x", Tokens: map[string]string{"claude": "claude-file-token"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := resolveSettings(tc.g, env(tc.env), tc.file, noon, "desk")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Token != tc.want {
+				t.Errorf("token = %q, want %q", s.Token, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequireAuthGuidesLogin(t *testing.T) {
+	err := Settings{URL: "http://x", Actor: "codex"}.requireAuth()
+	if err == nil {
+		t.Fatal("a missing token was accepted")
+	}
+	for _, want := range []string{"agb login --actor codex", "공용 토큰", "사용자 행위자"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, lacks %q", err, want)
+		}
+	}
+	// Without an actor the placeholder stays.
+	err = Settings{URL: "http://x"}.requireAuth()
+	if err == nil || !strings.Contains(err.Error(), "agb login --actor <ID>") {
+		t.Errorf("err = %v, want the login command with a placeholder", err)
+	}
+}
+
 func TestResolveSettingsRejectsBadValues(t *testing.T) {
 	file := Config{URL: "http://x", Token: "t", Actor: "owner"}
 	for name, g := range map[string]*globals{
@@ -120,18 +172,21 @@ func TestSanitizeHost(t *testing.T) {
 func TestConfigFileRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "agb", "config.json")
 	cfg, err := loadConfig(path)
-	if err != nil || cfg != (Config{}) {
+	if err != nil || !reflect.DeepEqual(cfg, Config{}) {
 		t.Fatalf("missing file must load as empty: %+v %v", cfg, err)
 	}
-	want := Config{URL: "http://127.0.0.1:8421", Token: "secret-token-value", Actor: "claude"}
+	want := Config{URL: "http://127.0.0.1:8421", Token: "secret-token-value", Actor: "claude", Tokens: map[string]string{"codex": "agb_codex-token", "claude": "agb_claude-token"}}
 	if err := saveConfig(path, want); err != nil {
 		t.Fatal(err)
 	}
 	got, err := loadConfig(path)
-	if err != nil || got != want {
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("round trip = %+v %v", got, err)
 	}
 	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), `"tokens"`) {
+		t.Errorf("actor tokens are saved under tokens: %s", raw)
+	}
 	if !strings.Contains(string(raw), `"session_id"`) == strings.Contains(string(raw), `"client_host"`) && strings.Contains(string(raw), `"session_id"`) {
 		t.Errorf("empty fields should be omitted: %s", raw)
 	}
@@ -143,6 +198,22 @@ func TestConfigFileRoundTrip(t *testing.T) {
 		di, _ := os.Stat(filepath.Dir(path))
 		if di.Mode().Perm() != 0o700 {
 			t.Errorf("dir mode = %o, want 700", di.Mode().Perm())
+		}
+	}
+}
+
+func TestConfigFileOmitsEmptyTokens(t *testing.T) {
+	for name, cfg := range map[string]Config{
+		"nil":   {URL: "http://x"},
+		"empty": {URL: "http://x", Tokens: map[string]string{}},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := saveConfig(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(path)
+		if strings.Contains(string(raw), "tokens") {
+			t.Errorf("%s: empty tokens must be omitted: %s", name, raw)
 		}
 	}
 }

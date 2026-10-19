@@ -20,7 +20,7 @@ func (h *handler) registerIssues(mux *http.ServeMux) {
 // issueWriteFields are the fields a client may send when creating an issue.
 var issueWriteFields = map[string]bool{
 	"title": true, "body": true, "type": true, "status": true, "priority": true,
-	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true, "topic": true,
+	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true, "decision_needed": true, "topic": true, "milestone": true,
 }
 
 // issuePatchFields are the fields of a PATCH: the create fields plus the
@@ -52,8 +52,8 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in store.IssueInput
-	var parent, recheck string
-	var topic int64
+	var parent, recheck, decision string
+	var topic, milestone int64
 	// Nulls on non-nullable fields are left at their zero value so that
 	// validation reports them (an empty title, for example).
 	steps := []func() *apiError{
@@ -81,9 +81,23 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 			return e
 		},
 		func() *apiError {
+			present, null, e := field(b, "decision_needed", &decision)
+			if present && !null {
+				in.DecisionNeeded = &decision
+			}
+			return e
+		},
+		func() *apiError {
 			present, null, e := field(b, "topic", &topic)
 			if present && !null {
 				in.Topic = &topic
+			}
+			return e
+		},
+		func() *apiError {
+			present, null, e := field(b, "milestone", &milestone)
+			if present && !null {
+				in.Milestone = &milestone
 			}
 			return e
 		},
@@ -141,8 +155,8 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 	var status model.IssueStatus
 	var prio model.Priority
 	var labels, deps, refs []string
-	var parent, recheck, statusReason string
-	var topic int64
+	var parent, recheck, decision, statusReason string
+	var topic, milestone int64
 	steps := []func() *apiError{
 		func() *apiError {
 			p, n, e := field(b, "title", &title)
@@ -205,11 +219,31 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 			return e
 		},
 		func() *apiError {
+			p, n, e := field(b, "decision_needed", &decision)
+			if p {
+				patch.DecisionNeeded = store.Optional[string]{Set: true}
+				if !n {
+					patch.DecisionNeeded.Value = &decision
+				}
+			}
+			return e
+		},
+		func() *apiError {
 			p, n, e := field(b, "topic", &topic)
 			if p {
 				patch.Topic = store.Optional[int64]{Set: true}
 				if !n {
 					patch.Topic.Value = &topic
+				}
+			}
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "milestone", &milestone)
+			if p {
+				patch.Milestone = store.Optional[int64]{Set: true}
+				if !n {
+					patch.Milestone.Value = &milestone
 				}
 			}
 			return e
@@ -334,6 +368,18 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 			continue
 		}
 		f.Topics = append(f.Topics, id)
+	}
+	for _, v := range q.csv("milestone") {
+		if v == "none" {
+			f.MilestoneNone = true
+			continue
+		}
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			q.add("milestone", "마일스톤 ID 또는 none이어야 합니다.")
+			continue
+		}
+		f.Milestones = append(f.Milestones, id)
 	}
 	switch v := q.one("acknowledged"); v {
 	case "":

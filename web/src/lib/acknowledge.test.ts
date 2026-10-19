@@ -17,8 +17,8 @@ describe('unacknowledgedKeys', () => {
 
 describe('unacknowledgedListPath', () => {
   it('삭제를 뺀 모든 상태에서 미확인 이슈를 보는 이슈 목록 주소다', () => {
-    expect(UNACKNOWLEDGED_STATUSES).toEqual(['backlog', 'todo', 'doing', 'review', 'done', 'cancelled'])
-    expect(unacknowledgedListPath()).toBe('/issues?acknowledged=false&status=backlog%2Ctodo%2Cdoing%2Creview%2Cdone%2Ccancelled')
+    expect(UNACKNOWLEDGED_STATUSES).toEqual(['backlog', 'doing', 'review', 'done', 'cancelled'])
+    expect(unacknowledgedListPath()).toBe('/issues?acknowledged=false&status=backlog%2Cdoing%2Creview%2Cdone%2Ccancelled')
   })
   it('이슈 목록 화면이 읽는 매개변수로 되돌려 읽힌다', () => {
     const params = new URL(unacknowledgedListPath(), 'http://x').searchParams

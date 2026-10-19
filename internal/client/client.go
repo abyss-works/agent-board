@@ -54,9 +54,6 @@ type Response struct {
 	Body   []byte
 }
 
-// ETag returns the ETag header, or "" when the response has none.
-func (r *Response) ETag() string { return r.Header.Get("ETag") }
-
 // Decode unmarshals the body into out.
 func (r *Response) Decode(out any) error { return json.Unmarshal(r.Body, out) }
 
@@ -70,6 +67,13 @@ type Health struct {
 // Request sends method path with an optional JSON body and extra headers
 // and returns the raw response. Non-2xx responses become *Error.
 func (c *Client) Request(ctx context.Context, method, path string, body any, extra http.Header) (*Response, error) {
+	return c.send(ctx, method, path, body, extra, true)
+}
+
+// send is Request, with the token and the trace headers only when
+// authenticated is true. The two calls that start a login are made before the
+// client has a token and send none of them.
+func (c *Client) send(ctx context.Context, method, path string, body any, extra http.Header, authenticated bool) (*Response, error) {
 	var rd io.Reader
 	if body != nil {
 		var buf bytes.Buffer
@@ -84,10 +88,12 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, ext
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("X-Actor", c.Actor)
-	req.Header.Set("X-Session-Id", c.SessionID)
-	req.Header.Set("X-Client-Host", c.ClientHost)
+	if authenticated {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("X-Actor", c.Actor)
+		req.Header.Set("X-Session-Id", c.SessionID)
+		req.Header.Set("X-Client-Host", c.ClientHost)
+	}
 	req.Header.Set("User-Agent", "agb/"+c.Version)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {

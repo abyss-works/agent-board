@@ -64,6 +64,15 @@ export function isPreconditionFailed(err: unknown): boolean {
   return isApiError(err) && err.status === 412
 }
 
+export function isNotFound(err: unknown): boolean {
+  return isApiError(err) && err.status === 404
+}
+
+/** 이미 승인되거나 거부된 기기 승인 요청을 바꾸려 한 오류(409 conflict, `details[].reason`이 not_pending). */
+export function isNotPending(err: unknown): boolean {
+  return isApiError(err) && err.status === 409 && err.code === 'conflict' && err.details.some((d) => d.reason === 'not_pending')
+}
+
 /** 사람이 읽을 오류 문구. */
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError || err instanceof NetworkError || err instanceof ServerUnavailableError) return err.message
@@ -97,6 +106,8 @@ export interface IssueListFilters {
   label: readonly string[]
   /** 주제 ID(문자열)와 none. 쉼표 OR. 대주제 ID는 그 아래 주제의 이슈도 포함한다. */
   topic?: readonly string[]
+  /** 마일스톤 ID(문자열)와 none. 쉼표 OR. none은 마일스톤이 없는 이슈다. */
+  milestone?: readonly string[]
   /** 'false'면 미확인만, 'true'면 확인된 것만. 없으면 거르지 않는다. */
   acknowledged?: 'true' | 'false'
   q: string
@@ -114,6 +125,7 @@ export function issueListQuery(f: IssueListFilters): string {
     priority: f.priority.join(','),
     label: f.label,
     topic: f.topic?.join(','),
+    milestone: f.milestone?.join(','),
     acknowledged: f.acknowledged,
     q: f.q.trim(),
     sort: f.sort,

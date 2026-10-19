@@ -36,24 +36,58 @@ func footer(w io.Writer, shown, total, offset int) {
 	}
 }
 
+// addDecisionColumn ends tb with a DECISION column when some row has a
+// decision question. Row i of tb is the one for questions[i]. As the last
+// column, a long question is cut to the terminal width by the table.
+func addDecisionColumn(tb *table, questions []*string) {
+	shown := false
+	for _, q := range questions {
+		shown = shown || q != nil
+	}
+	if !shown {
+		return
+	}
+	tb.header = append(tb.header, "DECISION")
+	for i, q := range questions {
+		tb.rows[i] = append(tb.rows[i], deref(q, "-"))
+	}
+}
+
+// issueTable lists issues. The MILESTONE column appears only when some issue
+// has a milestone, the SNIPPET column only for search results and the
+// DECISION column only when some issue asks for a decision.
 func (a *App) issueTable(items []model.IssueSummary) *table {
-	snippet := false
+	snippet, milestone := false, false
 	for _, it := range items {
 		if it.Snippet != nil {
 			snippet = true
 		}
+		if it.MilestoneName != nil {
+			milestone = true
+		}
 	}
-	tb := &table{header: []string{"KEY", "STATUS", "PRI", "TYPE", "LABELS", "UPDATED", "TITLE"}}
+	tb := &table{header: []string{"KEY", "STATUS", "PRI", "TYPE", "LABELS"}}
+	if milestone {
+		tb.header = append(tb.header, "MILESTONE")
+	}
+	tb.header = append(tb.header, "UPDATED", "TITLE")
 	if snippet {
 		tb.header = append(tb.header, "SNIPPET")
 	}
+	questions := make([]*string, 0, len(items))
 	for _, it := range items {
-		row := []string{it.Key, string(it.Status), string(it.Priority), string(it.Type), joinOr(it.Labels, "-"), formatTime(it.UpdatedAt, a.Location), it.Title}
+		row := []string{it.Key, string(it.Status), string(it.Priority), string(it.Type), joinOr(it.Labels, "-")}
+		if milestone {
+			row = append(row, deref(it.MilestoneName, "-"))
+		}
+		row = append(row, formatTime(it.UpdatedAt, a.Location), it.Title)
 		if snippet {
 			row = append(row, deref(it.Snippet, ""))
 		}
 		tb.add(row...)
+		questions = append(questions, it.DecisionNeeded)
 	}
+	addDecisionColumn(tb, questions)
 	return tb
 }
 
@@ -76,7 +110,7 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 	if err != nil {
 		return err
 	}
-	fields(w, [][2]string{
+	pairs := [][2]string{
 		{"key", i.Key},
 		{"title", i.Title},
 		{"project", i.Project},
@@ -90,13 +124,20 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"depends_on", joinOr(i.DependsOn, "-")},
 		{"refs", joinOr(i.Refs, "-")},
 		{"recheck_condition", deref(i.RecheckCondition, "-")},
+	}
+	if i.DecisionNeeded != nil {
+		pairs = append(pairs, [2]string{"결정 필요", *i.DecisionNeeded})
+	}
+	pairs = append(pairs, [][2]string{
 		{"topic", topicText(i.Topic, i.TopicPath)},
+		{"milestone", milestoneText(i.Milestone, i.MilestoneName)},
 		{"version", strconv.FormatInt(i.Version, 10)},
 		{"created", formatTime(i.CreatedAt, a.Location) + " (" + i.CreatedBy + ")"},
 		{"updated", formatTime(i.UpdatedAt, a.Location) + " (" + i.UpdatedBy + ")"},
 		{"status_changed", formatTime(i.StatusChangedAt, a.Location) + " (" + i.StatusChangedBy + ")"},
 		{"closed", formatTimePtr(i.ClosedAt, a.Location)},
-	})
+	}...)
+	fields(w, pairs)
 	if strings.TrimSpace(i.Body) != "" {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, strings.TrimRight(i.Body, "\n"))
@@ -112,6 +153,14 @@ func topicText(id *int64, path *string) string {
 	return *path + " (" + strconv.FormatInt(*id, 10) + ")"
 }
 
+// milestoneText shows the milestone name of an issue with its id, or "-".
+func milestoneText(id *int64, name *string) string {
+	if id == nil || name == nil {
+		return "-"
+	}
+	return *name + " (" + strconv.FormatInt(*id, 10) + ")"
+}
+
 // acknowledgedText says whether the user has seen an issue: "no", or "yes"
 // with the time and, when known, who.
 func (a *App) acknowledgedText(at *model.Time, by *string) string {
@@ -125,9 +174,10 @@ func (a *App) acknowledgedText(at *model.Time, by *string) string {
 }
 
 // rawString shows a JSON value compactly: strings without quotes, the
-// rest as JSON.
+// rest as JSON. An absent value and null, such as the milestone of an issue
+// that has none, show as "-".
 func rawString(r json.RawMessage) string {
-	if len(r) == 0 {
+	if len(r) == 0 || string(r) == "null" {
 		return "-"
 	}
 	var s string
@@ -221,13 +271,16 @@ func (a *App) renderActivity(w io.Writer, resp *client.Response) error {
 
 func (a *App) queueTable(items []model.QueueItem) *table {
 	tb := &table{header: []string{"KEY", "PRI", "STATUS", "READY", "BLOCKED_BY", "TITLE"}}
+	questions := make([]*string, 0, len(items))
 	for _, it := range items {
 		ready := "yes"
 		if !it.Ready {
 			ready = "no"
 		}
 		tb.add(it.Key, string(it.Priority), string(it.Status), ready, joinOr(it.BlockedBy, "-"), it.Title)
+		questions = append(questions, it.DecisionNeeded)
 	}
+	addDecisionColumn(tb, questions)
 	return tb
 }
 
@@ -268,9 +321,12 @@ func (a *App) renderBoard(w io.Writer, resp *client.Response) error {
 			continue
 		}
 		tb := &table{header: []string{"KEY", "PRI", "TYPE", "LABELS", "TITLE"}}
+		questions := make([]*string, 0, len(col.Issues))
 		for _, it := range col.Issues {
 			tb.add(it.Key, string(it.Priority), string(it.Type), joinOr(it.Labels, "-"), it.Title)
+			questions = append(questions, it.DecisionNeeded)
 		}
+		addDecisionColumn(tb, questions)
 		tb.write(w, a.TermWidth)
 		if col.Total > len(col.Issues) {
 			fmt.Fprintf(w, "… 외 %d건\n", col.Total-len(col.Issues))

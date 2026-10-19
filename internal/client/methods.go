@@ -63,6 +63,7 @@ type IssueFilter struct {
 	Labels          []string
 	Parent          string
 	Topic           string // topic ids and none, comma separated (OR)
+	Milestone       string // milestone ids and none, comma separated (OR)
 	Acknowledged    string // "true" or "false"; empty sends no filter
 	CreatedBy       string
 	UpdatedBy       string
@@ -85,6 +86,7 @@ func (f IssueFilter) Values() url.Values {
 	}
 	set(v, "parent", f.Parent)
 	set(v, "topic", f.Topic)
+	set(v, "milestone", f.Milestone)
 	set(v, "acknowledged", f.Acknowledged)
 	set(v, "created_by", f.CreatedBy)
 	set(v, "updated_by", f.UpdatedBy)
@@ -267,6 +269,91 @@ func (c *Client) PatchTopic(ctx context.Context, id int64, patch map[string]any)
 // DeleteTopic soft deletes a topic.
 func (c *Client) DeleteTopic(ctx context.Context, id int64) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/topics/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// ListMilestones lists the milestones of a project. status is open (the
+// server default when empty), closed, deleted or all, or a comma separated
+// list of them (OR).
+func (c *Client) ListMilestones(ctx context.Context, project, status string) (*Response, error) {
+	v := url.Values{}
+	set(v, "status", status)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/milestones", v), nil, nil)
+}
+
+// CreateMilestone adds an open milestone to a project. An empty description
+// or target date (YYYY-MM-DD) is left out of the request.
+func (c *Client) CreateMilestone(ctx context.Context, project, name, description, targetDate string) (*Response, error) {
+	in := map[string]any{"name": name}
+	if description != "" {
+		in["description"] = description
+	}
+	if targetDate != "" {
+		in["target_date"] = targetDate
+	}
+	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/milestones", in, nil)
+}
+
+// GetMilestone fetches one milestone with its progress.
+func (c *Client) GetMilestone(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// PatchMilestone applies a JSON Merge Patch to a milestone: name,
+// description, target_date (null clears it) and status.
+func (c *Client) PatchMilestone(ctx context.Context, id int64, patch map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPatch, "/v1/milestones/"+strconv.FormatInt(id, 10), patch, nil)
+}
+
+// DeleteMilestone soft deletes a milestone.
+func (c *Client) DeleteMilestone(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// CreateDeviceAuthorization asks the server to let an agent actor in on a
+// device. It is the first step of a login, made without a token, so it sends
+// neither the token nor the trace headers. The response holds the device code
+// and the user code.
+func (c *Client) CreateDeviceAuthorization(ctx context.Context, actor, clientHost string) (*Response, error) {
+	return c.send(ctx, http.MethodPost, "/v1/device-authorizations", map[string]any{"actor": actor, "client_host": clientHost}, nil, false)
+}
+
+// GetDeviceAuthorization fetches the device authorization with the user code,
+// typed in any case and with or without the hyphen. Only a user can.
+func (c *Client) GetDeviceAuthorization(ctx context.Context, userCode string) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/device-authorizations/"+url.PathEscape(userCode), nil, nil)
+}
+
+// PatchDeviceAuthorization approves or denies a device authorization: status
+// is approved or denied. Only a user can.
+func (c *Client) PatchDeviceAuthorization(ctx context.Context, userCode, status string) (*Response, error) {
+	return c.Request(ctx, http.MethodPatch, "/v1/device-authorizations/"+url.PathEscape(userCode), map[string]any{"status": status}, nil)
+}
+
+// ExchangeToken trades the device code of an approved device authorization
+// for an actor token. It is the last step of a login, made without a token, so
+// it sends neither the token nor the trace headers. Until the user decides, the
+// server answers 400 authorization_pending and the call is repeated.
+func (c *Client) ExchangeToken(ctx context.Context, deviceCode string) (*Response, error) {
+	return c.send(ctx, http.MethodPost, "/v1/tokens", map[string]any{"device_code": deviceCode}, nil, false)
+}
+
+// ListTokens lists actor tokens. status is active (the server default when
+// empty), revoked or all. Only a user can.
+func (c *Client) ListTokens(ctx context.Context, status string) (*Response, error) {
+	v := url.Values{}
+	set(v, "status", status)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/tokens", v), nil, nil)
+}
+
+// RevokeToken revokes an actor token by id. Only a user can.
+func (c *Client) RevokeToken(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/tokens/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// RevokeCurrentToken revokes the actor token the request carries. The shared
+// token has none, so the call is refused for it.
+func (c *Client) RevokeCurrentToken(ctx context.Context) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/tokens/current", nil, nil)
 }
 
 // Acknowledge marks an issue as acknowledged by the actor of the request.

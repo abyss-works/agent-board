@@ -107,7 +107,7 @@ var queueCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표 OR
-  --status <S>            기본 todo. 백로그까지 보려면 todo,backlog. open, closed, all 도 됩니다
+  --status <S>            기본 backlog. 쉼표로 여러 상태를 잇거나 open, closed, all 도 됩니다
   --limit <N>             다음 할 일 하나만 보려면 1
   --offset <N>
 `,

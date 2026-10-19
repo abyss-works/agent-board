@@ -16,20 +16,18 @@ const (
 	TypeFeature     IssueType = "feature"
 	TypeBug         IssueType = "bug"
 	TypeDesign      IssueType = "design"
-	TypeDecision    IssueType = "decision"
 	TypeIdea        IssueType = "idea"
 	TypeObservation IssueType = "observation"
 )
 
 // IssueTypes lists every issue type in display order.
-var IssueTypes = []IssueType{TypeFeature, TypeBug, TypeDesign, TypeDecision, TypeIdea, TypeObservation}
+var IssueTypes = []IssueType{TypeFeature, TypeBug, TypeDesign, TypeIdea, TypeObservation}
 
 // IssueStatus is the workflow state of an issue. Deletion is a status.
 type IssueStatus string
 
 const (
 	StatusBacklog   IssueStatus = "backlog"
-	StatusTodo      IssueStatus = "todo"
 	StatusDoing     IssueStatus = "doing"
 	StatusReview    IssueStatus = "review"
 	StatusDone      IssueStatus = "done"
@@ -38,10 +36,10 @@ const (
 )
 
 // IssueStatuses lists every issue status in board column order.
-var IssueStatuses = []IssueStatus{StatusBacklog, StatusTodo, StatusDoing, StatusReview, StatusDone, StatusCancelled, StatusDeleted}
+var IssueStatuses = []IssueStatus{StatusBacklog, StatusDoing, StatusReview, StatusDone, StatusCancelled, StatusDeleted}
 
 // OpenStatuses are the statuses an issue can be worked on in.
-var OpenStatuses = []IssueStatus{StatusBacklog, StatusTodo, StatusDoing, StatusReview}
+var OpenStatuses = []IssueStatus{StatusBacklog, StatusDoing, StatusReview}
 
 // ClosedStatuses are the terminal statuses, including soft deletion.
 var ClosedStatuses = []IssueStatus{StatusDone, StatusCancelled, StatusDeleted}
@@ -58,7 +56,7 @@ func (s IssueStatus) ReasonRequired() bool {
 }
 
 var statusLabels = map[IssueStatus]string{
-	StatusBacklog: "백로그", StatusTodo: "할 일", StatusDoing: "진행", StatusReview: "검토",
+	StatusBacklog: "백로그", StatusDoing: "진행", StatusReview: "검토",
 	StatusDone: "완료", StatusCancelled: "취소", StatusDeleted: "삭제",
 }
 
@@ -93,6 +91,18 @@ const (
 // TopicStatuses lists every topic status.
 var TopicStatuses = []TopicStatus{TopicActive, TopicDeleted}
 
+// MilestoneStatus is the lifecycle state of a milestone. Deletion is a status.
+type MilestoneStatus string
+
+const (
+	MilestoneOpen    MilestoneStatus = "open"
+	MilestoneClosed  MilestoneStatus = "closed"
+	MilestoneDeleted MilestoneStatus = "deleted"
+)
+
+// MilestoneStatuses lists every milestone status.
+var MilestoneStatuses = []MilestoneStatus{MilestoneOpen, MilestoneClosed, MilestoneDeleted}
+
 // Priority orders issues in the queue. P0 is the most urgent.
 type Priority string
 
@@ -126,6 +136,49 @@ const (
 // ActivityKinds lists every activity kind.
 var ActivityKinds = []ActivityKind{ActivityCreated, ActivityUpdated, ActivityCommented}
 
+// DeviceStatus is the state of a device authorization: a request to give an
+// agent actor a token on one device. It waits for the user to decide.
+type DeviceStatus string
+
+const (
+	DevicePending  DeviceStatus = "pending"
+	DeviceApproved DeviceStatus = "approved"
+	DeviceDenied   DeviceStatus = "denied"
+)
+
+// DeviceStatuses lists every device authorization status.
+var DeviceStatuses = []DeviceStatus{DevicePending, DeviceApproved, DeviceDenied}
+
+// TokenFilter selects actor tokens by whether they are revoked.
+type TokenFilter string
+
+const (
+	TokensActive  TokenFilter = "active"
+	TokensRevoked TokenFilter = "revoked"
+	TokensAll     TokenFilter = "all"
+)
+
+// TokenFilters lists every token filter.
+var TokenFilters = []TokenFilter{TokensActive, TokensRevoked, TokensAll}
+
+// Device authorization and actor token settings.
+const (
+	// DeviceExpiresIn is how long a device authorization lives, in seconds.
+	DeviceExpiresIn = 600
+	// DeviceInterval is the seconds a client waits between exchange attempts.
+	DeviceInterval = 5
+	// MaxPendingDevices is the most device authorizations that may wait for a
+	// decision at once.
+	MaxPendingDevices = 20
+	// UserCodeAlphabet holds the characters of a user code: consonants only, so
+	// a code never spells a word.
+	UserCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
+	// UserCodeLength is the number of characters in a user code.
+	UserCodeLength = 8
+	// TokenPrefix starts every actor token.
+	TokenPrefix = "agb_"
+)
+
 // RefKinds are the allowed prefixes of a reference ("kind:value").
 var RefKinds = []string{"repo", "file", "url", "pr", "issue", "doc"}
 
@@ -151,6 +204,12 @@ func ParseProjectStatus(v string) (ProjectStatus, bool) { return parseEnum(v, Pr
 // ParseTopicStatus returns the topic status named v.
 func ParseTopicStatus(v string) (TopicStatus, bool) { return parseEnum(v, TopicStatuses) }
 
+// ParseMilestoneStatus returns the milestone status named v. The alias "all"
+// is not a status.
+func ParseMilestoneStatus(v string) (MilestoneStatus, bool) {
+	return parseEnum(v, MilestoneStatuses)
+}
+
 // ParsePriority returns the priority named v.
 func ParsePriority(v string) (Priority, bool) { return parseEnum(v, Priorities) }
 
@@ -161,6 +220,12 @@ func ParseActorKind(v string) (ActorKind, bool) {
 
 // ParseActivityKind returns the activity kind named v.
 func ParseActivityKind(v string) (ActivityKind, bool) { return parseEnum(v, ActivityKinds) }
+
+// ParseDeviceStatus returns the device authorization status named v.
+func ParseDeviceStatus(v string) (DeviceStatus, bool) { return parseEnum(v, DeviceStatuses) }
+
+// ParseTokenFilter returns the token filter named v.
+func ParseTokenFilter(v string) (TokenFilter, bool) { return parseEnum(v, TokenFilters) }
 
 // ExpandIssueStatuses turns a comma separated status filter into statuses.
 // "open", "closed" and "all" are aliases. Duplicates are removed.
@@ -190,6 +255,33 @@ func ExpandIssueStatuses(filter string) ([]IssueStatus, error) {
 			}
 			add(s)
 		}
+	}
+	return out, nil
+}
+
+// ExpandMilestoneStatuses turns a comma separated status filter into
+// statuses. "all" is an alias for every status. Duplicates are removed.
+func ExpandMilestoneStatuses(filter string) ([]MilestoneStatus, error) {
+	var out []MilestoneStatus
+	seen := map[MilestoneStatus]bool{}
+	add := func(list ...MilestoneStatus) {
+		for _, s := range list {
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+	}
+	for _, part := range strings.Split(filter, ",") {
+		if part == "all" {
+			add(MilestoneStatuses...)
+			continue
+		}
+		s, ok := ParseMilestoneStatus(part)
+		if !ok {
+			return nil, fmt.Errorf("unknown status %q", part)
+		}
+		add(s)
 	}
 	return out, nil
 }
@@ -227,6 +319,39 @@ func ValidClientHost(v string) bool {
 		}
 	}
 	return true
+}
+
+// FormatUserCode writes the UserCodeLength characters of a user code as
+// XXXX-XXXX.
+func FormatUserCode(chars string) string {
+	half := UserCodeLength / 2
+	return chars[:half] + "-" + chars[half:]
+}
+
+// NormalizeUserCode returns the canonical form (XXXX-XXXX) of a user code
+// typed in any case and with or without hyphens. ok is false when v is not a
+// user code.
+func NormalizeUserCode(v string) (code string, ok bool) {
+	var chars [UserCodeLength]byte
+	n := 0
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '-' {
+			continue
+		}
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		if n == UserCodeLength || strings.IndexByte(UserCodeAlphabet, c) < 0 {
+			return "", false
+		}
+		chars[n] = c
+		n++
+	}
+	if n != UserCodeLength {
+		return "", false
+	}
+	return FormatUserCode(string(chars[:])), true
 }
 
 // ParseRef splits a "kind:value" reference and checks both parts.

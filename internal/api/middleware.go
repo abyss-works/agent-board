@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/wsk0715/agent-board/internal/store"
 )
 
 const (
@@ -23,18 +25,40 @@ type ctxKey int
 const (
 	ctxTrace ctxKey = iota
 	ctxReqInfo
+	ctxCredential
 )
 
 // reqInfo is shared between the logging middleware and the checks that run
-// inside it, so a rejection reason can be logged.
+// inside it, so a rejection reason and the actor token that authenticated the
+// request can be logged.
 type reqInfo struct {
-	reject string
+	reject  string
+	tokenID int64
 }
 
 func setReject(r *http.Request, reason string) {
 	if info, ok := r.Context().Value(ctxReqInfo).(*reqInfo); ok {
 		info.reject = reason
 	}
+}
+
+func setTokenID(r *http.Request, id int64) {
+	if info, ok := r.Context().Value(ctxReqInfo).(*reqInfo); ok {
+		info.tokenID = id
+	}
+}
+
+// credential is how a request authenticated: with the shared token, or with
+// the actor token tokenID, which belongs to actor.
+type credential struct {
+	shared  bool
+	tokenID int64
+	actor   string
+}
+
+func credentialFrom(ctx context.Context) credential {
+	c, _ := ctx.Value(ctxCredential).(credential)
+	return c
 }
 
 // TraceFrom returns the validated trace headers of the request.
@@ -92,22 +116,69 @@ func logging(logger *slog.Logger, next http.Handler) http.Handler {
 		if info.reject != "" {
 			attrs = append(attrs, slog.String("reject", info.reject))
 		}
+		if info.tokenID != 0 {
+			attrs = append(attrs, slog.Int64("token_id", info.tokenID))
+		}
 		logger.LogAttrs(r.Context(), slog.LevelInfo, "request", attrs...)
 	})
 }
 
-// auth rejects requests whose bearer token does not match.
-func auth(token string, next http.Handler) http.Handler {
-	want := []byte(token)
+// auth rejects requests whose bearer token is neither the shared token nor an
+// active actor token. The shared token is compared first, in constant time;
+// any other string is looked up by its hash among the actor tokens.
+func (h *handler) auth(next http.Handler) http.Handler {
+	want := []byte(h.opts.Token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(got), want) != 1 {
+		if !ok {
 			setReject(r, "unauthorized")
 			writeError(w, errUnauthorized)
 			return
 		}
+		cred := credential{shared: true}
+		if subtle.ConstantTimeCompare([]byte(got), want) != 1 {
+			tok, err := h.store.AuthenticateToken(r.Context(), got)
+			if errors.Is(err, store.ErrNotFound) {
+				setReject(r, "unauthorized")
+				writeError(w, errUnauthorized)
+				return
+			}
+			if err != nil {
+				writeError(w, h.storeError(r, err))
+				return
+			}
+			cred = credential{tokenID: tok.ID, actor: tok.Actor}
+			setTokenID(r, tok.ID)
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxCredential, cred)))
+	})
+}
+
+// bind ties the token to the actor named in X-Actor. The shared token is for
+// the actors of kind user and an actor token for its own actor. It runs after
+// trace, so the actor is declared and the headers are well formed.
+func (h *handler) bind(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cred, actor := credentialFrom(r.Context()), TraceFrom(r.Context()).Actor
+		if (cred.shared && h.actors[actor].Kind != model.ActorUser) || (!cred.shared && cred.actor != actor) {
+			setReject(r, "actor_mismatch")
+			writeError(w, errActorMismatch)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// userOnly lets a request through only when it authenticated with the shared
+// token, which bind has tied to an actor of kind user.
+func (h *handler) userOnly(fn http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !credentialFrom(r.Context()).shared {
+			writeError(w, errUserOnly)
+			return
+		}
+		fn(w, r)
+	}
 }
 
 // trace requires the three tracking headers, each exactly once and well

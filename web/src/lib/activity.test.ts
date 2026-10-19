@@ -41,13 +41,13 @@ describe('describeChanges', () => {
     const lines = describeChanges(
       activity({
         changes: {
-          status: { from: 'todo', to: 'doing' },
+          status: { from: 'backlog', to: 'doing' },
           labels: { from: ['api'], to: ['api', 'cli'] },
         },
       }),
     )
     expect(lines).toEqual([
-      { field: 'status', label: '상태', from: '할 일', to: '진행' },
+      { field: 'status', label: '상태', from: '백로그', to: '진행' },
       { field: 'labels', label: '라벨', from: 'api', to: 'api, cli' },
     ])
   })
@@ -70,25 +70,25 @@ describe('describeChanges', () => {
 describe('상태 변경의 사유', () => {
   const withReason = activity({
     changes: {
-      status: { from: 'todo', to: 'cancelled' },
+      status: { from: 'backlog', to: 'cancelled' },
       status_reason: { from: null, to: 'AGB-20과 중복' },
     },
   })
   it('사유를 상태 줄에 붙이고 따로 줄을 만들지 않는다', () => {
-    expect(describeChanges(withReason)).toEqual([{ field: 'status', label: '상태', from: '할 일', to: '취소', reason: 'AGB-20과 중복' }])
+    expect(describeChanges(withReason)).toEqual([{ field: 'status', label: '상태', from: '백로그', to: '취소', reason: 'AGB-20과 중복' }])
   })
   it('다른 필드와 함께 바뀌어도 상태 줄에만 붙는다', () => {
     const lines = describeChanges(
       activity({
         changes: {
-          status: { from: 'todo', to: 'doing' },
-          status_reason: { from: null, to: '할 일 → 진행' },
+          status: { from: 'backlog', to: 'doing' },
+          status_reason: { from: null, to: '백로그 → 진행' },
           labels: { from: [], to: ['api'] },
         },
       }),
     )
     expect(lines.map((l) => l.field)).toEqual(['status', 'labels'])
-    expect(lines[0].reason).toBe('할 일 → 진행')
+    expect(lines[0].reason).toBe('백로그 → 진행')
     expect(lines[1].reason).toBeUndefined()
   })
   it('상태 변경 없이 사유만 있는 기록은 사유를 별도 줄로 보인다', () => {
@@ -97,13 +97,13 @@ describe('상태 변경의 사유', () => {
   })
   it('긴 사유도 줄에는 전체를 담는다', () => {
     const long = '가'.repeat(200)
-    const lines = describeChanges(activity({ changes: { status: { from: 'todo', to: 'deleted' }, status_reason: { from: null, to: long } } }))
+    const lines = describeChanges(activity({ changes: { status: { from: 'backlog', to: 'deleted' }, status_reason: { from: null, to: long } } }))
     expect(lines[0].reason).toBe(long)
   })
   it('한 줄 요약에는 사유를 괄호로 붙이고 길면 자른다', () => {
-    expect(summarizeActivity(withReason)).toBe('상태: 할 일 → 취소 (사유: AGB-20과 중복)')
-    const long = activity({ changes: { status: { from: 'todo', to: 'deleted' }, status_reason: { from: null, to: '나'.repeat(100) } } })
-    expect(summarizeActivity(long)).toBe(`상태: 할 일 → 삭제 (사유: ${'나'.repeat(60)}…)`)
+    expect(summarizeActivity(withReason)).toBe('상태: 백로그 → 취소 (사유: AGB-20과 중복)')
+    const long = activity({ changes: { status: { from: 'backlog', to: 'deleted' }, status_reason: { from: null, to: '나'.repeat(100) } } })
+    expect(summarizeActivity(long)).toBe(`상태: 백로그 → 삭제 (사유: ${'나'.repeat(60)}…)`)
   })
 })
 
@@ -114,6 +114,52 @@ describe('확인 표시의 변경', () => {
     const lines = describeChanges(activity({ changes: { acknowledged: { from: false, to: true } } }))
     expect(lines).toEqual([{ field: 'acknowledged', label: '확인', from: '미확인', to: '확인됨' }])
     expect(summarizeActivity(activity({ changes: { acknowledged: { from: true, to: false } } }))).toBe('확인: 확인됨 → 미확인')
+  })
+  it('명세가 바뀌어 서버가 확인을 푼 기록은 확인 줄이 함께 나온다', () => {
+    const edited = activity({ changes: { acknowledged: { from: true, to: false }, title: { from: '옛 제목', to: '새 제목' } } })
+    expect(describeChanges(edited)).toEqual([
+      { field: 'acknowledged', label: '확인', from: '확인됨', to: '미확인' },
+      { field: 'title', label: '제목', from: '옛 제목', to: '새 제목' },
+    ])
+    expect(summarizeActivity(edited)).toBe('확인: 확인됨 → 미확인 · 제목: 옛 제목 → 새 제목')
+  })
+  it('검토에서 진행으로 되돌려 확인이 풀린 기록은 사유가 상태 줄에 붙고 확인 줄이 따로 나온다', () => {
+    const rejected = activity({
+      changes: {
+        acknowledged: { from: true, to: false },
+        status: { from: 'review', to: 'doing' },
+        status_reason: { from: null, to: '검토 → 진행' },
+      },
+    })
+    expect(describeChanges(rejected)).toEqual([
+      { field: 'acknowledged', label: '확인', from: '확인됨', to: '미확인' },
+      { field: 'status', label: '상태', from: '검토', to: '진행', reason: '검토 → 진행' },
+    ])
+  })
+})
+
+describe('결정 필요의 변경', () => {
+  it('질문을 정하면 없음에서 질문으로 보인다', () => {
+    const set = activity({ changes: { decision_needed: { from: null, to: '캐시를 쓸지 정해 주세요' } } })
+    expect(describeChanges(set)).toEqual([{ field: 'decision_needed', label: '결정 필요', from: '없음', to: '캐시를 쓸지 정해 주세요' }])
+    expect(summarizeActivity(set)).toBe('결정 필요: 없음 → 캐시를 쓸지 정해 주세요')
+  })
+  it('질문을 고치면 이전 질문과 새 질문을 모두 보인다', () => {
+    const edited = activity({ changes: { decision_needed: { from: '캐시를 쓸지', to: '캐시를 Redis로 할지' } } })
+    expect(summarizeActivity(edited)).toBe('결정 필요: 캐시를 쓸지 → 캐시를 Redis로 할지')
+  })
+  it('질문을 지우면 질문에서 없음으로 보인다', () => {
+    const cleared = activity({ changes: { decision_needed: { from: '캐시를 쓸지 정해 주세요', to: null } } })
+    expect(describeChanges(cleared)).toEqual([{ field: 'decision_needed', label: '결정 필요', from: '캐시를 쓸지 정해 주세요', to: '없음' }])
+    expect(summarizeActivity(cleared)).toBe('결정 필요: 캐시를 쓸지 정해 주세요 → 없음')
+  })
+  it('긴 질문은 다른 문자열 필드처럼 60자에서 자른다', () => {
+    const long = activity({ changes: { decision_needed: { from: null, to: '가'.repeat(100) } } })
+    expect(describeChanges(long)[0].to).toBe(`${'가'.repeat(60)}…`)
+  })
+  it('생성 기록은 결정 필요가 있어도 제목 한 줄만 낸다', () => {
+    const created = activity({ kind: 'created', changes: { title: { to: '새 이슈' }, decision_needed: { to: '질문' } } })
+    expect(describeChanges(created)).toEqual([{ field: 'title', label: '제목', from: null, to: '새 이슈' }])
   })
 })
 
@@ -127,6 +173,36 @@ describe('주제 변경', () => {
   it('이름을 모르면 ID를 보인다', () => {
     expect(describeChanges(change)[0].to).toBe('주제 #7')
     expect(describeChanges(change, { topicName: () => undefined })[0].to).toBe('주제 #7')
+  })
+})
+
+describe('마일스톤 변경', () => {
+  const names: Record<number, string> = { 2: 'v0.2.0', 5: 'v0.3.0' }
+  const milestoneName = (id: number) => names[id]
+  const change = activity({ changes: { milestone: { from: null, to: 2 } } })
+  it('마일스톤 ID를 이름으로 바꾸는 조회가 있으면 이름을 보인다', () => {
+    expect(describeChanges(change, { milestoneName })).toEqual([{ field: 'milestone', label: '마일스톤', from: '없음', to: 'v0.2.0' }])
+    expect(summarizeActivity(change, { milestoneName })).toBe('마일스톤: 없음 → v0.2.0')
+  })
+  it('이름을 모르면 ID를 보인다', () => {
+    expect(describeChanges(change)[0].to).toBe('마일스톤 #2')
+    expect(describeChanges(change, { milestoneName: () => undefined })[0].to).toBe('마일스톤 #2')
+    expect(summarizeActivity(change)).toBe('마일스톤: 없음 → 마일스톤 #2')
+  })
+  it('다른 마일스톤으로 옮기거나 지우면 이전 값과 새 값을 모두 보인다', () => {
+    const moved = activity({ changes: { milestone: { from: 2, to: 5 } } })
+    const cleared = activity({ changes: { milestone: { from: 5, to: null } } })
+    expect(summarizeActivity(moved, { milestoneName })).toBe('마일스톤: v0.2.0 → v0.3.0')
+    expect(summarizeActivity(cleared, { milestoneName })).toBe('마일스톤: v0.3.0 → 없음')
+  })
+  it('주제와 함께 바뀌어도 각자 이름을 찾는다', () => {
+    const both = activity({ changes: { topic: { from: null, to: 7 }, milestone: { from: null, to: 2 } } })
+    const lines = describeChanges(both, { topicName: () => '이슈 흐름/트리아지', milestoneName })
+    expect(lines.map((l) => `${l.label}:${l.to}`)).toEqual(['주제:이슈 흐름/트리아지', '마일스톤:v0.2.0'])
+  })
+  it('생성 기록은 마일스톤이 있어도 제목 한 줄만 낸다', () => {
+    const created = activity({ kind: 'created', changes: { title: { to: '새 이슈' }, milestone: { to: 2 } } })
+    expect(describeChanges(created, { milestoneName })).toEqual([{ field: 'title', label: '제목', from: null, to: '새 이슈' }])
   })
 })
 
@@ -163,8 +239,8 @@ describe('summarizeActivity', () => {
   it('생성은 제목, 수정은 필드 요약이다', () => {
     expect(summarizeActivity(activity({ kind: 'created', changes: { title: { to: '새 이슈' } } }))).toBe('새 이슈')
     expect(
-      summarizeActivity(activity({ changes: { status: { from: 'todo', to: 'doing' }, body: { from: 'a', to: 'b' } } })),
-    ).toBe('상태: 할 일 → 진행 · 본문 수정')
+      summarizeActivity(activity({ changes: { status: { from: 'backlog', to: 'doing' }, body: { from: 'a', to: 'b' } } })),
+    ).toBe('상태: 백로그 → 진행 · 본문 수정')
   })
   it('요약이 있는 댓글은 본문과 무관하게 요약이다', () => {
     expect(summarizeActivity(activity({ kind: 'commented', summary: '서버 랭킹 함수 구현', body: '긴 본문\n둘째 줄' }))).toBe('서버 랭킹 함수 구현')

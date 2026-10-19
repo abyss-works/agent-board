@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatKst, formatKstDate, formatKstTime, formatRelative } from './time'
+import { formatKst, formatKstDate, formatKstTime, formatRelative, formatRemaining } from './time'
 
 describe('formatKst', () => {
   it('UTC 시각을 KST(+9)로 바꿔 날짜와 시각을 적는다', () => {
@@ -32,5 +32,33 @@ describe('formatRelative', () => {
   })
   it('미래 시각은 방금으로 본다', () => {
     expect(formatRelative('2026-10-17T12:00:05.000Z', now)).toBe('방금')
+  })
+})
+
+describe('formatRemaining', () => {
+  const now = new Date('2026-10-19T01:20:00.000Z')
+  it('분과 초를 함께 적는다', () => {
+    expect(formatRemaining('2026-10-19T01:29:30.000Z', now)).toBe('9분 30초')
+    expect(formatRemaining('2026-10-19T01:21:01.000Z', now)).toBe('1분 1초')
+  })
+  it('딱 떨어지는 분은 초를 생략한다', () => {
+    expect(formatRemaining('2026-10-19T01:30:00.000Z', now)).toBe('10분')
+    expect(formatRemaining('2026-10-19T01:21:00.000Z', now)).toBe('1분')
+  })
+  it('1분 미만은 초만 적는다', () => {
+    expect(formatRemaining('2026-10-19T01:20:59.000Z', now)).toBe('59초')
+    expect(formatRemaining('2026-10-19T01:20:01.000Z', now)).toBe('1초')
+  })
+  it('남은 밀리초는 올려서 초로 센다', () => {
+    expect(formatRemaining('2026-10-19T01:20:00.400Z', now)).toBe('1초')
+    expect(formatRemaining('2026-10-19T01:20:59.001Z', now)).toBe('1분')
+  })
+  it('만료 시각이 지금이거나 지났으면 만료됨이다', () => {
+    expect(formatRemaining('2026-10-19T01:20:00.000Z', now)).toBe('만료됨')
+    expect(formatRemaining('2026-10-19T01:19:59.000Z', now)).toBe('만료됨')
+    expect(formatRemaining('2026-10-18T01:20:00.000Z', now)).toBe('만료됨')
+  })
+  it('잘못된 값은 그대로 돌려준다', () => {
+    expect(formatRemaining('nope', now)).toBe('nope')
   })
 })

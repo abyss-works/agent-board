@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,34 @@ func TestDescribeActivityShowsSummaryOfComments(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := describeActivity(tc.act); got != tc.want {
+			t.Errorf("%s: describeActivity = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDescribeActivityShowsFieldChanges(t *testing.T) {
+	change := func(from, to string) model.Change {
+		c := model.Change{To: json.RawMessage(to)}
+		if from != "" {
+			c.From = json.RawMessage(from)
+		}
+		return c
+	}
+	cases := []struct {
+		name    string
+		changes map[string]model.Change
+		want    string
+	}{
+		{"milestone assigned", map[string]model.Change{"milestone": change("null", "2")}, "milestone: - → 2"},
+		{"milestone moved", map[string]model.Change{"milestone": change("2", "3")}, "milestone: 2 → 3"},
+		{"milestone cleared", map[string]model.Change{"milestone": change("3", "null")}, "milestone: 3 → -"},
+		{"strings are shown without quotes", map[string]model.Change{"status": change(`"backlog"`, `"doing"`)}, "status: backlog → doing"},
+		{"fields are sorted by name", map[string]model.Change{"status": change(`"backlog"`, `"doing"`), "milestone": change("null", "2")}, "milestone: - → 2; status: backlog → doing"},
+		{"a missing previous value", map[string]model.Change{"milestone": change("", "2")}, "milestone: - → 2"},
+	}
+	for _, tc := range cases {
+		act := model.Activity{Kind: model.ActivityUpdated, Changes: tc.changes}
+		if got := describeActivity(act); got != tc.want {
 			t.Errorf("%s: describeActivity = %q, want %q", tc.name, got, tc.want)
 		}
 	}

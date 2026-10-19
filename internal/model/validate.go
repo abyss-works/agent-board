@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -17,6 +18,7 @@ const (
 	MaxDependsOn        = 20
 	MaxRefs             = 50
 	MaxRecheckRunes     = 500
+	MaxDecisionRunes    = 500
 	MaxSummaryRunes     = 30
 	MaxReasonRunes      = 500
 	MaxTopicNameRunes   = 50
@@ -26,6 +28,15 @@ const (
 	DefaultPriority     = P2
 	DefaultProjectState = ProjectActive
 )
+
+// Limits on the fields of a milestone.
+const (
+	MaxMilestoneNameRunes        = 50
+	MaxMilestoneDescriptionRunes = 2000
+)
+
+// DateLayout is the format of a calendar date, as in a milestone's target date.
+const DateLayout = "2006-01-02"
 
 // FieldError is one rule violation located by field path.
 type FieldError struct {
@@ -143,6 +154,11 @@ func ValidateIssue(i *Issue) error {
 	} else if i.RecheckCondition != nil {
 		e.add("recheck_condition", "종류가 observation일 때만 쓸 수 있습니다.")
 	}
+	if i.DecisionNeeded != nil {
+		if n := utf8.RuneCountInString(*i.DecisionNeeded); n < 1 || n > MaxDecisionRunes {
+			e.add("decision_needed", "1~%d자여야 합니다.", MaxDecisionRunes)
+		}
+	}
 	return e.orNil()
 }
 
@@ -205,6 +221,43 @@ func ValidateTopicName(name string) error {
 	}
 	if strings.Contains(name, "/") {
 		e.add("name", "'/'를 넣을 수 없습니다.")
+	}
+	return e.orNil()
+}
+
+// ValidDate reports whether v is a calendar date written YYYY-MM-DD.
+func ValidDate(v string) bool {
+	t, err := time.Parse(DateLayout, v)
+	return err == nil && t.Format(DateLayout) == v
+}
+
+// ValidateMilestone checks the fields of a milestone: a name of 1 to
+// MaxMilestoneNameRunes characters, a description of at most
+// MaxMilestoneDescriptionRunes characters and, when present, a target date.
+func ValidateMilestone(name, description string, targetDate *string) error {
+	var e ValidationError
+	if n := utf8.RuneCountInString(name); n < 1 || n > MaxMilestoneNameRunes {
+		e.add("name", "1~%d자여야 합니다.", MaxMilestoneNameRunes)
+	}
+	if utf8.RuneCountInString(description) > MaxMilestoneDescriptionRunes {
+		e.add("description", "%d자를 넘을 수 없습니다.", MaxMilestoneDescriptionRunes)
+	}
+	if targetDate != nil && !ValidDate(*targetDate) {
+		e.add("target_date", "YYYY-MM-DD 형식의 날짜여야 합니다.")
+	}
+	return e.orNil()
+}
+
+// ValidateDeviceRequest checks a request for a device authorization: the
+// actor must be a declared agent and the client host must follow the rule of
+// the X-Client-Host header.
+func ValidateDeviceRequest(actor, clientHost string, actors map[string]Actor) error {
+	var e ValidationError
+	if a, ok := actors[actor]; !ok || a.Kind != ActorAgent {
+		e.add("actor", "선언된 agent 종류 행위자여야 합니다.")
+	}
+	if !ValidClientHost(clientHost) {
+		e.add("client_host", "X-Client-Host와 같은 규칙의 기기 이름(1~64자)이어야 합니다.")
 	}
 	return e.orNil()
 }

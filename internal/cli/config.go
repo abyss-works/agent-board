@@ -13,13 +13,15 @@ import (
 )
 
 // Config is the per-machine configuration file. Empty fields are omitted
-// from the file.
+// from the file. Token is the shared token, which only a user actor may use.
+// Tokens holds the actor tokens that "agb login" received, by actor ID.
 type Config struct {
-	URL        string `json:"url,omitempty"`
-	Token      string `json:"token,omitempty"`
-	Actor      string `json:"actor,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	ClientHost string `json:"client_host,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Token      string            `json:"token,omitempty"`
+	Tokens     map[string]string `json:"tokens,omitempty"`
+	Actor      string            `json:"actor,omitempty"`
+	SessionID  string            `json:"session_id,omitempty"`
+	ClientHost string            `json:"client_host,omitempty"`
 }
 
 // configKeys are the keys "agb config set" accepts. The token is set only
@@ -96,8 +98,10 @@ type Settings struct {
 }
 
 // resolveSettings applies the precedence flag > environment > file and
-// fills the defaults for the session ID and the client host. Values that
-// would be rejected by the server are refused here with a usage error.
+// fills the defaults for the session ID and the client host. The token is
+// AGB_TOKEN, else the token of the requesting actor in the file, else the
+// shared token in the file. Values that would be rejected by the server are
+// refused here with a usage error.
 func resolveSettings(g *globals, getenv func(string) string, file Config, now time.Time, hostname string) (Settings, error) {
 	pick := func(flag, envName, fileValue string) string {
 		if flag != "" {
@@ -110,10 +114,13 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 	}
 	s := Settings{
 		URL:        strings.TrimRight(pick(g.url, "AGB_URL", file.URL), "/"),
-		Token:      pick("", "AGB_TOKEN", file.Token),
-		Actor:      pick(g.actor, "AGB_ACTOR", file.Actor),
+		Actor:      actorOf(g, getenv, file),
 		SessionID:  pick(g.sessionID, "AGB_SESSION_ID", file.SessionID),
 		ClientHost: pick(g.clientHost, "AGB_CLIENT_HOST", file.ClientHost),
+	}
+	s.Token = pick("", "AGB_TOKEN", file.Tokens[s.Actor])
+	if s.Token == "" {
+		s.Token = file.Token
 	}
 	if s.SessionID == "" {
 		s.SessionID = defaultSessionID(now)
@@ -136,15 +143,40 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 	return s, nil
 }
 
+// actorOf is the actor a run acts as: the flag, else AGB_ACTOR, else the file.
+func actorOf(g *globals, getenv func(string) string, file Config) string {
+	if g.actor != "" {
+		return g.actor
+	}
+	if v := getenv("AGB_ACTOR"); v != "" {
+		return v
+	}
+	return file.Actor
+}
+
 // requireAuth checks that the settings can make an authenticated request.
 func (s Settings) requireAuth() error {
 	if s.Token == "" {
-		return usageErrorf("토큰이 없습니다. AGB_TOKEN 환경변수를 두거나 `agb config set-token`으로 저장하세요.")
+		return usageErrorf("토큰이 없습니다. `agb login --actor %s`로 이 행위자의 토큰을 받으세요. (AGB_TOKEN 환경변수와 `agb config set-token`의 공용 토큰은 사용자 행위자 전용입니다.)", orPlaceholder(s.Actor))
 	}
+	return s.requireActor()
+}
+
+// requireActor checks that the settings name an actor.
+func (s Settings) requireActor() error {
 	if s.Actor == "" {
 		return usageErrorf("행위자가 없습니다. --actor, AGB_ACTOR, 또는 `agb config set actor <ID>`로 설정하세요.")
 	}
 	return nil
+}
+
+// orPlaceholder is the actor to write into a command shown to the user, or
+// <ID> when the actor is not known.
+func orPlaceholder(actor string) string {
+	if actor == "" {
+		return "<ID>"
+	}
+	return actor
 }
 
 // defaultSessionID is cli-YYYYMMDD in the local date of now.

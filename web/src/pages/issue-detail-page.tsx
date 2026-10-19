@@ -2,14 +2,16 @@ import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'luci
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
-import type { Issue, IssuePatch, IssueStatus, IssueType } from '@/api/types'
+import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilestones, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
+import { MILESTONE_STATUSES, type Issue, type IssuePatch, type IssueStatus, type IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
+import { DecisionNeeded } from '@/components/issue/decision-needed'
 import { InlineInput, MarkdownArea } from '@/components/issue/inline-edit'
 import { IssueLink } from '@/components/issue/issue-link'
 import { parseIssueKeys, parseLabels, parseRefs } from '@/lib/parse'
 import { ActorChip, LabelChip } from '@/components/issue/meta'
+import { MilestoneSelect } from '@/components/issue/milestone-select'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from '@/components/issue/options'
 import { PropertySelect } from '@/components/issue/property-select'
 import { ReasonDialog } from '@/components/issue/reason-dialog'
@@ -21,7 +23,9 @@ import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { useFlash } from '@/hooks/use-flash'
+import { decisionPatch } from '@/lib/decision'
 import { STATUS_LABEL } from '@/lib/labels'
+import { milestoneNameMap } from '@/lib/milestones'
 import { ISSUES_PATH, openedFromScreen } from '@/lib/overlay'
 import { isEditableTarget } from '@/lib/shortcuts'
 import { reasonRequired, statusChangePatch } from '@/lib/status'
@@ -64,6 +68,10 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const topics = useTopics(issue.project)
   const allTopics = useTopics(issue.project, 'all')
   const topicNames = topicNameMap(allTopics.data?.items ?? [])
+  // 고를 수 있는 마일스톤은 열린 것만이고, 활동 기록의 마일스톤 이름은 닫히거나 삭제된 것까지 포함한 전체에서 찾는다.
+  const milestones = useMilestones(issue.project)
+  const allMilestones = useMilestones(issue.project, MILESTONE_STATUSES)
+  const milestoneNames = milestoneNameMap(allMilestones.data?.items ?? [])
   const [editingBody, setEditingBody] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -223,7 +231,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
                 {items && items.length > 0 ? (
                   <ul>
                     {items.map((a) => (
-                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} topicName={(id) => topicNames.get(id)} />
+                      <ActivityItem key={a.id} activity={a} showIssue={false} flash={flash.has(a.id)} topicName={(id) => topicNames.get(id)} milestoneName={(id) => milestoneNames.get(id)} />
                     ))}
                   </ul>
                 ) : null}
@@ -235,6 +243,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
 
       <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l px-4 py-3">
         <div className="mb-1 text-[0.6875rem] font-medium text-muted-foreground">속성</div>
+        <DecisionNeeded value={issue.decision_needed} onCommit={(v) => save(decisionPatch(v), '결정 필요')} />
         <Property label="상태" note={issue.status_reason}>
           <PropertySelect value={issue.status} options={STATUS_OPTIONS} onChange={changeStatus} title="상태" className="-ml-1.5" />
         </Property>
@@ -276,6 +285,15 @@ function IssueDetail({ issue }: { issue: Issue }) {
             value={issue.topic}
             fallbackLabel={issue.topic_path}
             onChange={(id) => id !== issue.topic && save({ topic: id }, '주제')}
+            className="-ml-1.5"
+          />
+        </Property>
+        <Property label="마일스톤">
+          <MilestoneSelect
+            milestones={milestones.data?.items ?? []}
+            value={issue.milestone}
+            fallbackLabel={issue.milestone_name}
+            onChange={(id) => id !== issue.milestone && save({ milestone: id }, '마일스톤')}
             className="-ml-1.5"
           />
         </Property>

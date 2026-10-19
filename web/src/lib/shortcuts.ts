@@ -1,9 +1,10 @@
-/** 사이드바 주요 메뉴 단축키. 이 네 개 말고 다른 단축키는 두지 않는다. */
+/** 사이드바 주요 메뉴 단축키. 이 다섯 개 말고 다른 단축키는 두지 않는다. */
 export const MENU_SHORTCUTS: ReadonlyArray<{ key: string; path: string; label: string }> = [
   { key: '1', path: '/overview', label: '현황' },
   { key: '2', path: '/board', label: '보드' },
   { key: '3', path: '/issues', label: '이슈' },
   { key: '4', path: '/activity', label: '활동' },
+  { key: '5', path: '/milestones', label: '마일스톤' },
 ]
 
 export interface EditableLike {

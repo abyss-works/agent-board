@@ -15,7 +15,7 @@ import (
 // sentence) and the body in its fenced block.
 func skillTemplates(t *testing.T) []Template {
 	t.Helper()
-	path := filepath.Join("..", "..", "skills", "agent-board", "SKILL.md")
+	path := filepath.Join("..", "..", "skills", "tool-agb", "SKILL.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read the skill: %v", err)
@@ -103,7 +103,6 @@ func TestTemplateHeadings(t *testing.T) {
 		TypeFeature:     {"배경", "할 일", "완료 조건"},
 		TypeBug:         {"현상", "재현", "원인", "완료 조건"},
 		TypeDesign:      {"배경", "정할 것", "후보", "제약", "완료 조건"},
-		TypeDecision:    {"현황", "결정할 것", "선택지", "영향"},
 		TypeIdea:        {"내용", "출처", "검토할 것"},
 		TypeObservation: {"현상", "지금 고치지 않는 이유", "다시 볼 때 할 일"},
 	}
@@ -113,8 +112,13 @@ func TestTemplateHeadings(t *testing.T) {
 			t.Errorf("%s headings = %v (found %v), want %v", typ, tpl.Headings, ok, headings)
 		}
 	}
-	if _, ok := TemplateFor(IssueType("task")); ok {
-		t.Error("an unknown type has no template")
+	for _, typ := range []IssueType{"task", "decision"} {
+		if _, ok := TemplateFor(typ); ok {
+			t.Errorf("%s has no template", typ)
+		}
+	}
+	if len(Templates) != 5 {
+		t.Errorf("templates = %d, want one for each of the 5 types", len(Templates))
 	}
 }
 

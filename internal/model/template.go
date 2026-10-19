@@ -15,7 +15,7 @@ type Template struct {
 }
 
 // Templates holds one template per issue type in the order of IssueTypes.
-// The text is the "이슈 템플릿" section of skills/agent-board/SKILL.md, which is
+// The text is the "이슈 템플릿" section of skills/tool-agb/SKILL.md, which is
 // the source; template_test.go compares the two so they cannot drift apart.
 var Templates = []Template{
 	newTemplate(TypeFeature, "만들거나 바꿀 것을 명사형으로 쓴다.",
@@ -57,22 +57,7 @@ var Templates = []Template{
 			"지켜야 할 결정, 규칙, 환경.\n"+
 			"\n"+
 			"## 완료 조건\n"+
-			"- 결정 기록이나 설계 문서가 생기고 참조(`doc:`)로 연결된다.\n",
-	),
-	newTemplate(TypeDecision, "결정할 대상을 쓴다.",
-		"## 현황\n"+
-			"결정이 필요한 이유와 지금 상태.\n"+
-			"\n"+
-			"## 결정할 것\n"+
-			"결정 하나를 한 문장으로.\n"+
-			"\n"+
-			"## 선택지\n"+
-			"1. 선택지: 무엇을 뜻하는지와 고른 뒤의 결과\n"+
-			"2. 선택지: 무엇을 뜻하는지와 고른 뒤의 결과\n"+
-			"- 추천: 선택지 번호와 근거\n"+
-			"\n"+
-			"## 영향\n"+
-			"결정을 기다리는 작업(이슈 키)과 결정이 늦을 때 생기는 일.\n",
+			"- 정한 내용이 명세나 원칙 문서에 반영되고 참조(`doc:`)로 연결된다.\n",
 	),
 	newTemplate(TypeIdea, "아이디어를 명사형으로 쓴다.",
 		"## 내용\n"+

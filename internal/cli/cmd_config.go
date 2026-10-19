@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -41,7 +42,8 @@ var configShowCmd = &command{
 	name: "show", summary: "설정 파일 내용 표시 (토큰은 가림)",
 	usage: `사용법: agb config show [--json]
 
-설정 파일의 값을 보여 줍니다. 토큰은 저장 여부만 보여 줍니다.
+설정 파일의 값을 보여 줍니다. 토큰 값은 보여 주지 않습니다. 공용 토큰은 저장 여부만, 행위자별 토큰은
+토큰이 있는 행위자의 이름만 보여 줍니다.
 `,
 	run: func(a *App, _ context.Context, g *globals, args []string) error {
 		pos, err := parseArgs(leafFlags("config show", g), args)
@@ -59,10 +61,15 @@ var configShowCmd = &command{
 		if err != nil {
 			return err
 		}
+		actorTokens := make([]string, 0, len(cfg.Tokens))
+		for actor := range cfg.Tokens {
+			actorTokens = append(actorTokens, actor)
+		}
+		sort.Strings(actorTokens)
 		if a.jsonOutput(g) {
 			raw, _ := json.Marshal(map[string]any{
 				"path": path, "url": cfg.URL, "actor": cfg.Actor, "session_id": cfg.SessionID, "client_host": cfg.ClientHost,
-				"token_set": cfg.Token != "",
+				"token_set": cfg.Token != "", "actor_tokens": actorTokens,
 			})
 			writeJSON(a.Stdout, raw)
 			return nil
@@ -75,6 +82,7 @@ var configShowCmd = &command{
 			{"path", path},
 			{"url", orDash(cfg.URL)}, {"actor", orDash(cfg.Actor)}, {"session_id", orDash(cfg.SessionID)}, {"client_host", orDash(cfg.ClientHost)},
 			{"token", token},
+			{"actor_tokens", joinOr(actorTokens, "(없음)")},
 		})
 		return nil
 	},
@@ -188,12 +196,14 @@ var configUnsetCmd = &command{
 }
 
 var configSetTokenCmd = &command{
-	name: "set-token", summary: "토큰 저장 (stdin에서 읽음)",
+	name: "set-token", summary: "공용 토큰 저장 (stdin에서 읽음)",
 	usage: `사용법: agb config set-token < 토큰파일
         echo "$TOKEN" | agb config set-token
 
 토큰을 표준 입력의 첫 줄에서 읽어 설정 파일에 저장합니다. 터미널에서 실행하면
 입력이 화면에 표시되지 않습니다. 토큰은 어떤 출력에도 쓰지 않습니다.
+
+공용 토큰은 사용자 행위자(owner)만 씁니다. 에이전트 행위자의 토큰은 agb login --actor <ID> 로 받습니다.
 `,
 	run: func(a *App, _ context.Context, g *globals, args []string) error {
 		pos, err := parseArgs(leafFlags("config set-token", g), args)
@@ -225,21 +235,32 @@ var configSetTokenCmd = &command{
 	},
 }
 
-// updateConfig loads, changes and saves the config file.
-func (a *App) updateConfig(g *globals, change func(*Config) error, what string) error {
+// modifyConfig loads, changes and saves the config file and returns its path.
+// It reads the file anew each time, so a command that runs for long does not
+// write back what it read when it started.
+func (a *App) modifyConfig(g *globals, change func(*Config) error) (string, error) {
 	path, err := a.configPath(g)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cfg, err := loadConfig(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := change(&cfg); err != nil {
-		return err
+		return "", err
 	}
 	if err := saveConfig(path, cfg); err != nil {
-		return fmt.Errorf("설정 파일을 쓰지 못했습니다: %w", err)
+		return "", fmt.Errorf("설정 파일을 쓰지 못했습니다: %w", err)
+	}
+	return path, nil
+}
+
+// updateConfig is modifyConfig followed by a line that says what changed.
+func (a *App) updateConfig(g *globals, change func(*Config) error, what string) error {
+	path, err := a.modifyConfig(g, change)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(a.Stdout, "%s: %s\n", what, path)
 	return nil

@@ -1,15 +1,24 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useApi, useAppState } from '@/app/state'
+import { milestoneListParams } from '@/lib/milestones'
 import { issueListQuery, type IssueListFilters } from './client'
 import type {
   Activity,
   Actor,
+  ActorToken,
+  ActorTokenFilter,
   Board,
+  DeviceAuthorization,
+  DeviceAuthorizationPatch,
   Issue,
   IssueCreate,
   IssuePatch,
   IssueSummary,
   LabelCount,
+  Milestone,
+  MilestoneCreate,
+  MilestonePatch,
+  MilestoneStatus,
   Overview,
   Page,
   Project,
@@ -132,6 +141,23 @@ export function useTopics(projectKey: string | null, status: TopicStatus | 'all'
   })
 }
 
+const OPEN_ONLY: readonly MilestoneStatus[] = ['open']
+
+/**
+ * 프로젝트의 마일스톤 목록. 기본은 열린 것만이고, 서버가 목표일 순(목표일이 없는 것은 뒤)으로 돌려준다.
+ * 프로젝트를 고르지 않으면 부르지 않는다.
+ */
+export function useMilestones(projectKey: string | null, statuses: readonly MilestoneStatus[] = OPEN_ONLY) {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  const params = milestoneListParams(statuses)
+  return useQuery({
+    queryKey: [inst, 'milestones', projectKey, params.status ?? 'open'],
+    queryFn: ({ signal }) => api.get<{ items: Milestone[] }>(`/projects/${projectKey}/milestones`, params, signal),
+    enabled: projectKey !== null,
+  })
+}
+
 /** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 3초 갱신에서 뺀다. */
 export function useTemplates() {
   const api = useApi()
@@ -152,6 +178,38 @@ export function useActors() {
     queryFn: ({ signal }) => api.get<{ items: Actor[] }>('/actors', undefined, signal),
     refetchInterval: false,
     staleTime: 60_000,
+  })
+}
+
+function deviceAuthorizationKey(inst: string, userCode: string | null) {
+  return [inst, 'device-authorization', userCode]
+}
+
+/**
+ * 기기 승인 요청 한 건. 정규화한 코드(`XXXX-XXXX`)로 조회하고, 코드가 없으면 부르지 않는다.
+ * 요청은 CLI가 토큰을 받아 가면 서버에서 지워지므로 3초 갱신과 창 포커스 갱신에서 뺀다.
+ * 승인·거부한 뒤 화면의 결과가 사라지지 않게 하려는 것이다.
+ */
+export function useDeviceAuthorization(userCode: string | null) {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: deviceAuthorizationKey(inst, userCode),
+    queryFn: ({ signal }) => api.get<DeviceAuthorization>(`/device-authorizations/${userCode}`, undefined, signal),
+    enabled: userCode !== null,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+}
+
+/** 발급한 행위자 토큰 목록. 서버가 id 내림차순으로 돌려준다. */
+export function useActorTokens(status: ActorTokenFilter) {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: [inst, 'tokens', status],
+    queryFn: ({ signal }) => api.get<{ items: ActorToken[] }>('/tokens', { status }, signal),
   })
 }
 
@@ -281,6 +339,33 @@ export function useDeleteTopic() {
   })
 }
 
+export function useCreateMilestone() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ project, body }: { project: string; body: MilestoneCreate }) => api.post<Milestone>(`/projects/${project}/milestones`, body),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function usePatchMilestone() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: MilestonePatch }) => api.patch<Milestone>(`/milestones/${id}`, patch),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useDeleteMilestone() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<Milestone>(`/milestones/${id}`),
+    onSuccess: () => invalidate(),
+  })
+}
+
 export function useCreateProject() {
   const api = useApi()
   const invalidate = useInvalidateInstance()
@@ -304,6 +389,30 @@ export function useDeleteProject() {
   const invalidate = useInvalidateInstance()
   return useMutation({
     mutationFn: (key: string) => api.delete<Project>(`/projects/${key}`),
+    onSuccess: () => invalidate(),
+  })
+}
+
+/** 대기 중인 기기 승인 요청을 승인하거나 거부한다. 응답을 조회 결과로 바로 쓴다. 다시 불러오면 CLI가 토큰을 받아 간 뒤에는 요청이 없어 결과가 사라진다. */
+export function useDecideDeviceAuthorization() {
+  const api = useApi()
+  const qc = useQueryClient()
+  const inst = useKeyPrefix()
+  return useMutation({
+    mutationFn: ({ userCode, status }: { userCode: string; status: DeviceAuthorizationPatch['status'] }) =>
+      api.patch<DeviceAuthorization>(`/device-authorizations/${userCode}`, { status }),
+    onSuccess: (auth, { userCode }) => {
+      qc.setQueryData(deviceAuthorizationKey(inst, userCode), auth)
+    },
+  })
+}
+
+/** 활성 토큰 하나를 폐기한다. 폐기한 뒤 이 인스턴스의 조회를 다시 불러온다. */
+export function useRevokeActorToken() {
+  const api = useApi()
+  const invalidate = useInvalidateInstance()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<ActorToken>(`/tokens/${id}`),
     onSuccess: () => invalidate(),
   })
 }

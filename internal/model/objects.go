@@ -42,6 +42,71 @@ type Topic struct {
 	UpdatedBy string      `json:"updated_by"`
 }
 
+// MilestoneProgress counts the issues of a milestone: Total leaves out
+// cancelled and deleted issues, Done is the part of Total that is done.
+type MilestoneProgress struct {
+	Total int `json:"total"`
+	Done  int `json:"done"`
+}
+
+// Milestone groups the issues of a project into a release or a goal. The
+// target date is a calendar date written YYYY-MM-DD. ClosedAt is set while the
+// milestone is closed. Progress is computed whenever a milestone is read.
+type Milestone struct {
+	ID          int64             `json:"id"`
+	Project     string            `json:"project"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	TargetDate  *string           `json:"target_date"`
+	Status      MilestoneStatus   `json:"status"`
+	Progress    MilestoneProgress `json:"progress"`
+	ClosedAt    *Time             `json:"closed_at"`
+	CreatedAt   Time              `json:"created_at"`
+	UpdatedAt   Time              `json:"updated_at"`
+	CreatedBy   string            `json:"created_by"`
+	UpdatedBy   string            `json:"updated_by"`
+}
+
+// Token is an actor token as the API lists it. The secret is not part of it;
+// only the exchange that issues the token shows the secret, once.
+type Token struct {
+	ID         int64   `json:"id"`
+	Actor      string  `json:"actor"`
+	ClientHost string  `json:"client_host"`
+	CreatedAt  Time    `json:"created_at"`
+	CreatedBy  string  `json:"created_by"`
+	LastUsedAt *Time   `json:"last_used_at"`
+	RevokedAt  *Time   `json:"revoked_at"`
+	RevokedBy  *string `json:"revoked_by"`
+}
+
+// IssuedToken is the token exchange response: the token and its secret.
+type IssuedToken struct {
+	Token
+	Secret string `json:"token"`
+}
+
+// DeviceAuthorization is a request to give an agent actor a token on one
+// device. A user decides it by its user code.
+type DeviceAuthorization struct {
+	UserCode   string       `json:"user_code"`
+	Actor      string       `json:"actor"`
+	ClientHost string       `json:"client_host"`
+	Status     DeviceStatus `json:"status"`
+	CreatedAt  Time         `json:"created_at"`
+	ExpiresAt  Time         `json:"expires_at"`
+}
+
+// DeviceGrant is the response to creating a device authorization: the secret
+// device code the client exchanges for a token, the user code the user
+// enters, and the lifetime and polling interval in seconds.
+type DeviceGrant struct {
+	DeviceCode string `json:"device_code"`
+	UserCode   string `json:"user_code"`
+	ExpiresIn  int    `json:"expires_in"`
+	Interval   int    `json:"interval"`
+}
+
 // Issue is a full issue resource including the body.
 type Issue struct {
 	Key              string      `json:"key"`
@@ -57,8 +122,11 @@ type Issue struct {
 	DependsOn        []string    `json:"depends_on"`
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
+	DecisionNeeded   *string     `json:"decision_needed"`
 	Topic            *int64      `json:"topic"`
 	TopicPath        *string     `json:"topic_path"`
+	Milestone        *int64      `json:"milestone"`
+	MilestoneName    *string     `json:"milestone_name"`
 	StatusReason     *string     `json:"status_reason"`
 	AcknowledgedAt   *Time       `json:"acknowledged_at"`
 	AcknowledgedBy   *string     `json:"acknowledged_by"`
@@ -87,8 +155,11 @@ type IssueSummary struct {
 	DependsOn        []string    `json:"depends_on"`
 	Refs             []string    `json:"refs"`
 	RecheckCondition *string     `json:"recheck_condition"`
+	DecisionNeeded   *string     `json:"decision_needed"`
 	Topic            *int64      `json:"topic"`
 	TopicPath        *string     `json:"topic_path"`
+	Milestone        *int64      `json:"milestone"`
+	MilestoneName    *string     `json:"milestone_name"`
 	StatusReason     *string     `json:"status_reason"`
 	AcknowledgedAt   *Time       `json:"acknowledged_at"`
 	AcknowledgedBy   *string     `json:"acknowledged_by"`
@@ -109,7 +180,8 @@ func (i *Issue) Summary() IssueSummary {
 		Key: i.Key, Project: i.Project, Number: i.Number, Title: i.Title,
 		Type: i.Type, Status: i.Status, Priority: i.Priority,
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
-		RecheckCondition: i.RecheckCondition, Topic: i.Topic, TopicPath: i.TopicPath, StatusReason: i.StatusReason,
+		RecheckCondition: i.RecheckCondition, DecisionNeeded: i.DecisionNeeded, Topic: i.Topic, TopicPath: i.TopicPath,
+		Milestone: i.Milestone, MilestoneName: i.MilestoneName, StatusReason: i.StatusReason,
 		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
 		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,

@@ -1,8 +1,7 @@
-import type { ActivityKind, IssueStatus, IssueType, Priority, ProjectStatus } from '@/api/types'
+import type { ActivityKind, DeviceAuthorizationStatus, IssueStatus, IssueType, MilestoneStatus, Priority, ProjectStatus } from '@/api/types'
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   backlog: '백로그',
-  todo: '할 일',
   doing: '진행',
   review: '검토',
   done: '완료',
@@ -14,7 +13,6 @@ export const TYPE_LABEL: Record<IssueType, string> = {
   feature: '기능',
   bug: '버그',
   design: '설계',
-  decision: '결정 대기',
   idea: '아이디어',
   observation: '관측',
 }
@@ -30,6 +28,18 @@ export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   active: '활성',
   archived: '보관',
   deleted: '삭제',
+}
+
+export const MILESTONE_STATUS_LABEL: Record<MilestoneStatus, string> = {
+  open: '열림',
+  closed: '닫힘',
+  deleted: '삭제됨',
+}
+
+export const DEVICE_STATUS_LABEL: Record<DeviceAuthorizationStatus, string> = {
+  pending: '대기 중',
+  approved: '승인됨',
+  denied: '거부됨',
 }
 
 export const KIND_LABEL: Record<ActivityKind, string> = {
@@ -50,18 +60,24 @@ export const FIELD_LABEL: Record<string, string> = {
   depends_on: '선행 이슈',
   refs: '참조',
   recheck_condition: '재검토 조건',
+  decision_needed: '결정 필요',
   topic: '주제',
+  milestone: '마일스톤',
   status_reason: '상태 사유',
   acknowledged: '확인',
   project: '프로젝트',
 }
 
+/** 스키마 버전 6에서 없어졌지만 그 전의 활동 기록에 남아 있는 값의 이름 */
+const LEGACY_STATUS_LABEL: Record<string, string> = { todo: '할 일' }
+const LEGACY_TYPE_LABEL: Record<string, string> = { decision: '결정 대기' }
+
 export function statusLabel(s: string): string {
-  return (STATUS_LABEL as Record<string, string>)[s] ?? s
+  return (STATUS_LABEL as Record<string, string>)[s] ?? LEGACY_STATUS_LABEL[s] ?? s
 }
 
 export function typeLabel(t: string): string {
-  return (TYPE_LABEL as Record<string, string>)[t] ?? t
+  return (TYPE_LABEL as Record<string, string>)[t] ?? LEGACY_TYPE_LABEL[t] ?? t
 }
 
 export function fieldLabel(f: string): string {

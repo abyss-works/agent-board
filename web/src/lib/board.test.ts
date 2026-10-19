@@ -16,8 +16,11 @@ function issue(key: string, status: IssueSummary['status']): IssueSummary {
     depends_on: [],
     refs: [],
     recheck_condition: null,
+    decision_needed: null,
     topic: null,
     topic_path: null,
+    milestone: null,
+    milestone_name: null,
     status_reason: null,
     acknowledged_at: null,
     acknowledged_by: null,
@@ -36,7 +39,6 @@ const board: Board = {
   project: 'AGB',
   columns: [
     { status: 'backlog', total: 1, issues: [issue('AGB-1', 'backlog')] },
-    { status: 'todo', total: 0, issues: [] },
     { status: 'doing', total: 1, issues: [issue('AGB-2', 'doing')] },
     { status: 'review', total: 0, issues: [] },
     { status: 'done', total: 0, issues: [] },
@@ -46,19 +48,21 @@ const board: Board = {
 }
 
 describe('boardColumns', () => {
-  it('기본은 다섯 열이고 순서가 고정이다', () => {
+  it('기본은 네 열이고 순서가 고정이다', () => {
     const cols = boardColumns(board, false)
+    expect(cols.map((c) => c.status)).toEqual(['backlog', 'doing', 'review', 'done'])
     expect(cols.map((c) => c.status)).toEqual([...BOARD_STATUSES])
     expect(cols[0].issues.map((i) => i.key)).toEqual(['AGB-1'])
   })
   it('토글하면 취소 열을 더하고 삭제 열은 넣지 않는다', () => {
     const cols = boardColumns(board, true)
+    expect(cols.map((c) => c.status)).toEqual(['backlog', 'doing', 'review', 'done', 'cancelled'])
     expect(cols.map((c) => c.status)).toEqual([...BOARD_STATUSES, 'cancelled'])
     expect(cols.at(-1)?.issues.map((i) => i.key)).toEqual(['AGB-3'])
   })
   it('응답에 없는 상태의 열은 빈 열로 채운다', () => {
     const cols = boardColumns({ project: null, columns: [] }, true)
-    expect(cols).toHaveLength(6)
+    expect(cols).toHaveLength(5)
     expect(cols.every((c) => c.total === 0 && c.issues.length === 0)).toBe(true)
   })
 })

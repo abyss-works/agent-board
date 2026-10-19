@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useCreateIssue, useProjects, useTemplates, useTopics } from '@/api/queries'
+import { useCreateIssue, useMilestones, useProjects, useTemplates, useTopics } from '@/api/queries'
 import type { IssueCreate, IssueStatus, IssueType, Priority, Project } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { FieldError } from '@/components/feedback'
@@ -21,11 +21,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { decisionForCreate } from '@/lib/decision'
 import { TYPE_LABEL } from '@/lib/labels'
 import { parseLabels } from '@/lib/parse'
 import { composeBody, hasContent, parseBody, templateFields, toMarkdown, type FieldValues } from '@/lib/template-form'
 import { toastError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { MilestoneSelect } from './milestone-select'
 import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from './options'
 import { PropertySelect, type SelectOption } from './property-select'
 import { TopicSelect } from './topic-select'
@@ -49,7 +51,9 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
   const [priority, setPriority] = useState<Priority>('P2')
   const [labels, setLabels] = useState('')
   const [recheck, setRecheck] = useState('')
+  const [decision, setDecision] = useState('')
   const [topic, setTopic] = useState<number | null>(null)
+  const [milestone, setMilestone] = useState<number | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   // 본문은 두 가지 방식으로 쓴다. 템플릿 방식은 종류의 템플릿 제목마다 칸이 있고, 마크다운 방식은 템플릿이 미리 채워진 편집기다.
@@ -106,6 +110,10 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
   const topics = useTopics(effectiveProject || null)
   const topicItems = topics.data?.items ?? []
   const validTopic = topic !== null && topicItems.some((t) => t.id === topic) ? topic : null
+  // 마일스톤도 고른 프로젝트의 열린 것만 붙일 수 있고, 목록에 없는 값은 보내지 않는다.
+  const milestones = useMilestones(effectiveProject || null)
+  const milestoneItems = milestones.data?.items ?? []
+  const validMilestone = milestone !== null && milestoneItems.some((m) => m.id === milestone) ? milestone : null
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -129,7 +137,9 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
       ...(bodyText ? { body: bodyText } : {}),
       ...(labelList.length ? { labels: labelList } : {}),
       ...(type === 'observation' ? { recheck_condition: recheck.trim() } : {}),
+      ...decisionForCreate(decision),
       ...(validTopic !== null ? { topic: validTopic } : {}),
+      ...(validMilestone !== null ? { milestone: validMilestone } : {}),
     }
     create.mutate(payload, {
       onSuccess: (issue) => {
@@ -168,6 +178,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
             onChange={(v) => {
               setProject(v)
               setTopic(null)
+              setMilestone(null)
             }}
             title="프로젝트"
             className="border-border font-mono text-xs"
@@ -177,8 +188,9 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
           <PropertySelect value={status} options={STATUS_OPTIONS} onChange={setStatus} title="상태" className="border-border" />
           <PropertySelect value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} title="우선순위" className="border-border" />
           <TopicSelect topics={topicItems} value={validTopic} emptyLabel="주제 없음" onChange={setTopic} className="border-border" disabled={!effectiveProject} />
+          <MilestoneSelect milestones={milestoneItems} value={validMilestone} emptyLabel="마일스톤 없음" onChange={setMilestone} className="border-border" disabled={!effectiveProject} />
         </div>
-        <FieldError message={errors.project ?? errors.type ?? errors.status ?? errors.priority ?? errors.topic} />
+        <FieldError message={errors.project ?? errors.type ?? errors.status ?? errors.priority ?? errors.topic ?? errors.milestone} />
         {projectOptions.length === 0 && projectsLoaded ? (
           <p className="text-[0.6875rem] text-destructive">활성 프로젝트가 없습니다. 먼저 프로젝트를 만드세요.</p>
         ) : null}
@@ -282,6 +294,19 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
               <FieldError message={errors.recheck_condition} />
             </div>
           ) : null}
+          <div className="sm:col-span-2">
+            <Label htmlFor="issue-decision">결정 필요</Label>
+            <Input
+              id="issue-decision"
+              value={decision}
+              onChange={(e) => setDecision(e.target.value)}
+              placeholder="무엇을 정해야 하는지"
+              aria-invalid={!!errors.decision_needed}
+              className="mt-1"
+              maxLength={500}
+            />
+            <FieldError message={errors.decision_needed} />
+          </div>
         </div>
       </div>
 

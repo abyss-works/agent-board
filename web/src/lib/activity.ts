@@ -13,9 +13,10 @@ export interface ChangeLine {
 
 const MAX = 60
 
-/** 기록의 값을 사람이 읽는 말로 바꾸는 데 쓰는 조회. 주제 ID는 이름을 아는 쪽에서 알려 준다. */
+/** 기록의 값을 사람이 읽는 말로 바꾸는 데 쓰는 조회. 주제와 마일스톤 ID는 이름을 아는 쪽에서 알려 준다. */
 export interface DescribeOptions {
   topicName?: (id: number) => string | undefined
+  milestoneName?: (id: number) => string | undefined
 }
 
 /** 활동 기록의 값 하나를 한 줄 문자열로 만든다. */
@@ -23,6 +24,7 @@ export function formatValue(value: unknown, field?: string, opts?: DescribeOptio
   if (value === null || value === undefined) return '없음'
   if (Array.isArray(value)) return value.length ? value.map((v) => formatValue(v)).join(', ') : '없음'
   if (field === 'topic' && typeof value === 'number') return opts?.topicName?.(value) ?? `주제 #${value}`
+  if (field === 'milestone' && typeof value === 'number') return opts?.milestoneName?.(value) ?? `마일스톤 #${value}`
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   if (field === 'acknowledged') return value === true ? '확인됨' : '미확인'
   if (field === 'status') return statusLabel(text)
