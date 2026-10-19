@@ -20,6 +20,9 @@ const (
 
 	cacheNone      = "no-cache"
 	cacheForAssets = "public, max-age=31536000, immutable"
+
+	frameOptions   = "DENY"
+	frameAncestors = "frame-ancestors 'none'"
 )
 
 func testWebFS() fs.FS {
@@ -133,6 +136,31 @@ func TestWebAllowsOnlyReadMethods(t *testing.T) {
 	rec := e.plain("HEAD", "/assets/x.js")
 	if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Cache-Control") != cacheForAssets {
 		t.Errorf("HEAD: status %d body %q Cache-Control %q", rec.Code, rec.Body.String(), rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestWebForbidsFraming(t *testing.T) {
+	e := newWebEnv(t, testWebFS())
+	cases := []struct {
+		method, target string
+		status         int
+	}{
+		{"GET", "/assets/x.js", 200}, // an existing file
+		{"GET", "/device", 200},      // a client route, answered with index.html
+		{"GET", "/missing.png", 404}, // a missing file
+		{"POST", "/device", 405},     // a method that is not allowed
+	}
+	for _, c := range cases {
+		rec := e.plain(c.method, c.target)
+		if rec.Code != c.status {
+			t.Errorf("%s %s: status = %d, want %d", c.method, c.target, rec.Code, c.status)
+		}
+		if got := rec.Header().Get("X-Frame-Options"); got != frameOptions {
+			t.Errorf("%s %s: X-Frame-Options = %q, want %q", c.method, c.target, got, frameOptions)
+		}
+		if got := rec.Header().Get("Content-Security-Policy"); got != frameAncestors {
+			t.Errorf("%s %s: Content-Security-Policy = %q, want %q", c.method, c.target, got, frameAncestors)
+		}
 	}
 }
 
