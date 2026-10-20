@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -801,5 +802,80 @@ func TestFTS5Available(t *testing.T) {
 	s := openTest(t)
 	if _, err := s.db.Exec("insert into issue_fts(issue_fts) values ('rebuild')"); err != nil {
 		t.Fatalf("fts5 rebuild: %v", err)
+	}
+}
+
+func TestMigrateReclassifiesOpenPrioritiesInVersion6Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-10-19T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"migrations/0001_init.sql", "migrations/0002_activity_summary.sql", "migrations/0003_topic_ack_reason.sql",
+		"migrations/0004_milestone.sql", "migrations/0005_token.sql", "migrations/0006_issue_lifecycle.sql"} {
+		body, err := migrationFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 6`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`), ('ghost', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 9, `+at+`, `+at+`, 'owner', 'owner')`,
+	)
+	issues := []struct {
+		key, typ, status, priority, by string
+	}{
+		{"AGB-1", "feature", "backlog", "P3", "claude"},
+		{"AGB-2", "bug", "doing", "P2", "owner"},
+		{"AGB-3", "idea", "backlog", "P1", "owner"},
+		{"AGB-4", "observation", "review", "P2", "claude"},
+		{"AGB-5", "design", "backlog", "P0", "claude"},
+		{"AGB-6", "feature", "review", "P1", "claude"},
+		{"AGB-7", "feature", "done", "P3", "owner"},
+		{"AGB-8", "feature", "backlog", "P3", "ghost"},
+	}
+	for n, i := range issues {
+		seed = append(seed, fmt.Sprintf(`insert into issue(id, project_id, number, key, title, type, status, priority, version, created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+			values (%d, 1, %d, '%s', 't', '%s', '%s', '%s', 3, `+at+`, `+at+`, `+at+`, '%s', '%s', '%s')`, n+1, n+1, i.key, i.typ, i.status, i.priority, i.by, i.by, i.by))
+	}
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.60q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 6 database: %v", err)
+	}
+	defer s.Close()
+	wants := map[string]model.Priority{
+		"AGB-1": model.P2, // an agent's work
+		"AGB-2": model.P1, // the user's work
+		"AGB-3": model.P3, // an idea, even raised
+		"AGB-4": model.P3, // an observation
+		"AGB-5": model.P0, // raised on purpose
+		"AGB-6": model.P1, // raised on purpose
+		"AGB-7": model.P3, // closed
+		"AGB-8": model.P2,
+	}
+	for key, want := range wants {
+		got, err := s.GetIssue(ctx, key)
+		if err != nil || got.Priority != want || got.Version != 3 || got.UpdatedAt.String() != "2026-10-19T05:00:00.000Z" {
+			t.Errorf("%s: priority %v, version %v, updated_at %v, %v; want %s and nothing else changed", key, got.Priority, got.Version, got.UpdatedAt, err, want)
+		}
+	}
+	var acts int
+	if err := s.db.QueryRow(`select count(*) from activity`).Scan(&acts); err != nil || acts != 0 {
+		t.Errorf("activity records = %d, %v; want 0", acts, err)
 	}
 }
