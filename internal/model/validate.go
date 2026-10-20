@@ -25,7 +25,6 @@ const (
 	MaxSearchTerms      = 10
 	DefaultIssueType    = TypeFeature
 	DefaultIssueStatus  = StatusBacklog
-	DefaultPriority     = P2
 	DefaultProjectState = ProjectActive
 )
 
