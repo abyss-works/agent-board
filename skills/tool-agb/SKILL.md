@@ -80,12 +80,14 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    agb project overview <KEY>
    ```
    - 진행 중, 검토, 차단, 결정 대기, 다음 할 일, 미확인, 최근 활동이 나온다.
-3. 이번 작업 대상을 다른 세션이 진행 중인지 확인한다.
-   ```
-   agb issue list -p <KEY> --status doing
-   agb issue activity <ISSUE>
-   ```
-   - 같은 이슈를 다른 세션이 `doing`으로 두었으면 그 이슈를 맡지 않고 사용자에게 알린다.
+3. 이번 작업 대상을 다른 세션이 진행 중인지 확인한다. 2의 현황에서 `doing` 항목의 `holder`를 본다.
+   - `holder`는 그 이슈를 진행으로 옮긴 세션이다. `actor`, `session_id`, `last_active_at`(그 세션이 어느 이슈에든 남긴 마지막 기록), `stale`(마지막 기록에서 2시간이 지남)이 있다.
+   - 다른 세션이 점유했고 `stale`이 `false`이면 그 이슈를 맡지 않는다. 다른 이슈를 고르고, 그 이슈가 꼭 필요하면 사용자에게 알린다.
+   - 다른 세션이 점유했고 `stale`이 `true`이면 이어받을 수 있다. 백로그로 되돌린 뒤 다시 진행으로 옮기고, 두 변경 모두 사유를 남긴다.
+     ```
+     agb issue update <ISSUE> --status backlog --reason "<이전 세션 ID>의 점유가 멈춰 이어받음"
+     agb issue update <ISSUE> --status doing --reason "멈춘 점유 이어받음"
+     ```
 
 ## 2. 등록할 때
 
