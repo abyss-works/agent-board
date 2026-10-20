@@ -116,6 +116,19 @@ const (
 // Priorities lists every priority from most to least urgent.
 var Priorities = []Priority{P0, P1, P2, P3}
 
+// DefaultPriority is the priority of an issue created without one. Ideas and
+// observations are not work to start; otherwise what the user asked for comes
+// before what an agent found.
+func DefaultPriority(t IssueType, kind ActorKind) Priority {
+	switch {
+	case t == TypeIdea || t == TypeObservation:
+		return P3
+	case kind == ActorUser:
+		return P1
+	}
+	return P2
+}
+
 // ActorKind distinguishes the user from agent profiles.
 type ActorKind string
 

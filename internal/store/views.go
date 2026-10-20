@@ -69,7 +69,13 @@ type QueueFilter struct {
 const openDepsExpr = `(select count(*) from issue_dependency d join issue di on di.id = d.depends_on_id
 	where d.issue_id = i.id and di.status not in ('done','cancelled','deleted'))`
 
-// Queue orders issues by priority, readiness (ready first) and creation.
+// blocksExpr counts the open issues that wait on the issue.
+const blocksExpr = `(select count(*) from issue_dependency d join issue bi on bi.id = d.issue_id
+	where d.depends_on_id = i.id and bi.status not in ('done','cancelled','deleted'))`
+
+// Queue orders issues by priority, readiness (ready first), open milestone
+// (earliest target date first, undated after, then creation), the number of
+// open issues they block (most first) and creation.
 func (s *Store) Queue(ctx context.Context, f QueueFilter) ([]model.QueueItem, int, error) {
 	var where []string
 	var args []any
@@ -100,7 +106,8 @@ func (s *Store) Queue(ctx context.Context, f QueueFilter) ([]model.QueueItem, in
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx, `select `+issueCols(false)+`, `+openDepsExpr+` as open_deps`+issueFrom+cond+
-		` order by i.priority, (open_deps > 0), i.created_at, i.id limit ? offset ?`, append(args, f.Limit, f.Offset)...)
+		` order by i.priority, (open_deps > 0), (ms.status is not 'open'), (ms.target_date is null), ms.target_date, ms.id,
+		`+blocksExpr+` desc, i.created_at, i.id limit ? offset ?`, append(args, f.Limit, f.Offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

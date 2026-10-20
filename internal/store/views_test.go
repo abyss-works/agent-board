@@ -123,6 +123,52 @@ func TestQueue(t *testing.T) {
 	}
 }
 
+// Within a priority, issues in the earliest open milestone come first, then
+// those blocking more open issues, then older ones.
+func TestQueueTiebreak(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	later, err := s.CreateMilestone(ctx, trOwner, "AGB", MilestoneInput{Name: "later"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dated, err := s.CreateMilestone(ctx, trOwner, "AGB", MilestoneInput{Name: "dated", TargetDate: str("2026-12-01")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.CreateMilestone(ctx, trOwner, "AGB", MilestoneInput{Name: "closed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := func(title string, m *model.Milestone) IssueInput {
+		i := IssueInput{Title: title, Status: model.StatusBacklog, Priority: model.P2}
+		if m != nil {
+			i.Milestone = &m.ID
+		}
+		return i
+	}
+	old := mustIssue(t, s, ctx, trOwner, in("old", nil))
+	blocker := mustIssue(t, s, ctx, trOwner, in("blocker", nil))
+	inClosed := mustIssue(t, s, ctx, trOwner, in("in closed", closed))
+	inLater := mustIssue(t, s, ctx, trOwner, in("in later", later))
+	inDated := mustIssue(t, s, ctx, trOwner, in("in dated", dated))
+	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "waits", Status: model.StatusBacklog, Priority: model.P3, DependsOn: []string{blocker.Key}})
+	closedStatus := model.MilestoneClosed
+	if _, err := s.UpdateMilestone(ctx, trOwner, closed.ID, MilestonePatch{Status: &closedStatus}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, _, err := s.Queue(ctx, QueueFilter{Statuses: []model.IssueStatus{model.StatusBacklog}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := keysOf(items, func(q model.QueueItem) string { return q.Key })[:5]
+	want := []string{inDated.Key, inLater.Key, blocker.Key, old.Key, inClosed.Key}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("queue = %v, want %v", got, want)
+	}
+}
+
 func TestLabels(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
@@ -181,7 +227,7 @@ func TestOverview(t *testing.T) {
 	if c.ByType[model.TypeFeature] != 4 || c.ByType[model.TypeBug] != 1 || len(c.ByType) != 5 {
 		t.Errorf("by_type (open only) = %v", c.ByType)
 	}
-	if c.ByPriority[model.P0] != 1 || c.ByPriority[model.P1] != 1 || c.ByPriority[model.P2] != 3 || len(c.ByPriority) != 4 {
+	if c.ByPriority[model.P0] != 1 || c.ByPriority[model.P1] != 4 || c.ByPriority[model.P2] != 0 || len(c.ByPriority) != 4 {
 		t.Errorf("by_priority (open only) = %v", c.ByPriority)
 	}
 	if o.Doing.Total != 1 || o.Doing.Items[0].Key != dep.Key {

@@ -55,6 +55,11 @@ func TestCreateIssueIssuesKeysAndDefaults(t *testing.T) {
 	if a.Type != model.TypeFeature || a.Status != model.StatusBacklog || a.Priority != model.P2 || a.Body != tplBody(model.TypeFeature) || c.Body != "" || a.Version != 1 {
 		t.Errorf("defaults = %+v", a)
 	}
+	// The default priority follows the creator's kind and the issue's type.
+	idea := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "idea", Type: model.TypeIdea})
+	if c.Priority != model.P1 || idea.Priority != model.P3 {
+		t.Errorf("default priority: user %s, idea %s", c.Priority, idea.Priority)
+	}
 	if a.Labels == nil || a.DependsOn == nil || a.Refs == nil || len(a.Labels) != 0 {
 		t.Errorf("arrays must be empty, not nil: %+v", a)
 	}
