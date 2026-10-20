@@ -2,7 +2,7 @@ import { ArrowRightIcon, BellDotIcon, FolderIcon, LockIcon, ScaleIcon } from 'lu
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useOverview, useProjects } from '@/api/queries'
-import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type IssueSummary, type Overview, type QueueItem } from '@/api/types'
+import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DoingItem, type IssueSummary, type Overview, type QueueItem } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -126,6 +126,38 @@ function IssueList({ items, flash, showReady }: { items: (IssueSummary | QueueIt
   )
 }
 
+/** 진행 중 이슈를 점유한 행위자별로 묶는다. 묶음 순서는 그 행위자의 첫 이슈 순서다. */
+function DoingList({ items, flash }: { items: DoingItem[]; flash: Set<string> }) {
+  const groups = new Map<string, DoingItem[]>()
+  for (const i of items) groups.set(i.holder.actor, [...(groups.get(i.holder.actor) ?? []), i])
+  return (
+    <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
+      {items.length === 0 ? (
+        <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
+      ) : (
+        [...groups].map(([actor, list]) => {
+          // 같은 세션이면 마지막 활동이 같고, 세션이 여럿이면 가장 최근 것을 보인다.
+          const last = list.reduce((a, b) => (a.holder.last_active_at > b.holder.last_active_at ? a : b)).holder
+          return (
+            <div key={actor}>
+              <div className="flex items-center gap-2 px-2 pt-2 pb-1 text-[0.6875rem] text-muted-foreground">
+                <span className="font-medium text-foreground/80">{actor}</span>
+                <span className="tabular-nums" title={`${formatKst(last.last_active_at)} KST`}>
+                  마지막 활동 {formatKstTime(last.last_active_at)}
+                </span>
+                {last.stale ? <Badge variant="warning">멈춤</Badge> : null}
+              </div>
+              {list.map((i) => (
+                <IssueRow key={i.key} issue={i} compact flash={flash.has(i.key)} />
+              ))}
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
 function Counts({ overview }: { overview: Overview }) {
   const { counts } = overview
   const statusTotal = Math.max(1, counts.total)
@@ -242,7 +274,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
         <Group title="에이전트 작업">
           <div className="grid gap-3 xl:grid-cols-3">
             <Section title="진행 중" total={o.doing.total} to="/issues?status=doing">
-              <IssueList items={o.doing.items} flash={flash} />
+              <DoingList items={o.doing.items} flash={flash} />
             </Section>
             <Section title="다음 할 일" total={o.next.total} to="/issues?status=backlog">
               <IssueList items={o.next.items} flash={flash} showReady />
