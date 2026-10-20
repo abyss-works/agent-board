@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -237,7 +238,7 @@ type Overview struct {
 	Project        model.Project               `json:"project"`
 	GeneratedAt    model.Time                  `json:"generated_at"`
 	Counts         OverviewCounts              `json:"counts"`
-	Doing          Section[model.IssueSummary] `json:"doing"`
+	Doing          Section[model.DoingItem]    `json:"doing"`
 	Review         Section[model.IssueSummary] `json:"review"`
 	Blocked        Section[model.QueueItem]    `json:"blocked"`
 	Decisions      Section[model.IssueSummary] `json:"decisions"`
@@ -310,7 +311,7 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 		items, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: []model.IssueStatus{st}, Limit: limit})
 		return Section[model.IssueSummary]{Total: total, Items: items}, err
 	}
-	if o.Doing, err = byStatus(model.StatusDoing); err != nil {
+	if o.Doing, err = s.doingSection(ctx, projects, limit); err != nil {
 		return nil, err
 	}
 	if o.Review, err = byStatus(model.StatusReview); err != nil {
@@ -346,4 +347,34 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 	}
 	o.RecentActivity = Section[model.Activity]{Total: total, Items: acts}
 	return o, nil
+}
+
+// doingSection lists the doing issues with the session holding each: the one
+// that last moved it to doing, and when that session was last active anywhere.
+func (s *Store) doingSection(ctx context.Context, projects []string, limit int) (Section[model.DoingItem], error) {
+	items, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: []model.IssueStatus{model.StatusDoing}, Limit: limit})
+	if err != nil {
+		return Section[model.DoingItem]{}, err
+	}
+	now := s.now()
+	out := make([]model.DoingItem, len(items))
+	for n, it := range items {
+		var h model.Holder
+		var last string
+		// ponytail: one query per doing issue; the section holds at most limit (50) items.
+		err := s.db.QueryRowContext(ctx, `select a.actor_id, a.session_id,
+			(select max(b.at) from activity b where b.session_id = a.session_id)
+			from activity a join issue i on i.id = a.issue_id
+			where i.key = ? and json_extract(a.changes, '$.status.to') = 'doing'
+			order by a.at desc, a.id desc limit 1`, it.Key).Scan(&h.Actor, &h.SessionID, &last)
+		if err != nil {
+			return Section[model.DoingItem]{}, fmt.Errorf("holder of %s: %w", it.Key, err)
+		}
+		if h.LastActiveAt, err = model.ParseTime(last); err != nil {
+			return Section[model.DoingItem]{}, err
+		}
+		h.Stale = now.Sub(h.LastActiveAt.Time()) > model.StaleAfter
+		out[n] = model.DoingItem{IssueSummary: it, Holder: h}
+	}
+	return Section[model.DoingItem]{Total: total, Items: out}, nil
 }

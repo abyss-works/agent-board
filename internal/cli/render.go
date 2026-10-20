@@ -284,6 +284,21 @@ func (a *App) queueTable(items []model.QueueItem) *table {
 	return tb
 }
 
+func (a *App) doingTable(items []model.DoingItem) *table {
+	tb := &table{header: []string{"KEY", "PRI", "HOLDER", "LAST_ACTIVE", "STALE", "TITLE"}}
+	questions := make([]*string, 0, len(items))
+	for _, it := range items {
+		stale := "no"
+		if it.Holder.Stale {
+			stale = "yes"
+		}
+		tb.add(it.Key, string(it.Priority), it.Holder.Actor, formatTime(it.Holder.LastActiveAt, a.Location), stale, it.Title)
+		questions = append(questions, it.DecisionNeeded)
+	}
+	addDecisionColumn(tb, questions)
+	return tb
+}
+
 func (a *App) renderQueue(w io.Writer, resp *client.Response) error {
 	l, err := decode[listOf[model.QueueItem]](resp)
 	if err != nil {
@@ -411,7 +426,7 @@ type overview struct {
 		ByType     map[model.IssueType]int   `json:"by_type"`
 		ByPriority map[model.Priority]int    `json:"by_priority"`
 	} `json:"counts"`
-	Doing          section[model.IssueSummary] `json:"doing"`
+	Doing          section[model.DoingItem]    `json:"doing"`
 	Review         section[model.IssueSummary] `json:"review"`
 	Blocked        section[model.QueueItem]    `json:"blocked"`
 	Decisions      section[model.IssueSummary] `json:"decisions"`
@@ -452,7 +467,10 @@ func (a *App) renderOverview(w io.Writer, resp *client.Response) error {
 			a.queueTable(s.Items).write(w, a.TermWidth)
 		}
 	}
-	issues("doing", o.Doing)
+	fmt.Fprintf(w, "\n== doing (%d) ==\n", o.Doing.Total)
+	if len(o.Doing.Items) > 0 {
+		a.doingTable(o.Doing.Items).write(w, a.TermWidth)
+	}
 	issues("review", o.Review)
 	queue("blocked", o.Blocked)
 	issues("decisions", o.Decisions)

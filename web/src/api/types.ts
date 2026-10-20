@@ -119,6 +119,19 @@ export interface QueueItem extends IssueSummary {
   blocked_by: string[]
 }
 
+/** 진행 중인 이슈를 점유한 세션. 마지막 활동은 그 세션이 어느 이슈에든 남긴 기록이다. */
+export interface Holder {
+  actor: string
+  session_id: string
+  last_active_at: string
+  /** 마지막 활동에서 2시간이 지났다 */
+  stale: boolean
+}
+
+export interface DoingItem extends IssueSummary {
+  holder: Holder
+}
+
 /** 이슈 종류별 본문 템플릿. 에이전트가 만드는 이슈는 서버가 body의 `## 제목`을 순서대로 검사한다. */
 export interface Template {
   type: IssueType
@@ -215,7 +228,7 @@ export interface Overview {
     by_type: Record<IssueType, number>
     by_priority: Record<Priority, number>
   }
-  doing: Section<IssueSummary>
+  doing: Section<DoingItem>
   review: Section<IssueSummary>
   blocked: Section<QueueItem>
   /** decision_needed가 있는 열린 이슈 */
