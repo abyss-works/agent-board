@@ -1,6 +1,9 @@
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Actor is a declared user or agent profile.
 type Actor struct {
@@ -194,6 +197,24 @@ type QueueItem struct {
 	IssueSummary
 	Ready     bool     `json:"ready"`
 	BlockedBy []string `json:"blocked_by"`
+}
+
+// StaleAfter is how long the session holding a doing issue may stay quiet
+// before the issue counts as stale.
+const StaleAfter = 2 * time.Hour
+
+// Holder is the session that moved a doing issue to doing.
+type Holder struct {
+	Actor        string `json:"actor"`
+	SessionID    string `json:"session_id"`
+	LastActiveAt Time   `json:"last_active_at"` // the session's latest activity on any issue
+	Stale        bool   `json:"stale"`
+}
+
+// DoingItem is a doing issue in the overview with the session holding it.
+type DoingItem struct {
+	IssueSummary
+	Holder Holder `json:"holder"`
 }
 
 // Change is one field change in an activity record.

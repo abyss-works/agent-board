@@ -261,6 +261,53 @@ func TestOverview(t *testing.T) {
 
 // The decisions section lists the open issues that ask for a decision, whatever
 // their type and open status, in priority order.
+// A doing issue is held by the session that moved it to doing, and goes stale
+// two hours after that session's last activity on any issue.
+func TestOverviewDoingHolder(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	clockAt(s, &now)
+	held := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "held"})
+	other := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "other"})
+	born := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "born doing", Status: model.StatusDoing})
+	doing := model.StatusDoing
+	if _, _, err := s.UpdateIssue(ctx, trClaude, held.Key, IssuePatch{Status: &doing}, nil); err != nil {
+		t.Fatal(err)
+	}
+	holders := func() map[string]model.Holder {
+		t.Helper()
+		o, err := s.Overview(ctx, "AGB", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]model.Holder{}
+		for _, it := range o.Doing.Items {
+			m[it.Key] = it.Holder
+		}
+		return m
+	}
+	start := model.NewTime(now)
+	now = now.Add(90 * time.Minute)
+	// Activity of the same session on another issue keeps it alive.
+	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈", nil); err != nil {
+		t.Fatal(err)
+	}
+	alive := model.NewTime(now)
+	now = now.Add(time.Hour)
+	h := holders()
+	if got := h[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != alive || got.Stale {
+		t.Errorf("held after 1h of quiet = %+v, want claude s-claude last active %s not stale", got, alive)
+	}
+	if got := h[born.Key]; got.Actor != "owner" || got.SessionID != "s-owner" || got.LastActiveAt != start || !got.Stale {
+		t.Errorf("born doing after 2.5h = %+v, want owner s-owner last active %s stale", got, start)
+	}
+	now = now.Add(90 * time.Minute)
+	if got := holders()[held.Key]; !got.Stale {
+		t.Errorf("held after 2.5h of quiet = %+v, want stale", got)
+	}
+}
+
 func TestOverviewDecisions(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
