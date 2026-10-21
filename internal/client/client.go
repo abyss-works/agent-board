@@ -31,6 +31,7 @@ type Detail struct {
 	Field   string `json:"field"`
 	Reason  string `json:"reason"`
 	Message string `json:"message"`
+	SHA256  string `json:"sha256"`
 }
 
 // Error is a non-2xx response decoded from the server's error envelope.
