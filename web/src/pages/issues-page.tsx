@@ -50,7 +50,7 @@ function csv(v: string | null): string[] {
   return v ? v.split(',').filter(Boolean) : []
 }
 
-function FilterMenu<T extends string>({
+export function FilterMenu<T extends string>({
   label,
   icon,
   values,
