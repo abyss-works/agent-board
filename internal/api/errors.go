@@ -10,6 +10,9 @@ type Detail struct {
 	Field   string `json:"field,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
+	// SHA256 is the hash of the stored content in the conflict of a record
+	// document that already exists with other content.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 type errorBody struct {

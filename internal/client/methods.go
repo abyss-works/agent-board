@@ -404,3 +404,51 @@ func (c *Client) Labels(ctx context.Context, project string) (*Response, error) 
 	set(v, "project", project)
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/labels", v), nil, nil)
 }
+
+// DocumentFilter searches record documents. Comma separated values are OR.
+type DocumentFilter struct {
+	Query    string
+	Project  string
+	Kind     string
+	Location string
+	Page
+}
+
+// Values encodes the filter as query parameters.
+func (f DocumentFilter) Values() url.Values {
+	v := url.Values{}
+	set(v, "q", f.Query)
+	set(v, "project", f.Project)
+	set(v, "kind", f.Kind)
+	set(v, "location", f.Location)
+	f.Page.addTo(v)
+	return v
+}
+
+// PutDocument registers a record document of a project with the folder it lies
+// in and its original content. The server stores the content as it is; the same
+// content again changes nothing or moves the document, and other content under
+// the same name is refused with 409 (reason immutable).
+func (c *Client) PutDocument(ctx context.Context, project, name, location, content string) (*Response, error) {
+	path := "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
+	return c.Request(ctx, http.MethodPut, path, map[string]any{"location": location, "content": content}, nil)
+}
+
+// ListDocuments lists the record documents of a project by name, without their
+// content.
+func (c *Client) ListDocuments(ctx context.Context, project string, p Page) (*Response, error) {
+	v := url.Values{}
+	p.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/documents", v), nil, nil)
+}
+
+// GetDocument fetches one record document with its content.
+func (c *Client) GetDocument(ctx context.Context, project, name string) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(project)+"/documents/"+url.PathEscape(name), nil, nil)
+}
+
+// SearchDocuments searches the record documents of all projects, or of the
+// projects of the filter.
+func (c *Client) SearchDocuments(ctx context.Context, f DocumentFilter) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/documents", f.Values()), nil, nil)
+}

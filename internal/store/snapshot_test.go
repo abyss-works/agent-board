@@ -183,3 +183,45 @@ func TestFingerprintAndSnapshotCoverDecisionNeeded(t *testing.T) {
 		t.Errorf("snapshot decision_needed = %q, %v", question.String, err)
 	}
 }
+
+// A snapshot is a complete copy of the schema version 8 data: the documents
+// with their content and locations, and the search index over them.
+func TestSnapshotCarriesDocuments(t *testing.T) {
+	s, ctx := seeded(t)
+	seedDocuments(t, s)
+
+	dst := filepath.Join(t.TempDir(), "snap.db")
+	if err := s.Snapshot(ctx, dst); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dst))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, documents, archived, withTitle int
+	var sum string
+	if err := db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`select count(*), count(case when location = 'archive' then 1 end), count(title) from document`).Scan(&documents, &archived, &withTitle); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`select sha256 from document where name = ?`, docLinear).Scan(&sum); err != nil {
+		t.Fatal(err)
+	}
+	if version != SchemaVersion || documents != 5 || archived != 1 || withTitle != 4 {
+		t.Errorf("snapshot: version %d, documents %d (archived %d, with a title %d)", version, documents, archived, withTitle)
+	}
+	if want := docSHA(docText("report", "Linear는 여러 사람이 쓰는 도구다. 우선순위 비교 항목을 남긴다.",
+		"date: 2026-10-19 17:00", "title: agb와 Linear 비교", "tags: [product, linear]")); sum != want {
+		t.Errorf("snapshot sha256 = %s, want %s", sum, want)
+	}
+	if _, err := db.Exec(`insert into document_fts(document_fts, rank) values ('integrity-check', 1)`); err != nil {
+		t.Errorf("document_fts in the snapshot: %v", err)
+	}
+	var hits int
+	if err := db.QueryRow(`select count(*) from document_fts where document_fts match '"우선순위" *'`).Scan(&hits); err != nil || hits != 2 {
+		t.Errorf("search in the snapshot = %d, %v; want 2", hits, err)
+	}
+}
