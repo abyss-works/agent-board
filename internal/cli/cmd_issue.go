@@ -193,7 +193,7 @@ var issueCreateCmd = &command{
   --project, -p <P>       프로젝트 키 (필수)
   --title, -t <제목>      1~200자 (필수)
   --type <T>              feature(기본), bug, design, idea, observation
-  --priority <P>          P0, P1, P2(기본), P3
+  --priority <P>          P0, P1, P2, P3. 생략하면 idea·observation은 P3, 사용자 행위자는 P1, 에이전트 행위자는 P2
   --status <S>            기본 backlog
 ` + bodyUsage + `  --label <L>             라벨. 반복 가능
   --parent <KEY>          상위 이슈

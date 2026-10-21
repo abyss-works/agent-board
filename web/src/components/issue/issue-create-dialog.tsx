@@ -48,7 +48,9 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
   const [title, setTitle] = useState('')
   const [type, setType] = useState<IssueType>('feature')
   const [status, setStatus] = useState<IssueStatus>(initialStatus ?? 'backlog')
-  const [priority, setPriority] = useState<Priority>('P2')
+  // 고르지 않으면 서버 기본값을 보여 주고 보내지 않는다. 사용자는 P1, 아이디어·관측은 P3이다.
+  const [priority, setPriority] = useState<Priority | null>(null)
+  const shownPriority: Priority = priority ?? (type === 'idea' || type === 'observation' ? 'P3' : 'P1')
   const [labels, setLabels] = useState('')
   const [recheck, setRecheck] = useState('')
   const [decision, setDecision] = useState('')
@@ -133,7 +135,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
       title: title.trim(),
       type,
       status,
-      priority,
+      ...(priority ? { priority } : {}),
       ...(bodyText ? { body: bodyText } : {}),
       ...(labelList.length ? { labels: labelList } : {}),
       ...(type === 'observation' ? { recheck_condition: recheck.trim() } : {}),
@@ -186,7 +188,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
           />
           <PropertySelect value={type} options={TYPE_OPTIONS} onChange={changeType} title="종류" className="border-border" />
           <PropertySelect value={status} options={STATUS_OPTIONS} onChange={setStatus} title="상태" className="border-border" />
-          <PropertySelect value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} title="우선순위" className="border-border" />
+          <PropertySelect value={shownPriority} options={PRIORITY_OPTIONS} onChange={setPriority} title="우선순위" className="border-border" />
           <TopicSelect topics={topicItems} value={validTopic} emptyLabel="주제 없음" onChange={setTopic} className="border-border" disabled={!effectiveProject} />
           <MilestoneSelect milestones={milestoneItems} value={validMilestone} emptyLabel="마일스톤 없음" onChange={setMilestone} className="border-border" disabled={!effectiveProject} />
         </div>

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import { ApiClient } from '@/api/client'
 import { issueSummary } from '@/api/test-fixtures'
-import type { IssueSummary, Overview, Section } from '@/api/types'
+import type { DoingItem, IssueSummary, Overview, Section } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
 import { OverviewPage } from './overview-page'
 
@@ -43,7 +43,7 @@ function overview(partial: Partial<Overview> = {}): Overview {
       by_type: { feature: 0, bug: 0, design: 0, idea: 0, observation: 0 },
       by_priority: { P0: 0, P1: 0, P2: 0, P3: 0 },
     },
-    doing: section<IssueSummary>([]),
+    doing: section<DoingItem>([]),
     review: section<IssueSummary>([]),
     blocked: section([]),
     decisions: section<IssueSummary>([]),
@@ -78,7 +78,11 @@ function sectionOf(html: string, title: string): string {
 }
 
 const asked = issueSummary({ key: 'AGB-7', number: 7, title: '캐시 도입', decision_needed: 'Redis를 쓸지 정해 주세요' })
-const working = issueSummary({ key: 'AGB-8', number: 8, title: '검색 개선', status: 'doing' })
+function held(summary: IssueSummary, actor: string, lastActiveAt: string, stale: boolean): DoingItem {
+  return { ...summary, holder: { actor, session_id: `${actor}-s`, last_active_at: lastActiveAt, stale } }
+}
+
+const working = held(issueSummary({ key: 'AGB-8', number: 8, title: '검색 개선', status: 'doing' }), 'claude', '2026-10-17T07:00:00.000Z', false)
 
 describe('현황의 결정 필요', () => {
   const html = render(overview({ decisions: section([asked]), doing: section([working]) }))
@@ -111,5 +115,23 @@ describe('현황의 다음 할 일', () => {
     const html = render(overview())
     expect(sectionOf(html, '다음 할 일')).toContain('href="/issues?status=backlog"')
     expect(html).not.toContain('status=todo')
+  })
+})
+
+describe('현황의 진행 중', () => {
+  const quiet = held(issueSummary({ key: 'AGB-9', number: 9, title: '오래된 작업', status: 'doing' }), 'codex', '2026-10-17T03:00:00.000Z', true)
+  const second = held(issueSummary({ key: 'AGB-10', number: 10, title: '두 번째 작업', status: 'doing' }), 'claude', '2026-10-17T07:00:00.000Z', false)
+  const doing = sectionOf(render(overview({ doing: section([working, quiet, second]) })), '진행 중')
+
+  it('점유한 행위자별로 묶고 마지막 활동 시각을 보인다', () => {
+    expect(doing.match(/>claude</g)).toHaveLength(1)
+    expect(doing).toContain('>codex<')
+    expect(doing.indexOf('검색 개선')).toBeLessThan(doing.indexOf('두 번째 작업'))
+    expect(doing.indexOf('두 번째 작업')).toBeLessThan(doing.indexOf('codex'))
+    expect(doing).toContain('16:00')
+  })
+  it('멈춘 행위자에만 멈춤 표시를 붙인다', () => {
+    expect(doing.match(/멈춤/g)).toHaveLength(1)
+    expect(doing.indexOf('멈춤')).toBeGreaterThan(doing.indexOf('codex'))
   })
 })

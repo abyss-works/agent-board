@@ -47,14 +47,17 @@ agb version
 
 ### 에이전트 스킬
 
-사용하는 에이전트 도구의 전역 스킬 폴더에 `tool-agb/SKILL.md`로 저장한다. 전역 스킬 폴더의 위치는 도구마다 다르므로 도구의 문서에서 확인해 `SKILLS_DIR`에 지정한다.
+사용하는 에이전트 도구의 전역 스킬 폴더에 `tool-agb/`로 저장한다. 전역 스킬 폴더의 위치는 도구마다 다르므로 도구의 문서에서 확인해 `SKILLS_DIR`에 지정한다.
 
 ```bash
 SKILLS_DIR="<전역 스킬 폴더 경로>"
-mkdir -p "$SKILLS_DIR/tool-agb"
-curl -fsSL -o "$SKILLS_DIR/tool-agb/SKILL.md" \
-  https://raw.githubusercontent.com/abyss-works/agent-board/main/skills/tool-agb/SKILL.md
+BASE=https://raw.githubusercontent.com/abyss-works/agent-board/main/skills/tool-agb
+mkdir -p "$SKILLS_DIR/tool-agb/references"
+curl -fsSL -o "$SKILLS_DIR/tool-agb/SKILL.md" "$BASE/SKILL.md"
+curl -fsSL -o "$SKILLS_DIR/tool-agb/references/setup.md" "$BASE/references/setup.md"
 ```
+
+`references/setup.md`는 CLI와 스킬의 설치·갱신, 접속 설정, 접속 확인, 실패 처리를 정한다. PowerShell 명령도 이 문서에 있다.
 
 스킬은 세션 시작, 등록, 착수, 진행, 마침 단계별 `agb` 사용법과 이슈 종류별 제목 규칙, 본문 템플릿, 댓글 요약 규칙을 정한다. 프로젝트 키는 프로젝트의 AGENTS.md에 적힌 값을 쓰고, 행위자는 `agb actors`에 선언된 값 중 자기 도구에 맞는 것을 쓴다. 에이전트는 처음 한 번 `agb login`으로 기기 승인을 받아 행위자별 토큰을 저장한다([CLI 사용](#cli-사용) 참조).
 
