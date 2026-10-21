@@ -55,7 +55,7 @@ func TestOpenAppliesPragmasAndMigrations(t *testing.T) {
 	if version != SchemaVersion {
 		t.Errorf("user_version = %d, want %d", version, SchemaVersion)
 	}
-	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic", "milestone", "token"} {
+	for _, table := range []string{"actor", "project", "issue", "issue_label", "issue_dependency", "issue_ref", "activity", "issue_fts", "topic", "milestone", "token", "document", "document_fts"} {
 		var n int
 		if err := s.db.QueryRow("select count(*) from sqlite_master where name = ?", table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -878,4 +878,161 @@ func TestMigrateReclassifiesOpenPrioritiesInVersion6Database(t *testing.T) {
 	if err := s.db.QueryRow(`select count(*) from activity`).Scan(&acts); err != nil || acts != 0 {
 		t.Errorf("activity records = %d, %v; want 0", acts, err)
 	}
+}
+
+// TestMigrateAddsDocumentToVersion7Database upgrades a database written under
+// schema version 7. Migration 0008 adds the document table with its constraints,
+// its search index and the triggers that keep the index; the data that exists
+// stays as it is and no document exists yet.
+func TestMigrateAddsDocumentToVersion7Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-10-20T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"migrations/0001_init.sql", "migrations/0002_activity_summary.sql", "migrations/0003_topic_ack_reason.sql",
+		"migrations/0004_milestone.sql", "migrations/0005_token.sql", "migrations/0006_issue_lifecycle.sql", "migrations/0007_priority_reclass.sql"} {
+		body, err := migrationFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 7`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into issue(id, project_id, number, key, title, body, type, status, priority, version,
+		                   created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '기존 이슈', '설계 본문', 'feature', 'backlog', 'P2', 3, `+at+`, `+at+`, null, `+at+`, 'claude', 'claude', 'claude')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 7 database: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != SchemaVersion || SchemaVersion < 8 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, want the current version, at least 8", version, SchemaVersion)
+	}
+
+	rows, err := s.db.Query(`select name, type || ':' || "notnull" || ':' || coalesce(dflt_value, '') from pragma_table_info('document')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols := map[string]string{}
+	for rows.Next() {
+		var name, kind string
+		if err := rows.Scan(&name, &kind); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = kind
+	}
+	rows.Close()
+	wantCols := map[string]string{
+		"id": "INTEGER:0:", "project_id": "INTEGER:1:", "name": "TEXT:1:", "location": "TEXT:1:", "kind": "TEXT:1:", "date": "TEXT:0:",
+		"title": "TEXT:0:", "tags": "TEXT:1:'[]'", "sha256": "TEXT:1:", "size": "INTEGER:1:", "content": "TEXT:1:",
+		"created_at": "TEXT:1:", "created_by": "TEXT:1:", "updated_at": "TEXT:1:", "updated_by": "TEXT:1:",
+	}
+	if !reflect.DeepEqual(cols, wantCols) {
+		t.Errorf("document columns = %v, want %v", cols, wantCols)
+	}
+	var triggers []string
+	trows, err := s.db.Query(`select name from sqlite_master where type = 'trigger' and tbl_name = 'document' order by name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for trows.Next() {
+		var name string
+		if err := trows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		triggers = append(triggers, name)
+	}
+	trows.Close()
+	if want := []string{"document_ad", "document_ai", "document_au"}; !reflect.DeepEqual(triggers, want) {
+		t.Errorf("document triggers = %v, want %v", triggers, want)
+	}
+	var fts int
+	if err := s.db.QueryRow(`select count(*) from sqlite_master where name = 'document_fts' and sql like '%unicode61%' and sql like '%content=''document''%'`).Scan(&fts); err != nil || fts != 1 {
+		t.Errorf("document_fts external content index = %d, %v", fts, err)
+	}
+
+	// The constraints: a name is unique in a project, and location and kind are closed sets.
+	insert := func(name, location, kind string) error {
+		_, err := s.db.Exec(`insert into document(project_id, name, location, kind, sha256, size, content, created_at, created_by, updated_at, updated_by)
+			values (1, ?, ?, ?, 'h', 1, 'c', `+at+`, 'owner', `+at+`, 'owner')`, name, location, kind)
+		return err
+	}
+	if err := insert("a.md", "history", "decision"); err != nil {
+		t.Fatal(err)
+	}
+	for label, err := range map[string]error{
+		"the same name again": insert("a.md", "archive", "report"),
+		"an unknown location": insert("b.md", "draft", "decision"),
+		"an unknown kind":     insert("c.md", "history", "plan"),
+		"an empty kind":       insert("d.md", "history", ""),
+	} {
+		if err == nil {
+			t.Errorf("%s was accepted", label)
+		}
+	}
+	if _, err := s.db.Exec(`delete from document`); err != nil {
+		t.Fatal(err)
+	}
+	fk, err := s.db.Query(`pragma foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fk.Next() {
+		t.Error("foreign_key_check reports a violation after the migration")
+	}
+	fk.Close()
+
+	// Existing data and its search index are untouched, and the feature works on it.
+	old, err := s.GetIssue(ctx, "AGB-1")
+	if err != nil || old.Title != "기존 이슈" || old.Version != 3 {
+		t.Errorf("migrated issue = %+v, %v", old, err)
+	}
+	if found, total, err := s.ListIssues(ctx, IssueFilter{Statuses: model.IssueStatuses, Query: "설계", Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+		t.Errorf("issue search after the migration = %d (%d), %v", len(found), total, err)
+	}
+	if n := countRows(t, s, "document"); n != 0 {
+		t.Errorf("documents after the migration = %d", n)
+	}
+	text := "---\nkind: decision\ntitle: 이전 데이터베이스의 기록\n---\n본문\n"
+	d, created, err := s.PutDocument(ctx, model.Trace{Actor: "claude", SessionID: "s", ClientHost: "h"}, "AGB", "2026-10-20-1544-decision-after-migration.md",
+		DocumentInput{Location: "history", Content: text})
+	if err != nil || !created || d.Project != "AGB" {
+		t.Fatalf("PutDocument on the migrated database = %+v, %v, %v", d, created, err)
+	}
+	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "이전", Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+		t.Errorf("document search on the migrated database = %d (%d), %v", len(found), total, err)
+	}
+}
+
+func countRows(t *testing.T, s *Store, table string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow("select count(*) from " + table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
