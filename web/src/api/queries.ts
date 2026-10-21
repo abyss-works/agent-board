@@ -21,6 +21,7 @@ import type {
   MilestoneStatus,
   Overview,
   Page,
+  RecordDocument,
   Project,
   ProjectCreate,
   ProjectPatch,
@@ -109,6 +110,34 @@ export function useActivity(f: ActivityFilters) {
     queryFn: ({ signal }) =>
       api.get<Page<Activity>>('/activity', { project: f.project, actor: f.actor, kind: f.kind, limit: 100 }, signal),
     placeholderData: keepPreviousData,
+  })
+}
+
+export interface DocumentFilters {
+  project: string | null
+  q: string
+  kind: readonly string[]
+  location: readonly string[]
+}
+
+/** GET /v1/documents. q가 있으면 관련도 순이고 스니펫이 붙는다. 없으면 날짜 최신 먼저다. 종류·위치는 쉼표 OR. */
+export function useDocuments(f: DocumentFilters) {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  const params = { project: f.project, q: f.q, kind: f.kind.join(','), location: f.location.join(','), limit: 200 }
+  return useQuery({
+    queryKey: [inst, 'documents', params],
+    queryFn: ({ signal }) => api.get<Page<RecordDocument>>('/documents', params, signal),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useDocument(projectKey: string, name: string) {
+  const api = useApi()
+  const inst = useKeyPrefix()
+  return useQuery({
+    queryKey: [inst, 'document', projectKey, name],
+    queryFn: ({ signal }) => api.get<RecordDocument>(`/projects/${projectKey}/documents/${encodeURIComponent(name)}`, undefined, signal),
   })
 }
 

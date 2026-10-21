@@ -9,6 +9,8 @@ export type ActivityKind = 'created' | 'updated' | 'commented'
 export type TopicStatus = 'active' | 'deleted'
 export type MilestoneStatus = 'open' | 'closed' | 'deleted'
 export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
+export type DocumentKind = 'decision' | 'incident' | 'report' | 'implementation'
+export type DocumentLocation = 'history' | 'archive'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
 
@@ -19,6 +21,8 @@ export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
 export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted']
+export const DOCUMENT_KINDS: DocumentKind[] = ['decision', 'incident', 'report', 'implementation']
+export const DOCUMENT_LOCATIONS: DocumentLocation[] = ['history', 'archive']
 
 export interface Project {
   key: string
@@ -193,6 +197,29 @@ export interface ActorToken {
   /** 폐기한 시각과 폐기한 행위자. 폐기되지 않았으면 둘 다 null이다. */
   revoked_at: string | null
   revoked_by: string | null
+}
+
+/** 관리 저장소의 기록 문서. 고치거나 지우지 않는다. */
+export interface RecordDocument {
+  project: string
+  /** 파일명 `yyyy-mm-dd-HHMM-<kind>-<slug>.md` */
+  name: string
+  location: DocumentLocation
+  kind: DocumentKind
+  /** 프런트매터의 date, title. 없으면 null이다. */
+  date: string | null
+  title: string | null
+  tags: string[]
+  sha256: string
+  size: number
+  /** 단건 조회에만 붙는 원문 */
+  content?: string
+  created_at: string
+  created_by: string
+  updated_at: string
+  updated_by: string
+  /** q 검색일 때만 붙는다. 일치 부분은 [ ]로 감싼다. */
+  snippet?: string
 }
 
 export interface Page<T> {

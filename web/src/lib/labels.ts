@@ -1,4 +1,4 @@
-import type { ActivityKind, DeviceAuthorizationStatus, IssueStatus, IssueType, MilestoneStatus, Priority, ProjectStatus } from '@/api/types'
+import type { ActivityKind, DeviceAuthorizationStatus, DocumentKind, DocumentLocation, IssueStatus, IssueType, MilestoneStatus, Priority, ProjectStatus } from '@/api/types'
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   backlog: '백로그',
@@ -40,6 +40,18 @@ export const DEVICE_STATUS_LABEL: Record<DeviceAuthorizationStatus, string> = {
   pending: '대기 중',
   approved: '승인됨',
   denied: '거부됨',
+}
+
+export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
+  decision: '결정',
+  incident: '사고',
+  report: '보고',
+  implementation: '구현',
+}
+
+export const DOCUMENT_LOCATION_LABEL: Record<DocumentLocation, string> = {
+  history: 'history',
+  archive: 'archive',
 }
 
 export const KIND_LABEL: Record<ActivityKind, string> = {
