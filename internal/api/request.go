@@ -229,13 +229,17 @@ func etag(version int64) string { return `"` + strconv.FormatInt(version, 10) + 
 func (h *handler) storeError(r *http.Request, err error) *apiError {
 	var verr *model.ValidationError
 	var rerr *store.RefError
+	var ierr *store.ImmutableError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return notFound("대상이 없습니다.")
 	case errors.Is(err, store.ErrDuplicateKey):
 		return conflict("duplicate_key", "같은 키가 이미 있습니다.")
 	case errors.Is(err, store.ErrProjectNotActive):
-		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈, 주제, 마일스톤은 쓸 수 없습니다.")
+		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈, 주제, 마일스톤, 기록 문서는 쓸 수 없습니다.")
+	case errors.As(err, &ierr):
+		return &apiError{Status: 409, Code: "conflict", Message: "같은 이름의 기록 문서가 다른 내용으로 이미 있습니다. 기록 문서는 고칠 수 없습니다.",
+			Details: []Detail{{Field: "content", Reason: "immutable", Message: "서버에 저장된 내용의 sha256은 " + ierr.SHA256 + "입니다.", SHA256: ierr.SHA256}}}
 	case errors.Is(err, store.ErrDuplicateName):
 		return &apiError{Status: 409, Code: "conflict", Message: "같은 상위 주제 아래에 같은 이름의 활성 주제가 이미 있습니다.",
 			Details: []Detail{{Field: "name", Reason: "duplicate"}}}

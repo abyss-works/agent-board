@@ -124,6 +124,7 @@ const Usage = `사용법: agb <명령> [옵션]
   milestone         마일스톤 목록·단건·생성·수정·닫기·다시 열기·삭제
   template          이슈 종류별 본문 템플릿 목록·출력
   issue             이슈 목록·단건·생성·수정·삭제·확인·댓글·활동
+  doc               기록 문서 등록·동기화·검색·조회
 
 조회:
   activity          전체 활동 기록
@@ -150,7 +151,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd,
+	configCmd, loginCmd, logoutCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
 	activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
 }}
 

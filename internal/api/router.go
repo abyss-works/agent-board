@@ -68,6 +68,7 @@ func New(o Options) http.Handler {
 	h.registerIssues(protected)
 	h.registerTopics(protected)
 	h.registerMilestones(protected)
+	h.registerDocuments(protected)
 	h.registerTemplates(protected)
 	h.registerViews(protected)
 	h.registerDevices(protected)

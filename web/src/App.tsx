@@ -8,6 +8,8 @@ import { backgroundOf } from '@/lib/overlay'
 import { ActivityPage } from '@/pages/activity-page'
 import { BoardPage } from '@/pages/board-page'
 import { DevicePage } from '@/pages/device-page'
+import { DocumentPage } from '@/pages/document-page'
+import { DocumentsPage } from '@/pages/documents-page'
 import { IssueDetailPage } from '@/pages/issue-detail-page'
 import { IssuesPage } from '@/pages/issues-page'
 import { LoginPage } from '@/pages/login-page'
@@ -50,6 +52,8 @@ function Root() {
           <Route path="/issues" element={<IssuesPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/milestones" element={<MilestonesPage />} />
+          <Route path="/documents" element={<DocumentsPage />} />
+          <Route path="/documents/:project/:name" element={<DocumentPage />} />
           <Route path="/device" element={<DevicePage />} />
           <Route path="/tokens" element={<TokensPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />

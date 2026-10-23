@@ -10,7 +10,7 @@
 |---|---|---|
 | 서버 | `cmd/agb`, `internal/` | `/v1` 아래의 REST API를 제공하고 SQLite 파일 하나에 저장한다. 데이터베이스는 서버만 연다. |
 | CLI | `cmd/agb`, `internal/cli`, `internal/client` | 서버의 REST API를 HTTP로만 호출한다. 업무 규칙은 서버에 있다. |
-| 웹 클라이언트 | `web/` | 브라우저에서 REST API를 직접 호출하는 SPA다. 현황, 보드, 이슈 목록, 활동 화면이 있다. |
+| 웹 클라이언트 | `web/` | 브라우저에서 REST API를 직접 호출하는 SPA다. 현황, 보드, 이슈 목록, 활동, 기록 문서 화면이 있다. |
 | 에이전트 스킬 | `skills/tool-agb/` | 에이전트가 CLI로 트래커를 쓰는 시점과 방법을 정한 문서다. |
 
 서버와 CLI는 바이너리 하나(`agb`)다. `agb serve`가 서버를 실행하고, 그 밖의 명령은 서버에 접속하는 클라이언트로 동작한다. 서버에 `AGB_WEB_DIR`을 지정하면 웹 클라이언트 빌드를 `/v1` 밖의 경로에서 서빙하며, 이때 API와 웹 클라이언트는 같은 주소를 쓴다.
@@ -26,7 +26,8 @@
 - 주제: 프로젝트마다 대주제와 주제 두 단계 목록을 두고, 이슈에 주제 하나를 붙인다.
 - 마일스톤: 프로젝트마다 출시나 목표 단위의 마일스톤을 두고, 이슈에 마일스톤 하나를 붙인다. 목표일을 정할 수 있고 닫거나 삭제할 수 있다. 진행은 취소·삭제한 이슈를 뺀 이슈 중 완료한 수로 조회할 때 계산한다.
 - 사유와 요약: 상태를 바꿀 때 사유를 남기고(취소와 삭제는 필수), 댓글에는 한 줄 요약을 붙인다.
-- 사용자 확인 표시: 에이전트가 만든 이슈는 미확인으로 시작하고 사용자가 웹 클라이언트에서 확인한다. 확인 여부는 작업 흐름에 영향을 주지 않는다.
+- 사용자 확인 표시: 에이전트가 만든 이슈는 미확인으로 시작한다. 사용자가 웹 클라이언트에서 확인하거나, 사용자가 대화에서 확인하면 에이전트가 표시한다. 확인 여부는 작업 흐름에 영향을 주지 않는다.
+- 기록 문서: 관리 저장소의 기록 문서를 프로젝트마다 원문 그대로 보존하고, 여러 프로젝트에 걸쳐 FTS5로 검색한다. 한번 올린 문서는 고치거나 지울 수 없고 위치(`history`, `archive`)만 바꿀 수 있다.
 - 백업: 데이터베이스 스냅샷을 S3 호환 오브젝트 저장소(Cloudflare R2)에 주기적으로 올린다.
 - 웹 클라이언트: 보드에서 카드를 끌어 상태를 바꾸고, 3초마다 화면을 다시 불러와 바뀐 항목을 잠깐 강조한다.
 
@@ -166,7 +167,7 @@ EOF
 
 ## REST API
 
-`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
+`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `documents`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
 
 ```bash
 curl -H "Authorization: Bearer $AGB_TOKEN" \

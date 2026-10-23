@@ -548,7 +548,7 @@ var issueAckCmd = &command{
 
 사용자가 이슈를 확인했다고 표시합니다. 작업 흐름(상태, 큐, 막힘)에는 영향이 없습니다.
 이미 확인된 이슈는 그대로 둡니다. 여러 키를 주면 차례로 처리하고, 처음 실패하는 키에서 멈춥니다.
-JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다. 확인은 사용자의 몫이므로 에이전트는 쓰지 않습니다.
+JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다. 에이전트는 사용자가 대화에서 확인했을 때만 씁니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		pos, err := parseArgs(leafFlags("issue ack", g), args)
