@@ -48,15 +48,13 @@ agb version
 
 ### 에이전트 스킬
 
-사용하는 에이전트 도구의 전역 스킬 폴더에 `tool-agb/`로 저장한다. 전역 스킬 폴더의 위치는 도구마다 다르므로 도구의 문서에서 확인해 `SKILLS_DIR`에 지정한다.
+스킬은 CLI 바이너리에 내장되어 있다. CLI를 설치한 뒤 다음 명령으로 전역 스킬 폴더(`~/.agents/skills/tool-agb/`)에 설치한다. 다른 폴더에 설치하려면 `--dir <폴더>`를 준다.
 
 ```bash
-SKILLS_DIR="<전역 스킬 폴더 경로>"
-BASE=https://raw.githubusercontent.com/abyss-works/agent-board/main/skills/tool-agb
-mkdir -p "$SKILLS_DIR/tool-agb/references"
-curl -fsSL -o "$SKILLS_DIR/tool-agb/SKILL.md" "$BASE/SKILL.md"
-curl -fsSL -o "$SKILLS_DIR/tool-agb/references/setup.md" "$BASE/references/setup.md"
+agb skill install
 ```
+
+설치된 스킬이 내장 스킬과 같으면 아무것도 바꾸지 않는다. CLI를 새 릴리즈로 설치한 뒤 다시 실행하면 스킬도 같은 릴리즈로 바뀐다. 설치 위치가 링크이면 링크를 지우고 복사본을 둔다.
 
 `references/setup.md`는 CLI와 스킬의 설치·갱신, 접속 설정, 접속 확인, 실패 처리를 정한다. PowerShell 명령도 이 문서에 있다.
 
