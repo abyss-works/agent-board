@@ -25,6 +25,7 @@ type App struct {
 	Now        func() time.Time
 	Location   *time.Location
 	ConfigPath string // default config file; --config overrides it
+	SkillsDir  string // default global skills folder for agb skill install; empty when the home folder is unknown
 	HTTP       *http.Client
 
 	Sleep       func(ctx context.Context, d time.Duration) error // waits for d, or until ctx ends with its error; nil waits in real time
@@ -63,6 +64,9 @@ func New(version string, getenv func(string) string) *App {
 	}
 	if p, err := defaultConfigPath(); err == nil {
 		a.ConfigPath = p
+	}
+	if d, err := defaultSkillsDir(); err == nil {
+		a.SkillsDir = d
 	}
 	return a
 }
@@ -112,6 +116,7 @@ const Usage = `사용법: agb <명령> [옵션]
   config            설정 파일 경로, 표시, 수정 (url, actor, session_id, client_host, 토큰)
   login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
   logout            이 행위자의 토큰 폐기와 로컬 삭제
+  skill             내장 에이전트 스킬 출력과 설치 (~/.agents/skills/tool-agb)
 
 상태:
   health            서버 상태 (인증 없음)
@@ -151,7 +156,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
 	activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
 }}
 

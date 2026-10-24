@@ -811,6 +811,7 @@ func TestHelpAndUnknownCommands(t *testing.T) {
 		want []string
 	}{
 		{[]string{"login", "--help"}, []string{"agb login --actor <ID>", "--no-browser", "승인 주소", "표준 오류"}},
+		{[]string{"skill", "install", "--help"}, []string{"~/.agents/skills", "링크가 가리키던 파일은 그대로 둡니다"}},
 		{[]string{"help", "login"}, []string{"--no-browser"}},
 		{[]string{"logout", "--help"}, []string{"agb logout --actor <ID>", "tokens", "종료 코드 2"}},
 		{[]string{"help", "logout"}, []string{"AGB_TOKEN은 쓰지 않습니다"}},
