@@ -41,33 +41,24 @@ go install -trimpath -ldflags "-X main.version=<VER>-dev.$(git rev-parse --short
 
 ## 2. 스킬 설치와 갱신
 
-스킬은 에이전트 도구의 전역 스킬 폴더에 `tool-agb/`로 둔다. 원본은 제품 저장소의 `skills/tool-agb/`이고, CLI와 같은 릴리즈의 것을 쓴다. 폴더에는 `SKILL.md`와 이 문서(`references/setup.md`)가 있다.
+스킬은 CLI 바이너리에 내장되어 있다. 원본은 제품 저장소의 `skills/tool-agb/`이고, `agb skill install`이 CLI와 같은 릴리즈의 스킬을 전역 스킬 폴더에 `tool-agb/`로 쓴다. 폴더에는 `SKILL.md`와 이 문서(`references/setup.md`), 설치한 agb 버전을 적은 `.version`이 있다.
 
-1. 릴리즈본을 받는다. `SKILLS_DIR`에 도구의 전역 스킬 폴더를 넣는다.
+1. 설치한다.
    ```bash
-   REF=main
-   SKILLS_DIR="<전역 스킬 폴더>"
-   BASE="https://raw.githubusercontent.com/abyss-works/agent-board/${REF}/skills/tool-agb"
-   mkdir -p "$SKILLS_DIR/tool-agb/references"
-   curl -fsSL -o "$SKILLS_DIR/tool-agb/SKILL.md" "$BASE/SKILL.md"
-   curl -fsSL -o "$SKILLS_DIR/tool-agb/references/setup.md" "$BASE/references/setup.md"
+   agb skill install
    ```
-   ```powershell
-   $REF = 'main'
-   $SKILLS_DIR = '<전역 스킬 폴더>'
-   $BASE = "https://raw.githubusercontent.com/abyss-works/agent-board/$REF/skills/tool-agb"
-   New-Item -ItemType Directory -Force "$SKILLS_DIR\tool-agb\references" | Out-Null
-   Invoke-WebRequest -UseBasicParsing -OutFile "$SKILLS_DIR\tool-agb\SKILL.md" "$BASE/SKILL.md"
-   Invoke-WebRequest -UseBasicParsing -OutFile "$SKILLS_DIR\tool-agb\references\setup.md" "$BASE/references/setup.md"
+   - 기본 위치는 `~/.agents/skills/tool-agb/`다. 에이전트 도구가 다른 폴더의 스킬을 읽으면 `--dir <그 도구의 전역 스킬 폴더>`를 준다.
+   - Expected: `설치했습니다: <위치> (이전 <버전>, 새 <버전>)` 또는 `변경 없음: <위치> (<버전>)`
+   - 설치 위치가 링크(정션, 심볼릭 링크)이면 링크만 지우고 복사본을 둔다. 링크가 가리키던 파일은 바뀌지 않는다.
+   - `agb: 모르는 명령 "skill"`이 나오면 CLI가 v0.4.0 이하다. 1절로 CLI를 다시 설치한다.
+2. 확인한다.
+   ```bash
+   head -3 ~/.agents/skills/tool-agb/SKILL.md
+   cat ~/.agents/skills/tool-agb/.version
    ```
-   - CLI를 다시 설치하면 스킬도 같은 `REF`로 다시 받는다.
-   - v0.1.1 이하 릴리즈에서는 원본이 `skills/agent-board/SKILL.md` 하나이고 `references/`가 없다.
-2. 제품 저장소를 체크아웃한 개발 기기에서는 복사 대신 전역 스킬 폴더의 `tool-agb`를 저장소의 `skills/tool-agb/`로 향하는 정션이나 심볼릭 링크로 만든다. 스킬은 체크아웃한 브랜치를 따른다.
-   ```powershell
-   New-Item -ItemType Junction -Path "$SKILLS_DIR\tool-agb" -Target "<제품 저장소>\skills\tool-agb"
-   ```
-3. 확인한다.
-   - Expected: `SKILL.md`의 첫 줄이 `---`이고 `name: tool-agb`가 있다. v0.1.1 이하 릴리즈본은 `name: agent-board`다.
+   - Expected: `name: tool-agb`가 있고, `.version`이 `agb version`의 버전과 같다.
+
+제품 저장소의 개발 기기에서 스킬을 고쳤으면, `dev` 체크아웃에서 CLI를 다시 설치(1절의 개발 기기 명령)한 뒤 `agb skill install`을 실행해야 전역 스킬에 반영된다.
 
 ## 3. 접속 설정
 
