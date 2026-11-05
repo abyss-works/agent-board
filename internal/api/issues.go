@@ -436,7 +436,7 @@ func (h *handler) listIssues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) createComment(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, map[string]bool{"body": true, "summary": true})
+	b, aerr := readBody(w, r, map[string]bool{"body": true, "summary": true, "comment_kind": true})
 	if aerr != nil {
 		writeError(w, aerr)
 		return
@@ -455,7 +455,22 @@ func (h *handler) createComment(w http.ResponseWriter, r *http.Request) {
 	if present && !null {
 		summary = &summaryText
 	}
-	a, err := h.store.AddComment(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), text, summary)
+	var kind *model.CommentKind
+	var kindText string
+	present, null, aerr = field(b, "comment_kind", &kindText)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	if present && !null {
+		k, ok := model.ParseCommentKind(kindText)
+		if !ok {
+			writeError(w, validationFailed([]Detail{{Field: "comment_kind", Message: "decision, finding, lesson 중 하나여야 합니다."}}))
+			return
+		}
+		kind = &k
+	}
+	a, err := h.store.AddComment(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), text, summary, kind)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
@@ -485,17 +500,18 @@ func (h *handler) issueActivity(w http.ResponseWriter, r *http.Request) {
 func (h *handler) listActivity(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
 	f := store.ActivityFilter{
-		Projects:    q.csv("project"),
-		Issues:      q.csv("issue"),
-		Actors:      q.csv("actor"),
-		Sessions:    q.csv("session"),
-		ClientHosts: q.csv("client_host"),
-		Kinds:       parseEnumList(q, "kind", model.ParseActivityKind),
-		Field:       q.one("field"),
-		Since:       q.time("since"),
-		Until:       q.time("until"),
-		Limit:       q.limit(50, 200),
-		Offset:      q.offset(),
+		Projects:     q.csv("project"),
+		Issues:       q.csv("issue"),
+		Actors:       q.csv("actor"),
+		Sessions:     q.csv("session"),
+		ClientHosts:  q.csv("client_host"),
+		Kinds:        parseEnumList(q, "kind", model.ParseActivityKind),
+		CommentKinds: parseEnumList(q, "comment_kind", model.ParseCommentKind),
+		Field:        q.one("field"),
+		Since:        q.time("since"),
+		Until:        q.time("until"),
+		Limit:        q.limit(50, 200),
+		Offset:       q.offset(),
 	}
 	if f.Field != "" && !issueFields[f.Field] {
 		q.add("field", "이슈 필드 이름이어야 합니다.")

@@ -149,6 +149,19 @@ const (
 // ActivityKinds lists every activity kind.
 var ActivityKinds = []ActivityKind{ActivityCreated, ActivityUpdated, ActivityCommented}
 
+// CommentKind marks a comment that carries knowledge: a decision, a finding
+// or a lesson. Progress notes carry none.
+type CommentKind string
+
+const (
+	CommentDecision CommentKind = "decision"
+	CommentFinding  CommentKind = "finding"
+	CommentLesson   CommentKind = "lesson"
+)
+
+// CommentKinds lists every comment kind.
+var CommentKinds = []CommentKind{CommentDecision, CommentFinding, CommentLesson}
+
 // DeviceStatus is the state of a device authorization: a request to give an
 // agent actor a token on one device. It waits for the user to decide.
 type DeviceStatus string
@@ -233,6 +246,9 @@ func ParseActorKind(v string) (ActorKind, bool) {
 
 // ParseActivityKind returns the activity kind named v.
 func ParseActivityKind(v string) (ActivityKind, bool) { return parseEnum(v, ActivityKinds) }
+
+// ParseCommentKind returns the comment kind named v.
+func ParseCommentKind(v string) (CommentKind, bool) { return parseEnum(v, CommentKinds) }
 
 // ParseDeviceStatus returns the device authorization status named v.
 func ParseDeviceStatus(v string) (DeviceStatus, bool) { return parseEnum(v, DeviceStatuses) }

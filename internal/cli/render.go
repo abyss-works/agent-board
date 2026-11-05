@@ -195,14 +195,18 @@ func rawString(r json.RawMessage) string {
 func describeActivity(act model.Activity) string {
 	switch act.Kind {
 	case model.ActivityCommented:
+		prefix := ""
+		if act.CommentKind != nil {
+			prefix = "[" + string(*act.CommentKind) + "] "
+		}
 		if act.Summary != nil {
-			return *act.Summary
+			return prefix + *act.Summary
 		}
 		body := deref(act.Body, "")
 		if i := strings.IndexByte(body, '\n'); i >= 0 {
 			body = body[:i] + " …"
 		}
-		return body
+		return prefix + body
 	case model.ActivityCreated:
 		if c, ok := act.Changes["title"]; ok {
 			return "title: " + rawString(c.To)
@@ -258,6 +262,9 @@ func (a *App) renderActivity(w io.Writer, resp *client.Response) error {
 	}
 	if act.Summary != nil {
 		pairs = append(pairs, [2]string{"summary", *act.Summary})
+	}
+	if act.CommentKind != nil {
+		pairs = append(pairs, [2]string{"comment_kind", string(*act.CommentKind)})
 	}
 	fields(w, pairs)
 	if act.Body != nil {

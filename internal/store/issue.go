@@ -357,7 +357,7 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 			b, _ := json.Marshal(v)
 			changes[f] = model.Change{To: b}
 		}
-		_, err = insertActivity(ctx, tx, id, model.ActivityCreated, tr, now, changes, nil, nil)
+		_, err = insertActivity(ctx, tx, id, model.ActivityCreated, tr, now, changes, nil, nil, nil)
 		return err
 	})
 	if err != nil {
@@ -503,7 +503,7 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if err := writeLinks(ctx, tx, cur.id, next.Labels, depIDs, next.Refs); err != nil {
 			return err
 		}
-		if _, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil); err != nil {
+		if _, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil, nil); err != nil {
 			return err
 		}
 		changed = true

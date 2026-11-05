@@ -184,8 +184,10 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		{"list unacknowledged", func() (*Response, error) {
 			return c.ListIssues(ctx, IssueFilter{Project: "CLI", Acknowledged: "false"})
 		}, "GET", "/v1/issues", "acknowledged=false&project=CLI", ""},
-		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
-		{"comment with summary", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "서버 랭킹 함수 구현") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글","summary":"서버 랭킹 함수 구현"}`},
+		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "", "") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
+		{"comment with summary", func() (*Response, error) {
+			return c.AddComment(ctx, "CLI-1", "댓글", "서버 랭킹 함수 구현", "")
+		}, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글","summary":"서버 랭킹 함수 구현"}`},
 		{"issue activity", func() (*Response, error) { return c.IssueActivity(ctx, "CLI-1", Page{Limit: 10, Offset: 2}) }, "GET", "/v1/issues/CLI-1/activity", "limit=10&offset=2", ""},
 		{"activity", func() (*Response, error) {
 			return c.ListActivity(ctx, ActivityFilter{Project: "CLI", Kind: "updated", Field: "status", Since: "2026-10-17T00:00:00Z", Sort: "at"})

@@ -620,10 +620,12 @@ var issueUnackCmd = &command{
 
 var issueCommentCmd = &command{
 	name: "comment", summary: "댓글 추가 (상태 변경과 함께 가능)",
-	usage: `사용법: agb issue comment <KEY> [--summary <요약>] [--status <S> [--reason <사유>]] [--location [--repo <폴더>]...] (--body <텍스트> | --body-file <경로|->)
+	usage: `사용법: agb issue comment <KEY> [--summary <요약>] [--kind <K>] [--status <S> [--reason <사유>]] [--location [--repo <폴더>]...] (--body <텍스트> | --body-file <경로|->)
 
 옵션:
   --summary <요약>        한 줄 요약. 1~30자, 줄바꿈 없음. 목록에 보이는 색인
+  --kind <K>              지식이 담긴 댓글의 종류: decision(결정), finding(발견), lesson(교훈).
+                          진행 기록에는 붙이지 않음
   --status <S>            댓글을 달기 전에 상태를 바꿈. agb issue update --status 와 같음
   --reason <사유>         상태 변경의 사유. --status 와 함께만 씀
   --location              본문 끝에 이 호스트의 작업 위치를 붙임: 호스트, 저장소별 브랜치·HEAD·원격과의 차이·
@@ -639,8 +641,9 @@ var issueCommentCmd = &command{
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue comment", g)
-		var summary, body, bodyFile, status, reason string
+		var summary, kind, body, bodyFile, status, reason string
 		fs.StringVar(&summary, "summary", "", "")
+		fs.StringVar(&kind, "kind", "", "")
 		fs.StringVar(&body, "body", "", "")
 		fs.StringVar(&bodyFile, "body-file", "", "")
 		fs.StringVar(&status, "status", "", "")
@@ -659,6 +662,9 @@ var issueCommentCmd = &command{
 		}
 		if isSet(fs, "reason") && !isSet(fs, "status") {
 			return usageErrorf("--reason 은 --status 와 함께만 씁니다.")
+		}
+		if _, ok := model.ParseCommentKind(kind); kind != "" && !ok {
+			return usageErrorf("--kind 는 decision, finding, lesson 중 하나입니다.")
 		}
 		text, present, err := a.readBody(fs, body, bodyFile)
 		if err != nil {
@@ -701,7 +707,7 @@ var issueCommentCmd = &command{
 				}
 			}
 		}
-		resp, err := c.AddComment(ctx, key, text, summary)
+		resp, err := c.AddComment(ctx, key, text, summary, kind)
 		if err != nil {
 			return err
 		}
