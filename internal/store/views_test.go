@@ -402,3 +402,37 @@ func TestViewItemsCarryDecisionNeeded(t *testing.T) {
 	has("overview next", o.Next.Items[0].DecisionNeeded)
 	has("overview unacknowledged", o.Unacknowledged.Items[0].DecisionNeeded)
 }
+
+func TestQueueLeavesOutExternalWaits(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	wait := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "팀 합의 대기", Status: model.StatusBacklog, Priority: model.P1, Labels: []string{model.ExternalLabel}})
+	blocked := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "합의 뒤 구현", Status: model.StatusBacklog, Priority: model.P1, DependsOn: []string{wait.Key}})
+	ready := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "바로 할 일", Status: model.StatusBacklog, Priority: model.P2})
+
+	items, total, err := s.Queue(ctx, QueueFilter{Statuses: []model.IssueStatus{model.StatusBacklog}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(items, func(q model.QueueItem) string { return q.Key }); total != 2 || !reflect.DeepEqual(got, []string{blocked.Key, ready.Key}) {
+		t.Errorf("queue = %v (total %d)", got, total)
+	}
+	o, err := s.Overview(ctx, "AGB", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Next.Total != 1 || o.Next.Items[0].Key != ready.Key {
+		t.Errorf("next = %+v", o.Next)
+	}
+	if o.Blocked.Total != 1 || o.Blocked.Items[0].Key != blocked.Key || !reflect.DeepEqual(o.Blocked.Items[0].BlockedBy, []string{wait.Key}) {
+		t.Errorf("blocked = %+v", o.Blocked)
+	}
+	done := model.StatusDone
+	if _, _, err := s.UpdateIssue(ctx, trOwner, wait.Key, IssuePatch{Status: &done}, nil); err != nil {
+		t.Fatal(err)
+	}
+	o, _ = s.Overview(ctx, "AGB", 10)
+	if o.Next.Total != 2 || o.Next.Items[0].Key != blocked.Key || o.Blocked.Total != 0 {
+		t.Errorf("after the wait ends: next = %+v, blocked = %d", keysOf(o.Next.Items, func(q model.QueueItem) string { return q.Key }), o.Blocked.Total)
+	}
+}
