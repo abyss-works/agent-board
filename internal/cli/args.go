@@ -27,6 +27,7 @@ type globals struct {
 	sessionID  string
 	clientHost string
 	config     string
+	fields     string
 }
 
 func (g *globals) addTo(fs *flag.FlagSet) {
@@ -37,6 +38,7 @@ func (g *globals) addTo(fs *flag.FlagSet) {
 	fs.StringVar(&g.sessionID, "session-id", g.sessionID, "")
 	fs.StringVar(&g.clientHost, "client-host", g.clientHost, "")
 	fs.StringVar(&g.config, "config", g.config, "")
+	fs.StringVar(&g.fields, "fields", g.fields, "")
 }
 
 // newFlagSet builds a silent flag set; usage and errors are reported by
