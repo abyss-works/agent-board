@@ -139,7 +139,9 @@ agb whoami
 # 프로젝트를 만든다. 키는 대문자로 시작하는 대문자와 숫자 2~10자이며 이슈 키의 접두어가 된다.
 agb project create DEMO "Demo project"
 
-# 현황과 목록을 조회한다.
+# 할 일과 현황을 조회한다. agenda는 사용자 차례, 에이전트 할 일, 대기를 묶어 보인다.
+agb agenda -p DEMO
+agb digest --since 3d -p DEMO
 agb project overview DEMO
 agb issue list -p DEMO --status doing
 agb queue -p DEMO --limit 1
@@ -156,16 +158,21 @@ agb issue update DEMO-1 --status doing
 agb issue update DEMO-1 --status cancelled --reason "DEMO-2와 중복"
 
 # 댓글을 단다. --summary는 목록에 보이는 한 줄 요약이다(1~30자).
-agb issue comment DEMO-1 --summary "정렬 쿼리 구현" --body-file - <<'EOF'
+# --status를 주면 상태를 바꾼 뒤 댓글을 단다. --location은 이 호스트의 작업 위치(브랜치, 커밋하지 않은 파일 이름 등)를 붙인다.
+agb issue comment DEMO-1 --status done --summary "정렬 쿼리 구현" --body-file - <<'EOF'
 최신순 정렬 쿼리를 추가했다.
 EOF
+
+# 외부(팀원 MR, 팀 합의)를 기다리면 라벨 external 이슈를 세우고 선행 이슈로 건다. external 이슈는 큐에 나오지 않는다.
+agb issue create -p DEMO -t "API 팀 MR 병합 대기" --label external --body-file wait.md
+agb issue update DEMO-1 --add-depends-on DEMO-2
 ```
 
-출력은 터미널이면 표, 파이프나 파일이면 서버 응답 JSON이다. `--table`과 `--json`으로 바꿀 수 있다. 종료 코드는 0이 성공, 1이 API·네트워크 오류, 2가 사용법 오류다. 전체 명령은 `agb --help`, 명령별 옵션은 `agb <명령> --help`로 확인한다.
+출력은 터미널이면 표, 파이프나 파일이면 서버 응답 JSON이다. `--table`과 `--json`으로 바꿀 수 있고, `--fields key,status`처럼 JSON 필드를 고를 수 있다. `agb issue get`은 키를 여러 개 받는다. 모르는 명령을 주면 가까운 명령을 알려 준다. 종료 코드는 0이 성공, 1이 API·네트워크 오류, 2가 사용법 오류다. 전체 명령은 `agb --help`, 명령별 옵션은 `agb <명령> --help`로 확인한다.
 
 ## REST API
 
-`/v1` 아래에 `projects`, `issues`, `topics`, `milestones`, `documents`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
+`/v1` 아래에 `projects`, `agenda`, `digest`, `issues`, `topics`, `milestones`, `documents`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
 
 ```bash
 curl -H "Authorization: Bearer $AGB_TOKEN" \
