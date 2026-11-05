@@ -170,3 +170,32 @@ func TestOverviewEndpoint(t *testing.T) {
 		t.Errorf("archived overview: %d", rec.Code)
 	}
 }
+
+func TestAgendaEndpoint(t *testing.T) {
+	e := newEnv(t)
+	seedViews(t, e)
+	rec := e.do(t, "GET", "/v1/agenda?project=AGB", "", nil)
+	if rec.Code != 200 {
+		t.Fatalf("agenda: %d %s", rec.Code, rec.Body.String())
+	}
+	var a store.Agenda
+	decodeJSON(t, rec, &a)
+	if len(a.Projects) != 1 || a.Projects[0].Project.Key != "AGB" {
+		t.Fatalf("projects = %+v", a.Projects)
+	}
+	p := a.Projects[0]
+	if p.Agent.Doing.Total != 1 || p.Agent.Next.Total != 2 || p.UserTurn.Decisions.Total != 1 || p.Waiting.Blocked.Total != 1 || p.Waiting.External.Items == nil {
+		t.Errorf("agenda = %+v", p)
+	}
+	if rec = e.do(t, "GET", "/v1/agenda", "", nil); rec.Code != 200 {
+		t.Errorf("all projects: %d", rec.Code)
+	}
+	if rec = e.do(t, "GET", "/v1/agenda?project=NOPE", "", nil); rec.Code != 404 {
+		t.Errorf("missing project: %d", rec.Code)
+	}
+	for _, q := range []string{"limit=0", "limit=51", "x=1", "project=bad"} {
+		if rec = e.do(t, "GET", "/v1/agenda?"+q, "", nil); rec.Code != 400 {
+			t.Errorf("%s: %d", q, rec.Code)
+		}
+	}
+}
