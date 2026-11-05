@@ -13,29 +13,30 @@ import (
 // ActivityFilter selects activity records. Slice filters are OR within the
 // slice; different filters are ANDed.
 type ActivityFilter struct {
-	Projects    []string
-	Issues      []string
-	Actors      []string
-	Sessions    []string
-	ClientHosts []string
-	Kinds       []model.ActivityKind
-	Field       string // only records whose changes contain this field
-	Since       *model.Time
-	Until       *model.Time
-	Asc         bool // default is newest first
-	Limit       int
-	Offset      int
+	Projects     []string
+	Issues       []string
+	Actors       []string
+	Sessions     []string
+	ClientHosts  []string
+	Kinds        []model.ActivityKind
+	CommentKinds []model.CommentKind
+	Field        string // only records whose changes contain this field
+	Since        *model.Time
+	Until        *model.Time
+	Asc          bool // default is newest first
+	Limit        int
+	Offset       int
 }
 
-const activityCols = `a.id, i.key, p.key, a.kind, a.actor_id, a.session_id, a.client_host, a.at, a.changes, a.summary, a.body`
+const activityCols = `a.id, i.key, p.key, a.kind, a.actor_id, a.session_id, a.client_host, a.at, a.changes, a.summary, a.comment_kind, a.body`
 
 const activityFrom = ` from activity a join issue i on i.id = a.issue_id join project p on p.id = i.project_id`
 
 func scanActivity(sc interface{ Scan(...any) error }) (*model.Activity, error) {
 	var a model.Activity
 	var at string
-	var changes, summary, body sql.NullString
-	if err := sc.Scan(&a.ID, &a.Issue, &a.Project, &a.Kind, &a.Actor, &a.SessionID, &a.ClientHost, &at, &changes, &summary, &body); err != nil {
+	var changes, summary, commentKind, body sql.NullString
+	if err := sc.Scan(&a.ID, &a.Issue, &a.Project, &a.Kind, &a.Actor, &a.SessionID, &a.ClientHost, &at, &changes, &summary, &commentKind, &body); err != nil {
 		return nil, err
 	}
 	var err error
@@ -50,13 +51,17 @@ func scanActivity(sc interface{ Scan(...any) error }) (*model.Activity, error) {
 	if summary.Valid {
 		a.Summary = &summary.String
 	}
+	if commentKind.Valid {
+		k := model.CommentKind(commentKind.String)
+		a.CommentKind = &k
+	}
 	if body.Valid {
 		a.Body = &body.String
 	}
 	return &a, nil
 }
 
-func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.ActivityKind, tr model.Trace, at model.Time, changes map[string]model.Change, summary, body *string) (int64, error) {
+func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.ActivityKind, tr model.Trace, at model.Time, changes map[string]model.Change, summary *string, commentKind *model.CommentKind, body *string) (int64, error) {
 	var changesJSON any
 	if changes != nil {
 		b, err := json.Marshal(changes)
@@ -69,13 +74,17 @@ func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.A
 	if summary != nil {
 		summaryVal = *summary
 	}
+	var commentKindVal any
+	if commentKind != nil {
+		commentKindVal = string(*commentKind)
+	}
 	var bodyVal any
 	if body != nil {
 		bodyVal = *body
 	}
 	res, err := tx.ExecContext(ctx,
-		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes, summary, body) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		issueID, string(kind), tr.Actor, tr.SessionID, tr.ClientHost, at.String(), changesJSON, summaryVal, bodyVal)
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes, summary, comment_kind, body) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		issueID, string(kind), tr.Actor, tr.SessionID, tr.ClientHost, at.String(), changesJSON, summaryVal, commentKindVal, bodyVal)
 	if err != nil {
 		return 0, err
 	}
@@ -83,10 +92,11 @@ func insertActivity(ctx context.Context, tx *sql.Tx, issueID int64, kind model.A
 }
 
 // AddComment appends a commented record to an issue. summary is the optional
-// one-line index shown in lists; nil stores none. Comments are allowed on
+// one-line index shown in lists; nil stores none. kind marks a comment that
+// carries knowledge; nil is a progress note. Comments are allowed on
 // issues in any status, including deleted, but not in a project that is
 // archived or deleted.
-func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string, summary *string) (*model.Activity, error) {
+func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string, summary *string, kind *model.CommentKind) (*model.Activity, error) {
 	if err := model.ValidateComment(body, summary); err != nil {
 		return nil, err
 	}
@@ -104,7 +114,7 @@ func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string
 		if model.ProjectStatus(projectStatus) != model.ProjectActive {
 			return ErrProjectNotActive
 		}
-		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, s.stamp(), nil, summary, &body)
+		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, s.stamp(), nil, summary, kind, &body)
 		return err
 	})
 	if err != nil {
@@ -136,6 +146,11 @@ func (s *Store) ListActivity(ctx context.Context, f ActivityFilter) ([]model.Act
 		kinds[n] = string(k)
 	}
 	in("a.kind", kinds)
+	commentKinds := make([]string, len(f.CommentKinds))
+	for n, k := range f.CommentKinds {
+		commentKinds[n] = string(k)
+	}
+	in("a.comment_kind", commentKinds)
 	if f.Field != "" {
 		where = append(where, "json_type(a.changes, ?) is not null")
 		args = append(args, "$."+f.Field)

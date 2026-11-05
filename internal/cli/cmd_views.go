@@ -17,6 +17,7 @@ var activityCmd = &command{
   --session <ID>          세션 ID. 쉼표 OR
   --client-host <H>       쉼표 OR
   --kind <K>              created, updated, commented. 쉼표 OR
+  --comment-kind <K>      댓글 종류 decision, finding, lesson. 쉼표 OR
   --field <F>             changes 에 이 필드가 있는 기록만. 상태 변경만 보려면 --field status --kind updated
   --since <RFC3339>, --until <RFC3339>
   --sort <at|-at>         기본 -at (최신 먼저)
@@ -41,6 +42,7 @@ var activityCmd = &command{
 		fs.StringVar(&f.Session, "session", "", "")
 		fs.StringVar(&f.ClientHost, "client-host", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
+		fs.StringVar(&f.CommentKind, "comment-kind", "", "")
 		fs.StringVar(&f.Field, "field", "", "")
 		fs.StringVar(&f.Since, "since", "", "")
 		fs.StringVar(&f.Until, "until", "", "")

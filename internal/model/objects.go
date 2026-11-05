@@ -245,5 +245,7 @@ type Activity struct {
 	At         Time              `json:"at"`
 	Changes    map[string]Change `json:"changes"`
 	Summary    *string           `json:"summary"`
-	Body       *string           `json:"body"`
+	// CommentKind is set only on comments that carry knowledge.
+	CommentKind *CommentKind `json:"comment_kind"`
+	Body        *string      `json:"body"`
 }

@@ -103,16 +103,17 @@ func (f IssueFilter) Values() url.Values {
 
 // ActivityFilter selects activity records. Comma separated values are OR.
 type ActivityFilter struct {
-	Project    string
-	Issue      string
-	Actor      string
-	Session    string
-	ClientHost string
-	Kind       string
-	Field      string
-	Since      string
-	Until      string
-	Sort       string
+	Project     string
+	Issue       string
+	Actor       string
+	Session     string
+	ClientHost  string
+	Kind        string
+	CommentKind string
+	Field       string
+	Since       string
+	Until       string
+	Sort        string
 	Page
 }
 
@@ -125,6 +126,7 @@ func (f ActivityFilter) Values() url.Values {
 	set(v, "session", f.Session)
 	set(v, "client_host", f.ClientHost)
 	set(v, "kind", f.Kind)
+	set(v, "comment_kind", f.CommentKind)
 	set(v, "field", f.Field)
 	set(v, "since", f.Since)
 	set(v, "until", f.Until)
@@ -392,11 +394,14 @@ func (c *Client) Unacknowledge(ctx context.Context, key string) (*Response, erro
 }
 
 // AddComment adds a comment to an issue. A non-empty summary is sent as the
-// comment's one-line summary.
-func (c *Client) AddComment(ctx context.Context, key, body, summary string) (*Response, error) {
+// comment's one-line summary, and a non-empty kind as its comment kind.
+func (c *Client) AddComment(ctx context.Context, key, body, summary, kind string) (*Response, error) {
 	in := map[string]any{"body": body}
 	if summary != "" {
 		in["summary"] = summary
+	}
+	if kind != "" {
+		in["comment_kind"] = kind
 	}
 	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/comments", in, nil)
 }

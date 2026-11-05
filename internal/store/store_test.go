@@ -158,7 +158,7 @@ func TestMigrateAddsSummaryToVersion1Database(t *testing.T) {
 		columns = append(columns, name)
 	}
 	rows.Close()
-	want := "id issue_id kind actor_id session_id client_host at changes body summary"
+	want := "id issue_id kind actor_id session_id client_host at changes body summary comment_kind"
 	if got := strings.Join(columns, " "); got != want {
 		t.Errorf("activity columns = %q, want %q", got, want)
 	}
@@ -174,7 +174,7 @@ func TestMigrateAddsSummaryToVersion1Database(t *testing.T) {
 		t.Errorf("commented record = %+v", items[1])
 	}
 
-	c, err := s.AddComment(ctx, model.Trace{Actor: "claude", SessionID: "s2", ClientHost: "desk"}, "AGB-1", "새 본문", str("새 요약"))
+	c, err := s.AddComment(ctx, model.Trace{Actor: "claude", SessionID: "s2", ClientHost: "desk"}, "AGB-1", "새 본문", str("새 요약"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

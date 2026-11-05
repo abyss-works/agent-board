@@ -508,3 +508,33 @@ func TestActivityResponsesAlwaysCarrySummary(t *testing.T) {
 	decodeJSON(t, rec, &o)
 	check("overview recent_activity", o.RecentActivity.Items)
 }
+
+func TestCommentKind(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createIssue(t, `{"project":"AGB","title":"a"}`)
+	rec := e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"Redis는 표시용 캐시로만 쓴다.","comment_kind":"decision"}`, nil)
+	if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"comment_kind":"decision"`) {
+		t.Fatalf("decision comment: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, body := range []string{`{"body":"x"}`, `{"body":"x","comment_kind":null}`} {
+		if rec = e.do(t, "POST", "/v1/issues/AGB-1/comments", body, nil); rec.Code != 201 || !strings.Contains(rec.Body.String(), `"comment_kind":null`) {
+			t.Errorf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec = e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"x","comment_kind":"progress"}`, nil); rec.Code != 422 || decodeErr(t, rec).Error.Details[0].Field != "comment_kind" {
+		t.Errorf("unknown kind: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, "GET", "/v1/activity?comment_kind=decision", "", nil)
+	var l struct {
+		Items []model.Activity `json:"items"`
+		Total int              `json:"total"`
+	}
+	decodeJSON(t, rec, &l)
+	if rec.Code != 200 || l.Total != 1 || l.Items[0].CommentKind == nil || *l.Items[0].CommentKind != model.CommentDecision {
+		t.Errorf("filter: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = e.do(t, "GET", "/v1/activity?comment_kind=progress", "", nil); rec.Code != 400 {
+		t.Errorf("bad filter: %d", rec.Code)
+	}
+}

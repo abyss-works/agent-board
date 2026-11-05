@@ -1,4 +1,4 @@
-import type { ActivityKind, DeviceAuthorizationStatus, DocumentKind, DocumentLocation, IssueStatus, IssueType, MilestoneStatus, Priority, ProjectStatus } from '@/api/types'
+import type { ActivityKind, CommentKind, DeviceAuthorizationStatus, DocumentKind, DocumentLocation, IssueStatus, IssueType, MilestoneStatus, Priority, ProjectStatus } from '@/api/types'
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   backlog: '백로그',
@@ -58,6 +58,12 @@ export const KIND_LABEL: Record<ActivityKind, string> = {
   created: '생성',
   updated: '수정',
   commented: '댓글',
+}
+
+export const COMMENT_KIND_LABEL: Record<CommentKind, string> = {
+  decision: '결정',
+  finding: '발견',
+  lesson: '교훈',
 }
 
 /** 활동 기록 `changes`의 필드 이름 */

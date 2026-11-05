@@ -28,7 +28,7 @@ func TestDigest(t *testing.T) {
 	if _, _, err := s.UpdateIssue(ctx, trOwner, made.Key, IssuePatch{DecisionNeeded: Optional[string]{Set: true, Value: &q}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AddComment(ctx, trOwner, made.Key, "메모", nil); err != nil {
+	if _, err := s.AddComment(ctx, trOwner, made.Key, "메모", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	putDoc(t, s, trOwner, "AGB", docPriority, "history", docText("decision", "본문"))

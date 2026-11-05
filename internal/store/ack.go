@@ -51,7 +51,7 @@ func (s *Store) SetAcknowledged(ctx context.Context, tr model.Trace, key string,
 			return err
 		}
 		changes := map[string]model.Change{"acknowledged": {From: rawJSON(!acknowledged), To: rawJSON(acknowledged)}}
-		if _, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil); err != nil {
+		if _, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil, nil); err != nil {
 			return err
 		}
 		changed = true

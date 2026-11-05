@@ -209,7 +209,7 @@ func TestOverview(t *testing.T) {
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "review", Status: model.StatusReview, Type: model.TypeBug})
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "gone", Status: model.StatusDeleted})
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "other", Project: "OTH", Status: model.StatusDoing})
-	s.AddComment(ctx, trClaude, dep.Key, "hi", nil)
+	s.AddComment(ctx, trClaude, dep.Key, "hi", nil, nil)
 
 	o, err := s.Overview(ctx, "AGB", 10)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestOverviewDoingHolder(t *testing.T) {
 	start := model.NewTime(now)
 	now = now.Add(90 * time.Minute)
 	// Activity of the same session on another issue keeps it alive.
-	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈", nil); err != nil {
+	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	alive := model.NewTime(now)

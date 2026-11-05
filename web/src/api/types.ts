@@ -6,6 +6,8 @@ export type ProjectStatus = 'active' | 'archived' | 'deleted'
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
 export type ActorKind = 'user' | 'agent'
 export type ActivityKind = 'created' | 'updated' | 'commented'
+/** 지식이 담긴 댓글의 종류. 진행 기록에는 없다. */
+export type CommentKind = 'decision' | 'finding' | 'lesson'
 export type TopicStatus = 'active' | 'deleted'
 export type MilestoneStatus = 'open' | 'closed' | 'deleted'
 export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
@@ -163,6 +165,8 @@ export interface Activity {
   changes: Record<string, Change> | null
   /** 댓글의 한 줄 요약. 요약 없는 댓글과 댓글이 아닌 기록은 null이다. */
   summary: string | null
+  /** 지식이 담긴 댓글의 종류. 진행 기록과 댓글이 아닌 기록은 null이다. */
+  comment_kind: CommentKind | null
   body: string | null
 }
 
