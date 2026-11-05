@@ -19,8 +19,8 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-var docCmd = &command{name: "doc", summary: "기록 문서 등록·동기화·검색·조회", subs: []*command{
-	docPutCmd, docSyncCmd, docSearchCmd, docGetCmd,
+var docCmd = &command{name: "doc", summary: "기록 문서 등록·동기화·목록·검색·조회", subs: []*command{
+	docPutCmd, docSyncCmd, docListCmd, docSearchCmd, docGetCmd,
 }}
 
 // errNotUTF8 reports a record document file that is not text the server could
@@ -459,6 +459,65 @@ var docSearchCmd = &command{
 			return err
 		}
 		return a.emit(g, resp, a.renderDocumentSearch)
+	},
+}
+
+func (a *App) renderDocumentList(w io.Writer, resp *client.Response) error {
+	l, err := decode[listOf[model.Document]](resp)
+	if err != nil {
+		return err
+	}
+	if len(l.Items) == 0 {
+		fmt.Fprintln(w, "기록 문서가 없습니다.")
+		return nil
+	}
+	tb := &table{header: []string{"PROJECT", "NAME", "LOCATION", "KIND", "DATE", "TITLE"}}
+	for _, d := range l.Items {
+		tb.add(d.Project, d.Name, string(d.Location), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"))
+	}
+	tb.write(w, a.TermWidth)
+	footer(w, len(l.Items), l.Total, l.Offset)
+	return nil
+}
+
+var docListCmd = &command{
+	name: "list", summary: "서버의 기록 문서 목록 (날짜 최신 순)",
+	usage: `사용법: agb doc list [옵션]
+
+서버에 등록된 기록 문서를 날짜 최신 순으로 보입니다. 프로젝트를 주지 않으면 모든 프로젝트를 봅니다.
+
+옵션:
+  --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
+  --kind <K>              decision, incident, report, implementation. 쉼표 OR
+  --location <L>          history, archive
+  --limit <N>             최대 200. 기본 50
+  --offset <N>
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("doc list", g)
+		var f client.DocumentFilter
+		fs.StringVar(&f.Project, "project", "", "")
+		fs.StringVar(&f.Project, "p", "", "")
+		fs.StringVar(&f.Kind, "kind", "", "")
+		fs.StringVar(&f.Location, "location", "", "")
+		fs.IntVar(&f.Limit, "limit", 0, "")
+		fs.IntVar(&f.Offset, "offset", 0, "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		if err := none(pos); err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.SearchDocuments(ctx, f)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderDocumentList)
 	},
 }
 
