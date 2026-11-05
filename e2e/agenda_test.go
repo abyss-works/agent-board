@@ -14,6 +14,8 @@ func TestAgenda(t *testing.T) {
 	ready := newIssue(t, p.Key, "바로 할 일", nil)
 	tick()
 	review := newIssue(t, p.Key, "화면 확인", map[string]any{"status": "review"})
+	tick()
+	task := newIssue(t, p.Key, "메일 수신 확인", map[string]any{"labels": strs("user-task")})
 	newIssue(t, other.Key, "다른 프로젝트 일", nil)
 
 	type agenda struct {
@@ -24,6 +26,7 @@ func TestAgenda(t *testing.T) {
 				Review         section[issue] `json:"review"`
 				Decisions      section[issue] `json:"decisions"`
 				Unacknowledged section[issue] `json:"unacknowledged"`
+				Tasks          section[issue] `json:"tasks"`
 			} `json:"user_turn"`
 			Agent struct {
 				Doing section[issue] `json:"doing"`
@@ -43,6 +46,9 @@ func TestAgenda(t *testing.T) {
 	ag := a.Projects[0]
 	if ag.UserTurn.Review.Total != 1 || ag.UserTurn.Review.Items[0].Key != review.Key {
 		t.Errorf("review = %+v", ag.UserTurn.Review)
+	}
+	if ag.UserTurn.Tasks.Total != 1 || ag.UserTurn.Tasks.Items[0].Key != task.Key {
+		t.Errorf("tasks = %+v", ag.UserTurn.Tasks)
 	}
 	if ag.Agent.Next.Total != 1 || ag.Agent.Next.Items[0].Key != ready.Key {
 		t.Errorf("next = %+v", ag.Agent.Next)

@@ -524,6 +524,7 @@ type agenda struct {
 			Review         section[model.IssueSummary] `json:"review"`
 			Decisions      section[model.IssueSummary] `json:"decisions"`
 			Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
+			Tasks          section[model.IssueSummary] `json:"tasks"`
 		} `json:"user_turn"`
 		Agent struct {
 			Doing section[model.DoingItem] `json:"doing"`
@@ -547,8 +548,8 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 	for _, p := range ag.Projects {
 		u, g, wt := p.UserTurn, p.Agent, p.Waiting
 		fmt.Fprintf(w, "\n### %s (%s)\n", p.Project.Key, p.Project.Name)
-		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total)
-		for _, s := range []section[model.IssueSummary]{u.Review, u.Decisions, u.Unacknowledged} {
+		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d, 사용자 할 일 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total, u.Tasks.Total)
+		for _, s := range []section[model.IssueSummary]{u.Review, u.Decisions, u.Unacknowledged, u.Tasks} {
 			if len(s.Items) > 0 {
 				a.issueTable(s.Items).write(w, a.TermWidth)
 			}
