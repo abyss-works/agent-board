@@ -44,7 +44,11 @@ func workLocation(host string, repos []string) (string, error) {
 		}
 		branch, _ := git(dir, "rev-parse", "--abbrev-ref", "HEAD")
 		head, _ := git(dir, "rev-parse", "--short", "HEAD")
-		fmt.Fprintf(&b, "\n### %s\n\n- 브랜치: %s (HEAD %s)\n", top, branch, head)
+		fmt.Fprintf(&b, "\n### %s\n\n", top)
+		if remote := remoteURL(dir); remote != "" {
+			fmt.Fprintf(&b, "- 원격: %s\n", remote)
+		}
+		fmt.Fprintf(&b, "- 브랜치: %s (HEAD %s)\n", branch, head)
 		if counts, err := git(dir, "rev-list", "--left-right", "--count", "@{u}...HEAD"); err == nil {
 			if f := strings.Fields(counts); len(f) == 2 {
 				fmt.Fprintf(&b, "- 원격 추적 브랜치와 차이: 앞 %s, 뒤 %s\n", f[1], f[0])
