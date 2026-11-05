@@ -494,7 +494,7 @@ func TestListIssuesFilters(t *testing.T) {
 	mustProject(t, s, ctx, "OTH")
 	i1 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "alpha", Priority: model.P1, Labels: []string{"api"}, Status: model.StatusDoing})
 	i2 := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "beta", Priority: model.P0, Labels: []string{"api", "cli"}, Type: model.TypeBug})
-	i3 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "gamma", Project: "OTH", Status: model.StatusDone, Parent: nil})
+	i3 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "gamma", Project: "OTH", Status: model.StatusDone, Parent: nil, Refs: []string{"jira:S15P31A308-261", "mr:164"}})
 	i4 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "delta", Parent: str(i1.Key), Status: model.StatusDeleted})
 
 	list := func(f IssueFilter) []string {
@@ -528,6 +528,12 @@ func TestListIssuesFilters(t *testing.T) {
 	}
 	if got := list(IssueFilter{Statuses: all, Labels: []string{"api", "cli"}}); !reflect.DeepEqual(got, []string{i2.Key}) {
 		t.Errorf("label api AND cli = %v", got)
+	}
+	if got := list(IssueFilter{Statuses: all, Refs: []string{"jira:S15P31A308-261"}}); !reflect.DeepEqual(got, []string{i3.Key}) {
+		t.Errorf("ref = %v", got)
+	}
+	if got := list(IssueFilter{Statuses: all, Refs: []string{"jira:S15P31A308-261", "mr:165"}}); len(got) != 0 {
+		t.Errorf("ref AND = %v", got)
 	}
 	if got := list(IssueFilter{Statuses: all, Types: []model.IssueType{model.TypeBug}}); !reflect.DeepEqual(got, []string{i2.Key}) {
 		t.Errorf("type = %v", got)

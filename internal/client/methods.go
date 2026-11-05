@@ -61,6 +61,7 @@ type IssueFilter struct {
 	Type            string
 	Priority        string
 	Labels          []string
+	Refs            []string
 	Parent          string
 	Topic           string // topic ids and none, comma separated (OR)
 	Milestone       string // milestone ids and none, comma separated (OR)
@@ -83,6 +84,9 @@ func (f IssueFilter) Values() url.Values {
 	set(v, "priority", f.Priority)
 	for _, l := range f.Labels {
 		v.Add("label", l)
+	}
+	for _, r := range f.Refs {
+		v.Add("ref", r)
 	}
 	set(v, "parent", f.Parent)
 	set(v, "topic", f.Topic)
