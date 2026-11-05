@@ -74,12 +74,13 @@ const openDepsExpr = `(select count(*) from issue_dependency d join issue di on 
 const blocksExpr = `(select count(*) from issue_dependency d join issue bi on bi.id = d.issue_id
 	where d.depends_on_id = i.id and bi.status not in ('done','cancelled','deleted'))`
 
-// Queue orders issues by priority, readiness (ready first), open milestone
+// Queue leaves out issues labelled model.ExternalLabel and orders the rest
+// by priority, readiness (ready first), open milestone
 // (earliest target date first, undated after, then creation), the number of
 // open issues they block (most first) and creation.
 func (s *Store) Queue(ctx context.Context, f QueueFilter) ([]model.QueueItem, int, error) {
-	var where []string
-	var args []any
+	where := []string{"not exists (select 1 from issue_label el where el.issue_id = i.id and el.label = ?)"}
+	args := []any{model.ExternalLabel}
 	if len(f.Projects) > 0 {
 		where = append(where, "p.key in ("+placeholders(len(f.Projects))+")")
 		for _, v := range f.Projects {
