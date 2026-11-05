@@ -74,13 +74,14 @@ const openDepsExpr = `(select count(*) from issue_dependency d join issue di on 
 const blocksExpr = `(select count(*) from issue_dependency d join issue bi on bi.id = d.issue_id
 	where d.depends_on_id = i.id and bi.status not in ('done','cancelled','deleted'))`
 
-// Queue leaves out issues labelled model.ExternalLabel and orders the rest
+// Queue leaves out issues labelled model.ExternalLabel or
+// model.UserTaskLabel and orders the rest
 // by priority, readiness (ready first), open milestone
 // (earliest target date first, undated after, then creation), the number of
 // open issues they block (most first) and creation.
 func (s *Store) Queue(ctx context.Context, f QueueFilter) ([]model.QueueItem, int, error) {
-	where := []string{"not exists (select 1 from issue_label el where el.issue_id = i.id and el.label = ?)"}
-	args := []any{model.ExternalLabel}
+	where := []string{"not exists (select 1 from issue_label el where el.issue_id = i.id and el.label in (?, ?))"}
+	args := []any{model.ExternalLabel, model.UserTaskLabel}
 	if len(f.Projects) > 0 {
 		where = append(where, "p.key in ("+placeholders(len(f.Projects))+")")
 		for _, v := range f.Projects {
@@ -364,6 +365,7 @@ type AgendaProject struct {
 		Review         Section[model.IssueSummary] `json:"review"`
 		Decisions      Section[model.IssueSummary] `json:"decisions"`
 		Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
+		Tasks          Section[model.IssueSummary] `json:"tasks"`
 	} `json:"user_turn"`
 	Agent struct {
 		Doing Section[model.DoingItem] `json:"doing"`
@@ -400,9 +402,14 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		if err != nil {
 			return nil, err
 		}
+		tasks, taskTotal, err := s.ListIssues(ctx, IssueFilter{Projects: []string{key}, Statuses: model.OpenStatuses, Labels: []string{model.UserTaskLabel}, Limit: limit})
+		if err != nil {
+			return nil, err
+		}
 		var p AgendaProject
 		p.Project = o.Project
 		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unacknowledged = o.Review, o.Decisions, o.Unacknowledged
+		p.UserTurn.Tasks = Section[model.IssueSummary]{Total: taskTotal, Items: tasks}
 		p.Agent.Doing, p.Agent.Next = o.Doing, o.Next
 		p.Waiting.Blocked = o.Blocked
 		p.Waiting.External = Section[model.IssueSummary]{Total: total, Items: external}

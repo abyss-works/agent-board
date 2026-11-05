@@ -476,3 +476,25 @@ func TestAgendaGroupsUserTurnAgentWorkAndWaiting(t *testing.T) {
 		t.Errorf("unknown project: %v", err)
 	}
 }
+
+func TestUserTasksAreTheUsersTurn(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	task := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "메일 수신 확인", Status: model.StatusBacklog, Priority: model.P1, Labels: []string{model.UserTaskLabel}})
+	work := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "에이전트 일", Status: model.StatusBacklog, Priority: model.P2})
+	items, _, err := s.Queue(ctx, QueueFilter{Statuses: []model.IssueStatus{model.StatusBacklog}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(items, func(q model.QueueItem) string { return q.Key }); !reflect.DeepEqual(got, []string{work.Key}) {
+		t.Errorf("queue = %v", got)
+	}
+	a, err := s.Agenda(ctx, []string{"AGB"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := a.Projects[0]
+	if p.UserTurn.Tasks.Total != 1 || p.UserTurn.Tasks.Items[0].Key != task.Key || p.Agent.Next.Total != 1 {
+		t.Errorf("tasks = %+v, next = %+v", p.UserTurn.Tasks, p.Agent.Next)
+	}
+}

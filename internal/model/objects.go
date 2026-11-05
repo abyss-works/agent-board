@@ -204,6 +204,11 @@ type QueueItem struct {
 // service. Other issues depend on it; the queue never offers it as work.
 const ExternalLabel = "external"
 
+// UserTaskLabel marks an issue the user does by hand, such as a console
+// setting or checking a mail. It is the user's turn; the queue never offers
+// it to agents.
+const UserTaskLabel = "user-task"
+
 // StaleAfter is how long the session holding a doing issue may stay quiet
 // before the issue counts as stale.
 const StaleAfter = 2 * time.Hour
