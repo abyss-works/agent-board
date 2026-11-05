@@ -13,6 +13,7 @@ func (h *handler) registerViews(mux *http.ServeMux) {
 	route(mux, "/v1/labels", methods{"GET": h.labels})
 	route(mux, "/v1/projects/{key}/overview", methods{"GET": h.overview})
 	route(mux, "/v1/agenda", methods{"GET": h.agenda})
+	route(mux, "/v1/digest", methods{"GET": h.digest})
 }
 
 func (h *handler) projects(q *query) []string {
@@ -108,4 +109,24 @@ func (h *handler) agenda(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, a)
+}
+
+func (h *handler) digest(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	projects := h.projects(q)
+	since, until := q.time("since"), q.time("until")
+	if since == nil && q.one("since") == "" {
+		q.add("since", "필수입니다.")
+	}
+	limit := q.limit(50, 200)
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	d, err := h.store.Digest(r.Context(), projects, *since, until, limit)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
 }
