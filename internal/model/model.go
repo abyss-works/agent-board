@@ -193,7 +193,7 @@ const (
 )
 
 // RefKinds are the allowed prefixes of a reference ("kind:value").
-var RefKinds = []string{"repo", "file", "url", "pr", "issue", "doc"}
+var RefKinds = []string{"repo", "file", "url", "pr", "issue", "doc", "commit", "jira", "mr", "adr"}
 
 func parseEnum[T ~string](v string, all []T) (T, bool) {
 	for _, a := range all {

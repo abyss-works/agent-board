@@ -22,6 +22,7 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, m
 	fs.StringVar(&f.Type, "type", "", "")
 	fs.StringVar(&f.Priority, "priority", "", "")
 	fs.Var(labels, "label", "")
+	fs.Var((*stringList)(&f.Refs), "ref", "")
 	fs.Var(topics, "topic", "")
 	fs.Var(milestones, "milestone", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
@@ -40,7 +41,8 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
   --type <T>              feature, bug, design, idea, observation. 쉼표 OR
   --priority <P>          P0, P1, P2, P3. 쉼표 OR
   --label <L>             라벨. 반복하면 AND
-  --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
+  --ref <종류:값>         이 참조가 붙은 이슈. 값까지 정확히 같아야 함. 반복하면 AND
+  --topic <T>            주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
                           대주제를 주면 그 아래 주제의 이슈도 포함. 반복하면 OR. 경로는 --project 하나가 필요
   --milestone <M>         마일스톤의 ID나 이름, none 이면 마일스톤이 없는 이슈. 반복하면 OR.
                           이름은 --project 하나가 필요하고, 삭제된 마일스톤을 포함해 정확히 같은 이름을 찾음
@@ -211,7 +213,7 @@ var issueCreateCmd = &command{
 ` + bodyUsage + `  --label <L>             라벨. 반복 가능
   --parent <KEY>          상위 이슈
   --depends-on <KEY>      선행 이슈. 반복 가능
-  --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc. 반복 가능
+  --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc, commit, jira, mr, adr. 반복 가능
   --recheck <조건>        observation 의 재검토 조건 (observation 이면 필수)
   --decision-needed <질문|none>  사용자의 결정이 필요한 질문. 1~500자. 생략하거나 none 이면 없음
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다

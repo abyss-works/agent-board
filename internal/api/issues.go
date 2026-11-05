@@ -348,6 +348,12 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 		}
 		f.Labels = append(f.Labels, l)
 	}
+	for _, r := range q.repeated("ref") {
+		if _, _, ok := model.ParseRef(r); !ok {
+			q.add("ref", "종류:값 형식의 참조가 아닙니다.")
+		}
+		f.Refs = append(f.Refs, r)
+	}
 	statusParam := q.one("status")
 	if statusParam == "" {
 		statusParam = statusDefault
@@ -399,7 +405,7 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 }
 
 func (h *handler) listIssues(w http.ResponseWriter, r *http.Request) {
-	q := newQuery(r, "label")
+	q := newQuery(r, "label", "ref")
 	f := issueListFilter(q, "open")
 	f.Query = q.one("q")
 	f.Sort = q.sorts("priority", "created_at", "updated_at", "key", "relevance")
