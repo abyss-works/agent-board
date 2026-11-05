@@ -574,6 +574,40 @@ func TestDocSearch(t *testing.T) {
 	}
 }
 
+func TestDocList(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/documents", canned{body: docSearchJSON})
+	h := newHarness(t, srv, true)
+	h.app.TermWidth = 0
+
+	if code := h.run("doc", "list", "-p", "AGB", "--kind", "decision", "--location", "archive", "--limit", "5"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if got := srv.last().Query.Encode(); got != "kind=decision&limit=5&location=archive&project=AGB" {
+		t.Errorf("query = %s", got)
+	}
+	lines := strings.Split(strings.TrimRight(h.stdout.String(), "\n"), "\n")
+	if got := strings.Fields(lines[0]); !equalStrings(got, []string{"PROJECT", "NAME", "LOCATION", "KIND", "DATE", "TITLE"}) {
+		t.Errorf("header = %v", got)
+	}
+	if got := strings.Fields(lines[1]); !equalStrings(got[:4], []string{"AGB", "2026-10-20-1544-decision-priority-model.md", "history", "decision"}) {
+		t.Errorf("row = %v", got)
+	}
+	if strings.Contains(h.stdout.String(), "...[우선순위]") || !strings.Contains(h.stdout.String(), "7건 중 2건 표시") {
+		t.Errorf("list has no snippet and says a page is partial:\n%s", h.stdout)
+	}
+	if code := h.run("doc", "list"); code != 0 || srv.last().Query.Encode() != "" {
+		t.Errorf("no filter: code=%d query=%s", code, srv.last().Query.Encode())
+	}
+	srv.on("GET", "/v1/documents", canned{body: `{"items":[],"total":0,"limit":50,"offset":0}`})
+	if code := h.run("doc", "list", "-p", "AGB"); code != 0 || strings.TrimSpace(h.stdout.String()) != "기록 문서가 없습니다." {
+		t.Errorf("empty: code=%d out=%q", code, h.stdout.String())
+	}
+	if code := h.run("doc", "list", "x"); code != 2 {
+		t.Errorf("positional argument: code=%d", code)
+	}
+}
+
 func TestDocGet(t *testing.T) {
 	content := "---\r\nkind: decision\r\n---\r\n\t본문 <b> & é\r\n끝(개행 없음)"
 	contentJSON, _ := json.Marshal(content)
@@ -655,6 +689,7 @@ func TestDocHelp(t *testing.T) {
 		{[]string{"doc", "sync", "--help"}, "--root"},
 		{[]string{"doc", "search", "--help"}, "--kind"},
 		{[]string{"doc", "get", "--help"}, "--content"},
+		{[]string{"doc", "list", "--help"}, "--location"},
 	} {
 		if code := h.run(c.args...); code != 0 || !strings.Contains(h.stdout.String(), c.want) {
 			t.Errorf("%v: code=%d out=%s", c.args, code, h.stdout)

@@ -603,7 +603,7 @@ func TestIssueList(t *testing.T) {
 	tick()
 	i5 := newIssue(t, p.Key, "five", map[string]any{"status": "cancelled", "type": "idea", "priority": "P3"})
 	tick()
-	i6 := newIssue(t, p.Key, "six", map[string]any{"status": "review", "priority": "P1", "decision_needed": "여섯 번째 이슈를 어떻게 할지"})
+	i6 := newIssue(t, p.Key, "six", map[string]any{"status": "review", "priority": "P1", "decision_needed": "여섯 번째 이슈를 어떻게 할지", "refs": strs("jira:S15P31A308-261", "commit:0123abc")})
 	tick()
 	patchIssue(t, as("codex"), i1.Key, map[string]any{"priority": "P3"}) // updated by codex
 	tick()
@@ -658,6 +658,9 @@ func TestIssueList(t *testing.T) {
 		wantKeys(t, get(t, "parent="+i1.Key+"&sort=key").Items, i2.Key, i3.Key)
 		wantKeys(t, get(t, "parent=none&sort=key").Items, i1.Key, i6.Key)
 		wantKeys(t, get(t, "created_by=claude").Items, i3.Key)
+		wantKeys(t, get(t, "ref=jira:S15P31A308-261").Items, i6.Key)
+		wantKeys(t, get(t, "ref=jira:S15P31A308-261&ref=commit:0123abc").Items, i6.Key)
+		wantKeys(t, get(t, "ref=jira:S15P31A308-262").Items)
 		wantKeys(t, get(t, "created_by=claude,owner&sort=key").Items, i1.Key, i2.Key, i3.Key, i6.Key)
 		wantKeys(t, get(t, "updated_by=codex").Items, i1.Key)
 		wantKeys(t, get(t, "status_changed_by=gemini").Items, i6.Key)
@@ -702,6 +705,7 @@ func TestIssueList(t *testing.T) {
 		for _, q := range []string{
 			"status=nope", "type=task", "priority=P9", "sort=title", "sort=relevance", "limit=0", "limit=201",
 			"offset=x", "parent=bad", "label=BAD", "project=bad", "status=backlog&status=doing", "type=bug&type=idea", "unknown=1", "status=todo", "type=decision",
+			"ref=ticket:1", "ref=jira:",
 		} {
 			wantError(t, owner.do(t, "GET", "/v1/issues?project="+p.Key+"&"+q, nil), 400, "bad_request")
 		}

@@ -97,7 +97,8 @@ func TestCommentWithStatusChange(t *testing.T) {
 	if code := h.run("issue", "comment", "CLI-1", "--status", "done", "--reason", "구현 완료", "--summary", "끝", "--body", "결과"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	if len(srv.reqs) != 2 || srv.reqs[0].Method != "PATCH" || srv.reqs[1].Method != "POST" {
+	// done also reads the activity for location comments to link merges.
+	if len(srv.reqs) != 3 || srv.reqs[0].Method != "PATCH" || srv.reqs[1].Path != "/v1/issues/CLI-1/activity" || srv.reqs[2].Method != "POST" {
 		t.Fatalf("reqs=%v", srv.reqs)
 	}
 	var patch map[string]any

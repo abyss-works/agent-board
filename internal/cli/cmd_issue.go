@@ -22,6 +22,7 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, m
 	fs.StringVar(&f.Type, "type", "", "")
 	fs.StringVar(&f.Priority, "priority", "", "")
 	fs.Var(labels, "label", "")
+	fs.Var((*stringList)(&f.Refs), "ref", "")
 	fs.Var(topics, "topic", "")
 	fs.Var(milestones, "milestone", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
@@ -40,7 +41,8 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
   --type <T>              feature, bug, design, idea, observation. 쉼표 OR
   --priority <P>          P0, P1, P2, P3. 쉼표 OR
   --label <L>             라벨. 반복하면 AND
-  --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
+  --ref <종류:값>         이 참조가 붙은 이슈. 값까지 정확히 같아야 함. 반복하면 AND
+  --topic <T>            주제의 ID나 경로("대주제", "대주제/주제"), none 이면 주제가 없는 이슈.
                           대주제를 주면 그 아래 주제의 이슈도 포함. 반복하면 OR. 경로는 --project 하나가 필요
   --milestone <M>         마일스톤의 ID나 이름, none 이면 마일스톤이 없는 이슈. 반복하면 OR.
                           이름은 --project 하나가 필요하고, 삭제된 마일스톤을 포함해 정확히 같은 이름을 찾음
@@ -211,7 +213,7 @@ var issueCreateCmd = &command{
 ` + bodyUsage + `  --label <L>             라벨. 반복 가능
   --parent <KEY>          상위 이슈
   --depends-on <KEY>      선행 이슈. 반복 가능
-  --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc. 반복 가능
+  --ref <종류:값>         참조. 종류는 repo, file, url, pr, issue, doc, commit, jira, mr, adr. 반복 가능
   --recheck <조건>        observation 의 재검토 조건 (observation 이면 필수)
   --decision-needed <질문|none>  사용자의 결정이 필요한 질문. 1~500자. 생략하거나 none 이면 없음
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다
@@ -628,7 +630,13 @@ var issueCommentCmd = &command{
                           커밋하지 않은 파일 이름·워크트리. 파일 내용은 올리지 않음
   --repo <폴더>           작업 위치를 모을 저장소. 반복 가능. 주면 --location 을 뜻함.
                           기본은 현재 폴더의 저장소와, 있으면 그 아래 project/ 저장소
-` + bodyUsage,
+` + bodyUsage + `
+--status done 은 두 가지를 더 합니다.
+  - 이슈의 작업 위치 댓글에 남은 저장소와 브랜치로, 현재 브랜치의 first-parent 이력에서 그 작업을 들인
+    병합 커밋을 찾습니다. 찾으면 참조(commit:)로 붙이고 병합과 커밋 목록을 본문 끝에 붙입니다.
+    찾는 저장소는 --repo 로 준 것, 없으면 --repo 의 기본값과 같습니다.
+  - agb agenda 처럼 관리 저장소의 커밋한 기록 문서 중 서버에 없는 것을 올립니다.
+`,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue comment", g)
 		var summary, body, bodyFile, status, reason string
@@ -667,11 +675,12 @@ var issueCommentCmd = &command{
 			return err
 		}
 		c := a.newClient(s)
+		dirs := []string(repos)
+		if len(dirs) == 0 {
+			dirs = defaultLocationRepos()
+		}
 		if location || len(repos) > 0 {
-			if len(repos) == 0 {
-				repos = defaultLocationRepos()
-			}
-			loc, err := workLocation(s.ClientHost, repos)
+			loc, err := workLocation(s.ClientHost, dirs)
 			if err != nil {
 				return err
 			}
@@ -682,15 +691,27 @@ var issueCommentCmd = &command{
 			if isSet(fs, "reason") {
 				patch["status_reason"] = reason
 			}
-			if _, err := c.PatchIssue(ctx, key, patch, ""); err != nil {
+			issue, err := c.PatchIssue(ctx, key, patch, "")
+			if err != nil {
 				return err
+			}
+			if status == string(model.StatusDone) {
+				if merges := a.linkMerges(ctx, c, key, issue, dirs); merges != "" {
+					text = strings.TrimRight(text, "\n") + "\n\n" + merges
+				}
 			}
 		}
 		resp, err := c.AddComment(ctx, key, text, summary)
 		if err != nil {
 			return err
 		}
-		return a.emit(g, resp, a.renderActivity)
+		if err := a.emit(g, resp, a.renderActivity); err != nil {
+			return err
+		}
+		if status == string(model.StatusDone) {
+			a.autoSyncRecords(ctx, c)
+		}
+		return nil
 	},
 }
 

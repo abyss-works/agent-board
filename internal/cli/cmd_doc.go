@@ -19,8 +19,8 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-var docCmd = &command{name: "doc", summary: "기록 문서 등록·동기화·검색·조회", subs: []*command{
-	docPutCmd, docSyncCmd, docSearchCmd, docGetCmd,
+var docCmd = &command{name: "doc", summary: "기록 문서 등록·동기화·목록·검색·조회", subs: []*command{
+	docPutCmd, docSyncCmd, docListCmd, docSearchCmd, docGetCmd,
 }}
 
 // errNotUTF8 reports a record document file that is not text the server could
@@ -79,6 +79,8 @@ var docPutCmd = &command{
 - 같은 내용을 다른 폴더의 파일로 올리면(history 에서 archive 로 옮긴 기록) 위치만 바뀝니다.
 - 같은 이름에 다른 내용이면 서버가 409(immutable)로 거절합니다. 기록 문서는 고칠 수 없습니다.
 
+처음 등록한 문서에 "남은 것", "미확인", "후속"이 든 ## 절이 있으면 그 항목을 표준 오류에 알립니다.
+
 옵션:
   --project, -p <KEY>     프로젝트 키 (필수)
 `,
@@ -119,18 +121,32 @@ var docPutCmd = &command{
 		if err != nil {
 			return err
 		}
-		return a.emit(g, resp, a.renderDocument)
+		if err := a.emit(g, resp, a.renderDocument); err != nil {
+			return err
+		}
+		if fu := followUps(content); resp.Status == http.StatusCreated && len(fu) > 0 {
+			fmt.Fprintln(a.Stderr, "후속 항목이 있습니다. 이슈로 추적할 것은 등록하고 참조 doc:<파일명>을 붙이세요.")
+			writeFollowUps(a.Stderr, filepath.Base(abs), fu)
+		}
+		return nil
 	},
 }
 
 // docSyncResult sorts the files of a sync by what happened to them.
 type docSyncResult struct {
-	Uploaded  []string      `json:"uploaded"`
-	Moved     []string      `json:"moved"`
-	Unchanged []string      `json:"unchanged"`
-	Conflicts []docConflict `json:"conflicts"`
-	Skipped   []string      `json:"skipped"`
-	Rejected  []docRejected `json:"rejected"`
+	Uploaded  []string       `json:"uploaded"`
+	Moved     []string       `json:"moved"`
+	Unchanged []string       `json:"unchanged"`
+	Conflicts []docConflict  `json:"conflicts"`
+	Skipped   []string       `json:"skipped"`
+	Rejected  []docRejected  `json:"rejected"`
+	FollowUps []docFollowUps `json:"follow_ups"`
+}
+
+// docFollowUps are the open sections of a document the sync uploaded.
+type docFollowUps struct {
+	Name     string     `json:"name"`
+	Sections []followUp `json:"sections"`
 }
 
 // docConflict is a file whose content differs from the document of the same
@@ -276,6 +292,9 @@ func syncDocFiles(ctx context.Context, c *client.Client, project string, files [
 			res.Moved = append(res.Moved, f.name)
 		} else {
 			res.Uploaded = append(res.Uploaded, f.name)
+			if fu := followUps(content); len(fu) > 0 {
+				res.FollowUps = append(res.FollowUps, docFollowUps{Name: f.name, Sections: fu})
+			}
 		}
 	}
 	return nil
@@ -337,6 +356,22 @@ func (a *App) printDocSync(g *globals, r *docSyncResult) {
 	section("conflicts", conflicts)
 	section("skipped", r.Skipped)
 	section("rejected", rejected)
+	if len(r.FollowUps) > 0 {
+		fmt.Fprintf(a.Stdout, "\n== follow-ups (%d) ==\n", len(r.FollowUps))
+		for _, d := range r.FollowUps {
+			writeFollowUps(a.Stdout, d.Name, d.Sections)
+		}
+	}
+}
+
+// writeFollowUps lists the open sections of one document.
+func writeFollowUps(w io.Writer, name string, sections []followUp) {
+	fmt.Fprintln(w, name)
+	for _, s := range sections {
+		for _, it := range s.Items {
+			fmt.Fprintf(w, "  [%s] %s\n", s.Section, it)
+		}
+	}
 }
 
 var docSyncCmd = &command{
@@ -353,8 +388,11 @@ var docSyncCmd = &command{
 - 서버의 같은 이름 문서와 내용(sha256)이 다르면 올리지 않고 conflicts 로 알립니다. 덮어쓰지 않습니다.
 - 서버가 규칙 위반으로 거절한 파일과 UTF-8 이 아닌 파일은 rejected 로 알립니다.
 
-결과를 파이프에는 JSON(uploaded, moved, unchanged, conflicts, skipped, rejected)으로, 터미널에는 개수와
-이름으로 출력합니다. conflicts 나 rejected 가 있으면 출력한 뒤 종료 코드 1로 끝납니다.
+새로 올린 문서에 "남은 것", "미확인", "후속"이 든 ## 절이 있으면 그 항목을 follow_ups 로 알립니다. 이슈는
+만들지 않습니다.
+
+결과를 파이프에는 JSON(uploaded, moved, unchanged, conflicts, skipped, rejected, follow_ups)으로, 터미널에는
+개수와 이름으로 출력합니다. conflicts 나 rejected 가 있으면 출력한 뒤 종료 코드 1로 끝납니다.
 
 옵션:
   --project, -p <KEY>     프로젝트 키 (필수)
@@ -388,7 +426,7 @@ var docSyncCmd = &command{
 		if err != nil {
 			return err
 		}
-		res := &docSyncResult{Uploaded: []string{}, Moved: []string{}, Unchanged: []string{}, Conflicts: []docConflict{}, Skipped: []string{}, Rejected: []docRejected{}}
+		res := &docSyncResult{Uploaded: []string{}, Moved: []string{}, Unchanged: []string{}, Conflicts: []docConflict{}, Skipped: []string{}, Rejected: []docRejected{}, FollowUps: []docFollowUps{}}
 		res.Skipped = append(res.Skipped, skipped...)
 		syncErr := syncDocFiles(ctx, c, project, files, server, res)
 		a.printDocSync(g, res)
@@ -459,6 +497,65 @@ var docSearchCmd = &command{
 			return err
 		}
 		return a.emit(g, resp, a.renderDocumentSearch)
+	},
+}
+
+func (a *App) renderDocumentList(w io.Writer, resp *client.Response) error {
+	l, err := decode[listOf[model.Document]](resp)
+	if err != nil {
+		return err
+	}
+	if len(l.Items) == 0 {
+		fmt.Fprintln(w, "기록 문서가 없습니다.")
+		return nil
+	}
+	tb := &table{header: []string{"PROJECT", "NAME", "LOCATION", "KIND", "DATE", "TITLE"}}
+	for _, d := range l.Items {
+		tb.add(d.Project, d.Name, string(d.Location), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"))
+	}
+	tb.write(w, a.TermWidth)
+	footer(w, len(l.Items), l.Total, l.Offset)
+	return nil
+}
+
+var docListCmd = &command{
+	name: "list", summary: "서버의 기록 문서 목록 (날짜 최신 순)",
+	usage: `사용법: agb doc list [옵션]
+
+서버에 등록된 기록 문서를 날짜 최신 순으로 보입니다. 프로젝트를 주지 않으면 모든 프로젝트를 봅니다.
+
+옵션:
+  --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
+  --kind <K>              decision, incident, report, implementation. 쉼표 OR
+  --location <L>          history, archive
+  --limit <N>             최대 200. 기본 50
+  --offset <N>
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("doc list", g)
+		var f client.DocumentFilter
+		fs.StringVar(&f.Project, "project", "", "")
+		fs.StringVar(&f.Project, "p", "", "")
+		fs.StringVar(&f.Kind, "kind", "", "")
+		fs.StringVar(&f.Location, "location", "", "")
+		fs.IntVar(&f.Limit, "limit", 0, "")
+		fs.IntVar(&f.Offset, "offset", 0, "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		if err := none(pos); err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.SearchDocuments(ctx, f)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderDocumentList)
 	},
 }
 

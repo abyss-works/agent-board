@@ -159,9 +159,19 @@ agb issue update DEMO-1 --status cancelled --reason "DEMO-2와 중복"
 
 # 댓글을 단다. --summary는 목록에 보이는 한 줄 요약이다(1~30자).
 # --status를 주면 상태를 바꾼 뒤 댓글을 단다. --location은 이 호스트의 작업 위치(브랜치, 커밋하지 않은 파일 이름 등)를 붙인다.
+agb issue comment DEMO-1 --status doing --summary "착수" --location --body "정렬 쿼리를 바꾼다."
+# --status done은 작업 위치에 남은 브랜치를 들인 병합 커밋을 찾아 참조(commit:)와 커밋 목록을 붙인다.
 agb issue comment DEMO-1 --status done --summary "정렬 쿼리 구현" --body-file - <<'EOF'
 최신순 정렬 쿼리를 추가했다.
 EOF
+
+# 팀 트래커의 키는 형식 있는 참조로 붙이고, 그 참조로 이슈를 찾는다.
+agb issue update DEMO-1 --add-ref jira:TEAM-261
+agb issue list --ref jira:TEAM-261
+
+# 관리 저장소의 기록 문서를 서버와 맞추고, 서버의 목록을 본다.
+agb doc sync -p DEMO
+agb doc list -p DEMO
 
 # 외부(팀원 MR, 팀 합의)를 기다리면 라벨 external 이슈를 세우고 선행 이슈로 건다. external 이슈는 큐에 나오지 않는다.
 agb issue create -p DEMO -t "API 팀 MR 병합 대기" --label external --body-file wait.md

@@ -303,7 +303,7 @@ func TestListIssues(t *testing.T) {
 		t.Errorf("list must omit body and snippet: %s", rec.Body.String())
 	}
 	for _, q := range []string{"status=bogus", "type=x", "priority=P7", "sort=relevance", "sort=title", "limit=0", "limit=201", "offset=-1",
-		"project=A&project=B", "parent=bad-key", "q=" + strings.Repeat("a+", 11), "nope=1", "label=Bad"} {
+		"project=A&project=B", "parent=bad-key", "q=" + strings.Repeat("a+", 11), "nope=1", "label=Bad", "ref=ticket:1", "ref=jira:"} {
 		if rec := e.do(t, "GET", "/v1/issues?"+q, "", nil); rec.Code != 400 {
 			t.Errorf("%s: status = %d: %s", q, rec.Code, rec.Body.String())
 		}

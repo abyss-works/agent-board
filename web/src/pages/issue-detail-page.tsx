@@ -346,7 +346,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
           <InlineInput
             value={issue.refs.join(' ')}
             onCommit={(v) => save({ refs: parseRefs(v) }, '참조')}
-            placeholder="종류:값 (repo, file, url, pr, issue, doc)"
+            placeholder="종류:값 (repo, file, url, pr, issue, doc, commit, jira, mr, adr)"
             mono
             className="h-auto items-start py-1 break-all whitespace-normal"
             render={(v) => (

@@ -63,6 +63,7 @@ type IssueFilter struct {
 	Types           []model.IssueType
 	Priorities      []model.Priority
 	Labels          []string // AND
+	Refs            []string // AND, exact "kind:value"
 	Parent          *string  // "none" selects issues without a parent
 	CreatedBy       []string
 	UpdatedBy       []string
@@ -703,6 +704,10 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 	for _, l := range f.Labels {
 		where = append(where, "exists (select 1 from issue_label l where l.issue_id = i.id and l.label = ?)")
 		args = append(args, l)
+	}
+	for _, r := range f.Refs {
+		where = append(where, "exists (select 1 from issue_ref r where r.issue_id = i.id and r.ref = ?)")
+		args = append(args, r)
 	}
 	if f.Parent != nil {
 		if *f.Parent == "none" {
