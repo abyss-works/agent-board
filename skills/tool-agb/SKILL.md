@@ -234,17 +234,19 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
   - 15자 안팎으로 쓴다. 서버 한도는 30자이고, 줄바꿈을 넣을 수 없다.
   - 상세는 본문에 쓴다.
 - 막혔다고 판단하면 원인을 확인한 근거(실행한 명령과 결과)를 댓글에 쓴다.
+- 여러 이슈를 볼 때는 키를 함께 준다(`agb issue get <KEY> <KEY>...`). 필드 몇 개만 필요하면 `--fields key,status,title`처럼 고른다. JSON을 스크립트로 가공하지 않는다.
+- 명령 이름을 틀리면 CLI가 "가까운 명령"을 알려 준다. 그대로 다시 부른다.
 - 라벨, 선행 이슈, 참조를 하나씩 더하거나 뺄 때는 `--add-*`, `--remove-*`를 쓴다. 현재 값을 읽고 `If-Match`로 보내므로 다른 세션의 변경을 덮어쓰지 않는다. 412로 실패하면 `agb issue get <ISSUE>`로 다시 읽고 고친다.
 
 ## 5. 마칠 때
 
 1. 끝난 이슈를 닫고 결과를 댓글로 남긴다. 결과에는 커밋 해시와 검증 명령의 결과를 쓴다.
    ```
-   agb issue update <ISSUE> --status done
-   agb issue comment <ISSUE> --summary "<요약>" --body-file - <<'EOF'
+   agb issue comment <ISSUE> --status done --summary "<요약>" --body-file - <<'EOF'
    <결과와 증거>
    EOF
    ```
+   - `issue comment --status <S> [--reason <사유>]`는 상태를 바꾼 뒤 댓글을 단다. 상태 변경과 결과 댓글은 이 한 명령으로 한다.
    - 작업이 끝났고 다음 중 하나가 남았을 때만 `done` 대신 `review`로 둔다. 그 밖에는 결과를 댓글로 남기고 `done`으로 옮긴다.
      - 사용자가 화면이나 실기기에서 확인해야 하는 결과가 있다.
      - 사용자 승인이 필요한 다음 단계가 있다. 예: 릴리즈, 운영 반영, 원격 삭제.
