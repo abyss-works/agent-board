@@ -147,6 +147,9 @@ var agendaCmd = &command{
   에이전트      진행 중(점유 세션), 다음 할 일(착수할 수 있는 백로그, 큐 순서)
   대기          막힌 이슈, 외부 대기 이슈(라벨 external)
 
+관리 저장소(AGENTS.md 의 지식 저장소가 agb) 안에서 부르면, 커밋한 기록 문서 중 서버에 없는 것을 올리고
+그 후속 항목을 표준 오류에 알립니다. 올리지 못하면 경고만 남깁니다.
+
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여럿. 생략하면 활성 프로젝트 전부
   --limit <N>             목록마다 최대 개수. 기본 10, 최대 50
@@ -173,7 +176,11 @@ var agendaCmd = &command{
 		if err != nil {
 			return err
 		}
-		return a.emit(g, resp, a.renderAgenda)
+		if err := a.emit(g, resp, a.renderAgenda); err != nil {
+			return err
+		}
+		a.autoSyncRecords(ctx, c)
+		return nil
 	},
 }
 
