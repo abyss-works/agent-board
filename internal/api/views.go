@@ -12,6 +12,7 @@ func (h *handler) registerViews(mux *http.ServeMux) {
 	route(mux, "/v1/queue", methods{"GET": h.queue})
 	route(mux, "/v1/labels", methods{"GET": h.labels})
 	route(mux, "/v1/projects/{key}/overview", methods{"GET": h.overview})
+	route(mux, "/v1/agenda", methods{"GET": h.agenda})
 }
 
 func (h *handler) projects(q *query) []string {
@@ -91,4 +92,20 @@ func (h *handler) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, o)
+}
+
+func (h *handler) agenda(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	projects := h.projects(q)
+	limit := q.limit(10, 50)
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	a, err := h.store.Agenda(r.Context(), projects, limit)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
 }

@@ -138,6 +138,45 @@ var queueCmd = &command{
 	},
 }
 
+var agendaCmd = &command{
+	name: "agenda", summary: "프로젝트별 사용자 차례, 에이전트 할 일, 대기", aliases: []string{"next"},
+	usage: `사용법: agb agenda [--project <P>] [--limit <N>]
+
+프로젝트마다 세 묶음을 보입니다.
+  사용자 차례   검토, 결정 필요, 미확인
+  에이전트      진행 중(점유 세션), 다음 할 일(착수할 수 있는 백로그, 큐 순서)
+  대기          막힌 이슈, 외부 대기 이슈(라벨 external)
+
+옵션:
+  --project, -p <P>       프로젝트 키. 쉼표로 여럿. 생략하면 활성 프로젝트 전부
+  --limit <N>             목록마다 최대 개수. 기본 10, 최대 50
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("agenda", g)
+		var project string
+		var limit int
+		fs.StringVar(&project, "project", "", "")
+		fs.StringVar(&project, "p", "", "")
+		fs.IntVar(&limit, "limit", 0, "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		if err := none(pos); err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.Agenda(ctx, project, limit)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderAgenda)
+	},
+}
+
 var labelsCmd = &command{
 	name: "labels", summary: "라벨과 사용 개수 (열린 이슈 기준)",
 	usage: `사용법: agb labels [--project <P>]
