@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -401,4 +402,77 @@ func TestViewItemsCarryDecisionNeeded(t *testing.T) {
 	has("overview decisions", o.Decisions.Items[0].DecisionNeeded)
 	has("overview next", o.Next.Items[0].DecisionNeeded)
 	has("overview unacknowledged", o.Unacknowledged.Items[0].DecisionNeeded)
+}
+
+func TestQueueLeavesOutExternalWaits(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	wait := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "팀 합의 대기", Status: model.StatusBacklog, Priority: model.P1, Labels: []string{model.ExternalLabel}})
+	blocked := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "합의 뒤 구현", Status: model.StatusBacklog, Priority: model.P1, DependsOn: []string{wait.Key}})
+	ready := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "바로 할 일", Status: model.StatusBacklog, Priority: model.P2})
+
+	items, total, err := s.Queue(ctx, QueueFilter{Statuses: []model.IssueStatus{model.StatusBacklog}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(items, func(q model.QueueItem) string { return q.Key }); total != 2 || !reflect.DeepEqual(got, []string{blocked.Key, ready.Key}) {
+		t.Errorf("queue = %v (total %d)", got, total)
+	}
+	o, err := s.Overview(ctx, "AGB", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Next.Total != 1 || o.Next.Items[0].Key != ready.Key {
+		t.Errorf("next = %+v", o.Next)
+	}
+	if o.Blocked.Total != 1 || o.Blocked.Items[0].Key != blocked.Key || !reflect.DeepEqual(o.Blocked.Items[0].BlockedBy, []string{wait.Key}) {
+		t.Errorf("blocked = %+v", o.Blocked)
+	}
+	done := model.StatusDone
+	if _, _, err := s.UpdateIssue(ctx, trOwner, wait.Key, IssuePatch{Status: &done}, nil); err != nil {
+		t.Fatal(err)
+	}
+	o, _ = s.Overview(ctx, "AGB", 10)
+	if o.Next.Total != 2 || o.Next.Items[0].Key != blocked.Key || o.Blocked.Total != 0 {
+		t.Errorf("after the wait ends: next = %+v, blocked = %d", keysOf(o.Next.Items, func(q model.QueueItem) string { return q.Key }), o.Blocked.Total)
+	}
+}
+
+func TestAgendaGroupsUserTurnAgentWorkAndWaiting(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	mustProject(t, s, ctx, "PF")
+	review := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "화면 확인", Status: model.StatusReview})
+	ask := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "물을 것", Status: model.StatusBacklog, DecisionNeeded: str("어느 쪽?")})
+	wait := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "MR 대기", Status: model.StatusBacklog, Labels: []string{model.ExternalLabel}})
+	blocked := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "MR 뒤 작업", Status: model.StatusBacklog, DependsOn: []string{wait.Key}})
+	pf := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "PF", Title: "PF 할 일", Status: model.StatusBacklog})
+
+	a, err := s.Agenda(ctx, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Projects) != 2 || a.Projects[0].Project.Key != "AGB" || a.Projects[1].Project.Key != "PF" {
+		t.Fatalf("projects = %+v", a.Projects)
+	}
+	agb := a.Projects[0]
+	if agb.UserTurn.Review.Total != 1 || agb.UserTurn.Review.Items[0].Key != review.Key || agb.UserTurn.Decisions.Total != 1 || agb.UserTurn.Decisions.Items[0].Key != ask.Key {
+		t.Errorf("user turn = %+v", agb.UserTurn)
+	}
+	if got := keysOf(agb.Agent.Next.Items, func(q model.QueueItem) string { return q.Key }); !reflect.DeepEqual(got, []string{ask.Key}) {
+		t.Errorf("agent next = %v", got)
+	}
+	if agb.Waiting.Blocked.Total != 1 || agb.Waiting.Blocked.Items[0].Key != blocked.Key || agb.Waiting.External.Total != 1 || agb.Waiting.External.Items[0].Key != wait.Key {
+		t.Errorf("waiting = %+v", agb.Waiting)
+	}
+	if a.Projects[1].Agent.Next.Total != 1 || a.Projects[1].Agent.Next.Items[0].Key != pf.Key {
+		t.Errorf("pf = %+v", a.Projects[1])
+	}
+	a, err = s.Agenda(ctx, []string{"PF"}, 10)
+	if err != nil || len(a.Projects) != 1 || a.Projects[0].Project.Key != "PF" {
+		t.Errorf("only PF = %+v, %v", a, err)
+	}
+	if _, err := s.Agenda(ctx, []string{"NOPE"}, 10); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown project: %v", err)
+	}
 }

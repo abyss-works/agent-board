@@ -74,12 +74,13 @@ const openDepsExpr = `(select count(*) from issue_dependency d join issue di on 
 const blocksExpr = `(select count(*) from issue_dependency d join issue bi on bi.id = d.issue_id
 	where d.depends_on_id = i.id and bi.status not in ('done','cancelled','deleted'))`
 
-// Queue orders issues by priority, readiness (ready first), open milestone
+// Queue leaves out issues labelled model.ExternalLabel and orders the rest
+// by priority, readiness (ready first), open milestone
 // (earliest target date first, undated after, then creation), the number of
 // open issues they block (most first) and creation.
 func (s *Store) Queue(ctx context.Context, f QueueFilter) ([]model.QueueItem, int, error) {
-	var where []string
-	var args []any
+	where := []string{"not exists (select 1 from issue_label el where el.issue_id = i.id and el.label = ?)"}
+	args := []any{model.ExternalLabel}
 	if len(f.Projects) > 0 {
 		where = append(where, "p.key in ("+placeholders(len(f.Projects))+")")
 		for _, v := range f.Projects {
@@ -347,6 +348,67 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 	}
 	o.RecentActivity = Section[model.Activity]{Total: total, Items: acts}
 	return o, nil
+}
+
+// Agenda is the work view across projects: what waits on the user, what the
+// agents can take up, and what waits on something else.
+type Agenda struct {
+	GeneratedAt model.Time      `json:"generated_at"`
+	Projects    []AgendaProject `json:"projects"`
+}
+
+// AgendaProject is one project of the agenda.
+type AgendaProject struct {
+	Project  model.Project `json:"project"`
+	UserTurn struct {
+		Review         Section[model.IssueSummary] `json:"review"`
+		Decisions      Section[model.IssueSummary] `json:"decisions"`
+		Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
+	} `json:"user_turn"`
+	Agent struct {
+		Doing Section[model.DoingItem] `json:"doing"`
+		Next  Section[model.QueueItem] `json:"next"`
+	} `json:"agent"`
+	Waiting struct {
+		Blocked  Section[model.QueueItem]    `json:"blocked"`
+		External Section[model.IssueSummary] `json:"external"`
+	} `json:"waiting"`
+}
+
+// Agenda builds the agenda of the given projects, or of every active project
+// when keys is empty. Each list holds at most limit items and reports its
+// full count.
+func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, error) {
+	if len(keys) == 0 {
+		projects, _, err := s.ListProjects(ctx, ProjectFilter{Statuses: []model.ProjectStatus{model.ProjectActive}, Limit: -1})
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range projects {
+			keys = append(keys, p.Key)
+		}
+	}
+	a := &Agenda{GeneratedAt: s.stamp(), Projects: make([]AgendaProject, 0, len(keys))}
+	for _, key := range keys {
+		// ponytail: the overview also counts issues and lists activity the
+		// agenda drops; split Overview into parts if the agenda gets slow.
+		o, err := s.Overview(ctx, key, limit)
+		if err != nil {
+			return nil, err
+		}
+		external, total, err := s.ListIssues(ctx, IssueFilter{Projects: []string{key}, Statuses: model.OpenStatuses, Labels: []string{model.ExternalLabel}, Limit: limit})
+		if err != nil {
+			return nil, err
+		}
+		var p AgendaProject
+		p.Project = o.Project
+		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unacknowledged = o.Review, o.Decisions, o.Unacknowledged
+		p.Agent.Doing, p.Agent.Next = o.Doing, o.Next
+		p.Waiting.Blocked = o.Blocked
+		p.Waiting.External = Section[model.IssueSummary]{Total: total, Items: external}
+		a.Projects = append(a.Projects, p)
+	}
+	return a, nil
 }
 
 // doingSection lists the doing issues with the session holding each: the one

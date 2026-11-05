@@ -209,6 +209,27 @@ func (c *Client) Overview(ctx context.Context, key string, limit int) (*Response
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(key)+"/overview", v), nil, nil)
 }
 
+// Agenda reads the work view of the projects (comma separated), or of every
+// active project when project is empty.
+func (c *Client) Agenda(ctx context.Context, project string, limit int) (*Response, error) {
+	v := url.Values{}
+	set(v, "project", project)
+	Page{Limit: limit}.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/agenda", v), nil, nil)
+}
+
+// Digest reads what changed from since up to until (now when empty) in the
+// projects (comma separated), or in every active project when project is
+// empty. Times are RFC 3339.
+func (c *Client) Digest(ctx context.Context, project, since, until string, limit int) (*Response, error) {
+	v := url.Values{}
+	set(v, "project", project)
+	set(v, "since", since)
+	set(v, "until", until)
+	Page{Limit: limit}.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/digest", v), nil, nil)
+}
+
 // ListIssues lists issues.
 func (c *Client) ListIssues(ctx context.Context, f IssueFilter) (*Response, error) {
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/issues", f.Values()), nil, nil)

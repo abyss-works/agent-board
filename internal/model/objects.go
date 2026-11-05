@@ -199,6 +199,11 @@ type QueueItem struct {
 	BlockedBy []string `json:"blocked_by"`
 }
 
+// ExternalLabel marks an issue that stands for something outside agb an
+// issue waits on: a teammate's merge request, a team agreement, an outside
+// service. Other issues depend on it; the queue never offers it as work.
+const ExternalLabel = "external"
+
 // StaleAfter is how long the session holding a doing issue may stay quiet
 // before the issue counts as stale.
 const StaleAfter = 2 * time.Hour

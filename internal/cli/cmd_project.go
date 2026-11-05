@@ -167,7 +167,7 @@ var projectDeleteCmd = &command{
 }
 
 var projectOverviewCmd = &command{
-	name: "overview", summary: "프로젝트 현황",
+	name: "overview", summary: "프로젝트 현황", aliases: []string{"status"},
 	usage: `사용법: agb project overview <KEY> [--limit <N>]
 
 진행·검토·차단·결정 필요·다음 할 일·미확인·최근 활동을 절마다 limit개까지 보여 줍니다. limit은 1~50, 기본 10.

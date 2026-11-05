@@ -70,6 +70,7 @@ func TestIssueListAcknowledgedFilterAndView(t *testing.T) {
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/issues", canned{body: listJSON})
 	srv.on("GET", "/v1/issues/CLI-1", canned{body: ackedIssueJSON})
+	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: `{"items":[],"total":0,"limit":50,"offset":0}`})
 	srv.on("GET", "/v1/issues/CLI-2", canned{body: unackedIssueJSON})
 	h := newHarness(t, srv, true)
 

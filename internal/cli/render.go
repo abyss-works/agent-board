@@ -515,3 +515,58 @@ func (a *App) renderActors(w io.Writer, resp *client.Response) error {
 	tb.write(w, a.TermWidth)
 	return nil
 }
+
+type agenda struct {
+	GeneratedAt model.Time `json:"generated_at"`
+	Projects    []struct {
+		Project  model.Project `json:"project"`
+		UserTurn struct {
+			Review         section[model.IssueSummary] `json:"review"`
+			Decisions      section[model.IssueSummary] `json:"decisions"`
+			Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
+		} `json:"user_turn"`
+		Agent struct {
+			Doing section[model.DoingItem] `json:"doing"`
+			Next  section[model.QueueItem] `json:"next"`
+		} `json:"agent"`
+		Waiting struct {
+			Blocked  section[model.QueueItem]    `json:"blocked"`
+			External section[model.IssueSummary] `json:"external"`
+		} `json:"waiting"`
+	} `json:"projects"`
+}
+
+// renderAgenda prints each project in three groups: the user's turn, the
+// agents' work and what waits. Empty lists print only their heading counts.
+func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
+	ag, err := decode[agenda](resp)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "generated_at: %s\n", formatTime(ag.GeneratedAt, a.Location))
+	for _, p := range ag.Projects {
+		u, g, wt := p.UserTurn, p.Agent, p.Waiting
+		fmt.Fprintf(w, "\n### %s (%s)\n", p.Project.Key, p.Project.Name)
+		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total)
+		for _, s := range []section[model.IssueSummary]{u.Review, u.Decisions, u.Unacknowledged} {
+			if len(s.Items) > 0 {
+				a.issueTable(s.Items).write(w, a.TermWidth)
+			}
+		}
+		fmt.Fprintf(w, "\n== 에이전트: 진행 중 %d, 다음 할 일 %d ==\n", g.Doing.Total, g.Next.Total)
+		if len(g.Doing.Items) > 0 {
+			a.doingTable(g.Doing.Items).write(w, a.TermWidth)
+		}
+		if len(g.Next.Items) > 0 {
+			a.queueTable(g.Next.Items).write(w, a.TermWidth)
+		}
+		fmt.Fprintf(w, "\n== 대기: 막힘 %d, 외부 %d ==\n", wt.Blocked.Total, wt.External.Total)
+		if len(wt.Blocked.Items) > 0 {
+			a.queueTable(wt.Blocked.Items).write(w, a.TermWidth)
+		}
+		if len(wt.External.Items) > 0 {
+			a.issueTable(wt.External.Items).write(w, a.TermWidth)
+		}
+	}
+	return nil
+}

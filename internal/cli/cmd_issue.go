@@ -142,27 +142,40 @@ var searchCmd = &command{
 }
 
 var issueGetCmd = &command{
-	name: "get", summary: "이슈 단건 (본문 포함)",
-	usage: `사용법: agb issue get <KEY>
+	name: "get", summary: "이슈 단건 (본문 포함). 키를 여러 개 받음", aliases: []string{"show"},
+	usage: `사용법: agb issue get <KEY>...
+
+키를 여러 개 주면 차례로 조회합니다. JSON 출력은 이슈의 배열입니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		pos, err := parseArgs(leafFlags("issue get", g), args)
+		keys, err := parseArgs(leafFlags("issue get", g), args)
 		if err != nil {
 			return err
 		}
-		key, err := one(pos, "<KEY>")
-		if err != nil {
-			return err
+		if len(keys) == 0 {
+			return usageErrorf("<KEY> 인자가 필요합니다.")
 		}
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
 		}
-		resp, err := c.GetIssue(ctx, key)
-		if err != nil {
-			return err
+		if len(keys) == 1 {
+			resp, err := c.GetIssue(ctx, keys[0])
+			if err != nil {
+				return err
+			}
+			if err := a.emit(g, resp, a.renderIssue); err != nil || g.fields != "" || a.jsonOutput(g) {
+				return err
+			}
+			return a.printLatestLocation(ctx, c, resp, keys[0])
 		}
-		return a.emit(g, resp, a.renderIssue)
+		resps := make([]*client.Response, len(keys))
+		for n, key := range keys {
+			if resps[n], err = c.GetIssue(ctx, key); err != nil {
+				return err
+			}
+		}
+		return a.emitMany(g, resps, a.renderIssue)
 	},
 }
 
@@ -604,18 +617,30 @@ var issueUnackCmd = &command{
 }
 
 var issueCommentCmd = &command{
-	name: "comment", summary: "댓글 추가",
-	usage: `사용법: agb issue comment <KEY> [--summary <요약>] (--body <텍스트> | --body-file <경로|->)
+	name: "comment", summary: "댓글 추가 (상태 변경과 함께 가능)",
+	usage: `사용법: agb issue comment <KEY> [--summary <요약>] [--status <S> [--reason <사유>]] [--location [--repo <폴더>]...] (--body <텍스트> | --body-file <경로|->)
 
 옵션:
   --summary <요약>        한 줄 요약. 1~30자, 줄바꿈 없음. 목록에 보이는 색인
+  --status <S>            댓글을 달기 전에 상태를 바꿈. agb issue update --status 와 같음
+  --reason <사유>         상태 변경의 사유. --status 와 함께만 씀
+  --location              본문 끝에 이 호스트의 작업 위치를 붙임: 호스트, 저장소별 브랜치·HEAD·원격과의 차이·
+                          커밋하지 않은 파일 이름·워크트리. 파일 내용은 올리지 않음
+  --repo <폴더>           작업 위치를 모을 저장소. 반복 가능. 주면 --location 을 뜻함.
+                          기본은 현재 폴더의 저장소와, 있으면 그 아래 project/ 저장소
 ` + bodyUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue comment", g)
-		var summary, body, bodyFile string
+		var summary, body, bodyFile, status, reason string
 		fs.StringVar(&summary, "summary", "", "")
 		fs.StringVar(&body, "body", "", "")
 		fs.StringVar(&bodyFile, "body-file", "", "")
+		fs.StringVar(&status, "status", "", "")
+		fs.StringVar(&reason, "reason", "", "")
+		var location bool
+		var repos stringList
+		fs.BoolVar(&location, "location", false, "")
+		fs.Var(&repos, "repo", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -624,6 +649,9 @@ var issueCommentCmd = &command{
 		if err != nil {
 			return err
 		}
+		if isSet(fs, "reason") && !isSet(fs, "status") {
+			return usageErrorf("--reason 은 --status 와 함께만 씁니다.")
+		}
 		text, present, err := a.readBody(fs, body, bodyFile)
 		if err != nil {
 			return err
@@ -631,9 +659,32 @@ var issueCommentCmd = &command{
 		if !present {
 			return usageErrorf("--body 또는 --body-file 이 필요합니다.")
 		}
-		c, err := a.client(g, true)
+		_, s, err := a.settings(g)
 		if err != nil {
 			return err
+		}
+		if err := s.requireAuth(); err != nil {
+			return err
+		}
+		c := a.newClient(s)
+		if location || len(repos) > 0 {
+			if len(repos) == 0 {
+				repos = defaultLocationRepos()
+			}
+			loc, err := workLocation(s.ClientHost, repos)
+			if err != nil {
+				return err
+			}
+			text = strings.TrimRight(text, "\n") + "\n\n" + loc
+		}
+		if isSet(fs, "status") {
+			patch := map[string]any{"status": status}
+			if isSet(fs, "reason") {
+				patch["status_reason"] = reason
+			}
+			if _, err := c.PatchIssue(ctx, key, patch, ""); err != nil {
+				return err
+			}
 		}
 		resp, err := c.AddComment(ctx, key, text, summary)
 		if err != nil {

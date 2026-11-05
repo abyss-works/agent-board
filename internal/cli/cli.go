@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -77,6 +78,7 @@ type command struct {
 	name    string
 	summary string
 	usage   string
+	aliases []string // other names that run the command, for names agents often guess
 	run     func(a *App, ctx context.Context, g *globals, args []string) error
 	subs    []*command
 }
@@ -86,8 +88,62 @@ func (c *command) find(name string) *command {
 		if s.name == name {
 			return s
 		}
+		for _, al := range s.aliases {
+			if al == name {
+				return s
+			}
+		}
 	}
 	return nil
+}
+
+// suggest names the commands close to an unknown name: the children of c
+// within edit distance 2, and anywhere below c a command with that exact
+// name. It returns "" when nothing is close.
+func (c *command) suggest(path, name string) string {
+	var near []string
+	for _, s := range c.subs {
+		if editDistance(s.name, name) <= 2 {
+			near = append(near, path+" "+s.name)
+		}
+	}
+	if len(near) == 0 {
+		var walk func(c *command, path string)
+		walk = func(c *command, path string) {
+			for _, s := range c.subs {
+				if s.name == name {
+					near = append(near, path+" "+s.name)
+				}
+				walk(s, path+" "+s.name)
+			}
+		}
+		walk(c, path)
+	}
+	if len(near) == 0 {
+		return ""
+	}
+	return "가까운 명령: " + strings.Join(near, ", ") + "\n"
+}
+
+// editDistance is the Levenshtein distance between two command names.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
 // help renders a group's usage from its summary lines.
@@ -132,6 +188,8 @@ const Usage = `사용법: agb <명령> [옵션]
   doc               기록 문서 등록·동기화·검색·조회
 
 조회:
+  agenda            프로젝트별 사용자 차례, 에이전트 할 일, 대기 (별칭 next)
+  digest            시점 이후 프로젝트별 변경 요약 (--since 3d)
   activity          전체 활동 기록
   board             상태별 보드
   queue             우선순위 큐
@@ -140,6 +198,7 @@ const Usage = `사용법: agb <명령> [옵션]
 
 공통 옵션 (명령 앞뒤 어디에나):
   --json            JSON 출력 (서버 응답 그대로). 기본: 파이프·파일일 때
+  --fields <a,b>    JSON 출력에서 이 필드만 남김. 목록은 항목마다 남김. JSON 출력을 강제
   --table           표 출력. 기본: 터미널일 때
   --url <주소>      서버 주소 (AGB_URL, 설정 파일보다 우선)
   --actor <ID>      행위자 (AGB_ACTOR)
@@ -157,7 +216,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 
 var root = &command{name: "agb", subs: []*command{
 	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
-	activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
+	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd,
 }}
 
 // Run executes args and returns the exit code: 0 success, 1 API or
@@ -184,7 +243,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	cmd := root.find(rest[0])
 	if cmd == nil {
-		fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n\n%s", rest[0], Usage)
+		fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n%s\n%s", rest[0], root.suggest("agb", rest[0]), Usage)
 		return 2
 	}
 	err := a.dispatch(ctx, g, cmd, "agb "+cmd.name, rest[1:])
@@ -221,7 +280,7 @@ func (a *App) dispatch(ctx context.Context, g *globals, cmd *command, path strin
 		}
 		sub := cmd.find(args[0])
 		if sub == nil {
-			return &usageError{msg: fmt.Sprintf("모르는 명령 %q", args[0]), help: cmd.help(path)}
+			return &usageError{msg: fmt.Sprintf("모르는 명령 %q", args[0]), help: cmd.suggest(path, args[0]) + "\n" + cmd.help(path)}
 		}
 		return a.dispatch(ctx, g, sub, path+" "+sub.name, args[1:])
 	}
@@ -381,11 +440,93 @@ func (a *App) wait(ctx context.Context, d time.Duration) error {
 // emit writes the response: the body verbatim in JSON mode, otherwise
 // through render.
 func (a *App) emit(g *globals, resp *client.Response, render func(w io.Writer, resp *client.Response) error) error {
+	if g.fields != "" {
+		body, err := selectFields(resp.Body, strings.Split(g.fields, ","))
+		if err != nil {
+			return err
+		}
+		writeJSON(a.Stdout, body)
+		return nil
+	}
 	if a.jsonOutput(g) {
 		writeJSON(a.Stdout, resp.Body)
 		return nil
 	}
 	return render(a.Stdout, resp)
+}
+
+// emitMany writes several responses: a JSON array of the bodies in JSON
+// mode, otherwise each rendered in turn with a blank line between.
+func (a *App) emitMany(g *globals, resps []*client.Response, render func(w io.Writer, resp *client.Response) error) error {
+	if g.fields != "" || a.jsonOutput(g) {
+		parts := make([]string, len(resps))
+		for n, r := range resps {
+			body := r.Body
+			if g.fields != "" {
+				var err error
+				if body, err = selectFields(body, strings.Split(g.fields, ",")); err != nil {
+					return err
+				}
+			}
+			parts[n] = strings.TrimSpace(string(body))
+		}
+		writeJSON(a.Stdout, []byte("["+strings.Join(parts, ",")+"]"))
+		return nil
+	}
+	for n, r := range resps {
+		if n > 0 {
+			io.WriteString(a.Stdout, "\n")
+		}
+		if err := render(a.Stdout, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// selectFields keeps only the named top-level fields of a JSON object, or
+// of each object in its items list for list responses, in the given order.
+func selectFields(body []byte, names []string) ([]byte, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, fmt.Errorf("--fields 는 JSON 객체 응답에만 씁니다: %w", err)
+	}
+	pick := func(o map[string]json.RawMessage) []byte {
+		var b strings.Builder
+		b.WriteString("{")
+		n := 0
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			v, ok := o[name]
+			if !ok {
+				continue
+			}
+			if n > 0 {
+				b.WriteString(",")
+			}
+			k, _ := json.Marshal(name)
+			b.Write(k)
+			b.WriteString(":")
+			b.Write(v)
+			n++
+		}
+		b.WriteString("}")
+		return []byte(b.String())
+	}
+	raw, ok := obj["items"]
+	if !ok {
+		return pick(obj), nil
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return pick(obj), nil
+	}
+	picked := make([]json.RawMessage, len(items))
+	for n, it := range items {
+		picked[n] = pick(it)
+	}
+	obj["items"], _ = json.Marshal(picked)
+	return json.Marshal(obj)
 }
 
 // leafFlags builds a leaf command's flag set with the global flags added.
