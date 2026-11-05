@@ -164,7 +164,10 @@ var issueGetCmd = &command{
 			if err != nil {
 				return err
 			}
-			return a.emit(g, resp, a.renderIssue)
+			if err := a.emit(g, resp, a.renderIssue); err != nil || g.fields != "" || a.jsonOutput(g) {
+				return err
+			}
+			return a.printLatestLocation(ctx, c, resp, keys[0])
 		}
 		resps := make([]*client.Response, len(keys))
 		for n, key := range keys {
@@ -615,12 +618,16 @@ var issueUnackCmd = &command{
 
 var issueCommentCmd = &command{
 	name: "comment", summary: "댓글 추가 (상태 변경과 함께 가능)",
-	usage: `사용법: agb issue comment <KEY> [--summary <요약>] [--status <S> [--reason <사유>]] (--body <텍스트> | --body-file <경로|->)
+	usage: `사용법: agb issue comment <KEY> [--summary <요약>] [--status <S> [--reason <사유>]] [--location [--repo <폴더>]...] (--body <텍스트> | --body-file <경로|->)
 
 옵션:
   --summary <요약>        한 줄 요약. 1~30자, 줄바꿈 없음. 목록에 보이는 색인
   --status <S>            댓글을 달기 전에 상태를 바꿈. agb issue update --status 와 같음
   --reason <사유>         상태 변경의 사유. --status 와 함께만 씀
+  --location              본문 끝에 이 호스트의 작업 위치를 붙임: 호스트, 저장소별 브랜치·HEAD·원격과의 차이·
+                          커밋하지 않은 파일 이름·워크트리. 파일 내용은 올리지 않음
+  --repo <폴더>           작업 위치를 모을 저장소. 반복 가능. 주면 --location 을 뜻함.
+                          기본은 현재 폴더의 저장소와, 있으면 그 아래 project/ 저장소
 ` + bodyUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue comment", g)
@@ -630,6 +637,10 @@ var issueCommentCmd = &command{
 		fs.StringVar(&bodyFile, "body-file", "", "")
 		fs.StringVar(&status, "status", "", "")
 		fs.StringVar(&reason, "reason", "", "")
+		var location bool
+		var repos stringList
+		fs.BoolVar(&location, "location", false, "")
+		fs.Var(&repos, "repo", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -648,9 +659,23 @@ var issueCommentCmd = &command{
 		if !present {
 			return usageErrorf("--body 또는 --body-file 이 필요합니다.")
 		}
-		c, err := a.client(g, true)
+		_, s, err := a.settings(g)
 		if err != nil {
 			return err
+		}
+		if err := s.requireAuth(); err != nil {
+			return err
+		}
+		c := a.newClient(s)
+		if location || len(repos) > 0 {
+			if len(repos) == 0 {
+				repos = defaultLocationRepos()
+			}
+			loc, err := workLocation(s.ClientHost, repos)
+			if err != nil {
+				return err
+			}
+			text = strings.TrimRight(text, "\n") + "\n\n" + loc
 		}
 		if isSet(fs, "status") {
 			patch := map[string]any{"status": status}
