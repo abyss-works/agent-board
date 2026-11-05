@@ -14,6 +14,7 @@ function activity(partial: Partial<Activity>): Activity {
     at: '2026-10-17T07:10:21.000Z',
     changes: null,
     summary: null,
+    comment_kind: null,
     body: null,
     ...partial,
   }
