@@ -630,7 +630,9 @@ var issueCommentCmd = &command{
                           커밋하지 않은 파일 이름·워크트리. 파일 내용은 올리지 않음
   --repo <폴더>           작업 위치를 모을 저장소. 반복 가능. 주면 --location 을 뜻함.
                           기본은 현재 폴더의 저장소와, 있으면 그 아래 project/ 저장소
-` + bodyUsage,
+` + bodyUsage + `
+--status done 은 agb agenda 처럼 관리 저장소의 커밋한 기록 문서 중 서버에 없는 것을 올립니다.
+`,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue comment", g)
 		var summary, body, bodyFile, status, reason string
@@ -692,7 +694,13 @@ var issueCommentCmd = &command{
 		if err != nil {
 			return err
 		}
-		return a.emit(g, resp, a.renderActivity)
+		if err := a.emit(g, resp, a.renderActivity); err != nil {
+			return err
+		}
+		if status == string(model.StatusDone) {
+			a.autoSyncRecords(ctx, c)
+		}
+		return nil
 	},
 }
 
