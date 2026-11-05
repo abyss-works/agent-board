@@ -199,3 +199,30 @@ func TestAgendaEndpoint(t *testing.T) {
 		}
 	}
 }
+
+func TestDigestEndpoint(t *testing.T) {
+	e := newEnv(t)
+	seedViews(t, e)
+	rec := e.do(t, "GET", "/v1/digest?since=2000-01-01T00:00:00Z&project=AGB", "", nil)
+	if rec.Code != 200 {
+		t.Fatalf("digest: %d %s", rec.Code, rec.Body.String())
+	}
+	var d store.Digest
+	decodeJSON(t, rec, &d)
+	if len(d.Projects) != 1 || d.Projects[0].Project.Key != "AGB" || d.Projects[0].Created.Total == 0 || d.Projects[0].Activity == 0 {
+		t.Errorf("digest = %+v", d)
+	}
+	rec = e.do(t, "GET", "/v1/digest?since=2000-01-01T00:00:00Z&until=2000-01-02T00:00:00Z&project=AGB", "", nil)
+	decodeJSON(t, rec, &d)
+	if rec.Code != 200 || d.Projects[0].Activity != 0 {
+		t.Errorf("empty window: %d %+v", rec.Code, d)
+	}
+	for _, q := range []string{"", "since=yesterday", "since=2000-01-01T00:00:00Z&limit=201", "since=2000-01-01T00:00:00Z&x=1"} {
+		if rec = e.do(t, "GET", "/v1/digest?"+q, "", nil); rec.Code != 400 {
+			t.Errorf("%q: %d", q, rec.Code)
+		}
+	}
+	if rec = e.do(t, "GET", "/v1/digest?since=2000-01-01T00:00:00Z&project=NOPE", "", nil); rec.Code != 404 {
+		t.Errorf("missing project: %d", rec.Code)
+	}
+}
