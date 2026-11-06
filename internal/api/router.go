@@ -34,6 +34,9 @@ type Options struct {
 	// tests replace them to fix times and codes.
 	Now  func() time.Time
 	Rand io.Reader
+	// Semantic finds sources by meaning for the unified search. When nil the
+	// search matches keywords only.
+	Semantic Semantic
 }
 
 type handler struct {

@@ -1,10 +1,27 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
+)
+
+// Semantic finds the n sources nearest in meaning to a query text, nearest
+// first.
+type Semantic interface {
+	Search(ctx context.Context, query string, n int) ([]store.SourceText, error)
+}
+
+const (
+	// fusionPool is how many hits of each list take part in the fusion.
+	fusionPool = 50
+	// rrfK is the constant of the reciprocal rank fusion.
+	rrfK = 60
 )
 
 func (h *handler) registerSearch(mux *http.ServeMux) {
@@ -35,10 +52,94 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
+	if h.opts.Semantic != nil {
+		items, total, ok, err := h.hybridSearch(r.Context(), f)
+		if err != nil {
+			writeError(w, h.storeError(r, err))
+			return
+		}
+		if ok {
+			writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+			return
+		}
+	}
 	items, total, err := h.store.Search(r.Context(), f)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+}
+
+// hybridSearch fuses the keyword ranking and the ranking by meaning. ok is
+// false when the query could not be embedded; the caller then answers with the
+// keyword search alone.
+func (h *handler) hybridSearch(ctx context.Context, f store.SearchFilter) (items []model.SearchHit, total int, ok bool, err error) {
+	refs, err := h.opts.Semantic.Search(ctx, f.Query, fusionPool)
+	if err != nil {
+		h.opts.Logger.Warn("semantic search failed, answering with keywords only", "err", err.Error())
+		return nil, 0, false, nil
+	}
+	kwFilter := f
+	kwFilter.Limit, kwFilter.Offset = fusionPool, 0
+	keyword, _, err := h.store.Search(ctx, kwFilter)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	semantic, err := h.store.SemanticHits(ctx, refs, f)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	fused := fuse(keyword, semantic)
+	total = len(fused)
+	fused = fused[min(f.Offset, total):]
+	fused = fused[:min(f.Limit, len(fused))]
+	return fused, total, true, nil
+}
+
+// hitID identifies the source of a hit: an issue by key, a comment by id and a
+// document by project and name.
+func hitID(h model.SearchHit) string {
+	switch h.Type {
+	case model.SearchComment:
+		return fmt.Sprintf("comment:%d", *h.CommentID)
+	case model.SearchDocument:
+		return "document:" + h.Project + "/" + h.Key
+	}
+	return "issue:" + h.Key
+}
+
+// fuse merges two ranked lists with reciprocal rank fusion: the score of a hit
+// is the sum of 1/(rrfK+rank) over the lists that hold it. A hit in both lists
+// keeps the keyword hit, which carries the marked snippet. Equal scores order
+// by type and key.
+func fuse(keyword, semantic []model.SearchHit) []model.SearchHit {
+	score := map[string]float64{}
+	byID := map[string]model.SearchHit{}
+	for _, list := range [][]model.SearchHit{keyword, semantic} {
+		for i, hit := range list {
+			id := hitID(hit)
+			score[id] += 1 / float64(rrfK+i+1)
+			if _, seen := byID[id]; !seen {
+				byID[id] = hit
+			}
+		}
+	}
+	out := make([]model.SearchHit, 0, len(byID))
+	for _, hit := range byID {
+		out = append(out, hit)
+	}
+	slices.SortFunc(out, func(a, b model.SearchHit) int {
+		if sa, sb := score[hitID(a)], score[hitID(b)]; sa != sb {
+			if sa > sb {
+				return -1
+			}
+			return 1
+		}
+		if c := strings.Compare(string(a.Type), string(b.Type)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Key, b.Key)
+	})
+	return out
 }

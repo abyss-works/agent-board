@@ -83,7 +83,11 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if cfg.WebDir != "" {
 		web = os.DirFS(cfg.WebDir)
 	}
-	h := api.New(api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web})
+	apiOpts := api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web}
+	if searcher != nil {
+		apiOpts.Semantic = searcher
+	}
+	h := api.New(apiOpts)
 	return &Server{
 		cfg:   cfg,
 		opts:  opts,
