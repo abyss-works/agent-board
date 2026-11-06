@@ -1109,3 +1109,63 @@ func TestMigrateRebuildsDocumentInVersion9Database(t *testing.T) {
 		t.Error("an unknown location was accepted")
 	}
 }
+
+// TestMigrateIndexesCommentsOfVersion10Database upgrades a database with
+// comments written under schema version 10. Migration 0011 indexes the
+// comments that exist, and the trigger indexes the comments added after it.
+func TestMigrateIndexesCommentsOfVersion10Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-11-06T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind", "0010_legacy_document"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 10`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into issue(id, project_id, number, key, title, body, type, status, priority, version,
+		                   created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '이슈', '', 'feature', 'backlog', 'P2', 1, `+at+`, `+at+`, `+at+`, 'owner', 'owner', 'owner')`,
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes, body, summary, comment_kind)
+		 values (1, 'created', 'owner', 's', 'h', `+at+`, '{}', null, null, null),
+		        (1, 'commented', 'claude', 's', 'h', `+at+`, null, '잠금 원인은 긴 트랜잭션이다', '잠금 원인', 'finding')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 10 database: %v", err)
+	}
+	defer s.Close()
+	if hits, total, err := s.Search(ctx, SearchFilter{Query: "트랜잭션", Limit: 10}); err != nil || total != 1 || hits[0].Type != model.SearchComment || *hits[0].Kind != "finding" {
+		t.Errorf("search of a comment from before the migration = %d %+v, %v", total, hits, err)
+	}
+	if _, err := s.AddComment(ctx, trClaude, "AGB-1", "트랜잭션을 짧게 나눴다", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, total, err := s.Search(ctx, SearchFilter{Query: "트랜잭션", Limit: 10}); err != nil || total != 2 {
+		t.Errorf("search after a new comment = %d, %v", total, err)
+	}
+	if _, err := s.db.Exec(`insert into comment_fts(comment_fts, rank) values ('integrity-check', 1)`); err != nil {
+		t.Errorf("comment_fts after the migration: %v", err)
+	}
+}
