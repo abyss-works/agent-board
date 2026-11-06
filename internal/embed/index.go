@@ -12,8 +12,10 @@ import (
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
-// queryTimeout bounds the embedding of a search query.
-const queryTimeout = 5 * time.Second
+// queryTimeout bounds the embedding of a search query. The API usually answers
+// in under a second but sometimes takes several; a tighter bound drops the
+// search by meaning for those queries.
+const queryTimeout = 10 * time.Second
 
 // Index holds every stored chunk in memory and finds the sources nearest to a
 // query vector.
