@@ -203,6 +203,76 @@ func ParseFrontMatter(content string) (meta DocumentMeta, ok bool) {
 	return meta, false
 }
 
+// FrontMatterEntry is one top-level "key: value" line of a front matter block.
+// Value is read like a scalar: unquoted, without a trailing comment.
+type FrontMatterEntry struct {
+	Key, Value string
+}
+
+// FrontMatterEntries lists the top-level "key: value" lines of the front matter
+// at the start of content, in order, whatever their keys. Comments, indented
+// lines and lines without a colon are skipped. ok is false when content does
+// not start with a closed block.
+func FrontMatterEntries(content string) (entries []FrontMatterEntry, ok bool) {
+	first, rest, found := strings.Cut(content, "\n")
+	if !found || !isFence(first) {
+		return nil, false
+	}
+	for more := true; more; {
+		var line string
+		line, rest, more = strings.Cut(rest, "\n")
+		if isFence(line) {
+			return entries, true
+		}
+		key, value, hasValue := strings.Cut(line, ":")
+		if !hasValue || key == "" || key[0] == ' ' || key[0] == '\t' || key[0] == '#' {
+			continue
+		}
+		entries = append(entries, FrontMatterEntry{strings.TrimRight(key, " \t"), yamlScalar(value)})
+	}
+	return nil, false
+}
+
+// IsPlaceholder reports whether a front matter value is a template
+// placeholder: text that starts with "<" and ends with ">", or a flow list
+// with such an item.
+func IsPlaceholder(value string) bool {
+	v := yamlScalar(value)
+	if len(v) >= 2 && v[0] == '[' && v[len(v)-1] == ']' {
+		for _, item := range strings.Split(v[1:len(v)-1], ",") {
+			if isPlaceholderScalar(yamlScalar(item)) {
+				return true
+			}
+		}
+		return false
+	}
+	return isPlaceholderScalar(v)
+}
+
+func isPlaceholderScalar(s string) bool {
+	return len(s) >= 2 && s[0] == '<' && s[len(s)-1] == '>'
+}
+
+// htmlComment matches an HTML comment, which may span lines.
+var htmlComment = regexp.MustCompile(`(?s)<!--(.*?)-->`)
+
+// templateGuidanceMarkers are phrases of the guidance comment that a record
+// template carries and the author must delete.
+var templateGuidanceMarkers = []string{"파일명:", "이 주석은 지운다"}
+
+// hasTemplateGuidance reports whether content holds an HTML comment with the
+// guidance of a record template.
+func hasTemplateGuidance(content string) bool {
+	for _, m := range htmlComment.FindAllStringSubmatch(content, -1) {
+		for _, marker := range templateGuidanceMarkers {
+			if strings.Contains(m[1], marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isFence(line string) bool { return strings.TrimRight(line, " \t\r") == "---" }
 
 func nonEmpty(s string) *string {
@@ -298,6 +368,19 @@ func ValidateDocument(name, location, content string) (DocumentMeta, error) {
 		meta = m
 		if nameOK && m.Kind != string(kind) {
 			e.add("content", "프런트매터의 kind(%q)가 파일명의 종류(%s)와 같아야 합니다.", m.Kind, kind)
+		}
+		var keys []string
+		entries, _ := FrontMatterEntries(content)
+		for _, en := range entries {
+			if IsPlaceholder(en.Value) {
+				keys = append(keys, en.Key)
+			}
+		}
+		if len(keys) > 0 {
+			e.add("content", "프런트매터의 %s 값이 서식의 자리표시자(<...>)입니다. 실제 값으로 채워야 합니다.", strings.Join(keys, ", "))
+		}
+		if hasTemplateGuidance(content) {
+			e.add("content", "서식의 안내 주석(<!-- 파일명: ... -->)이 남아 있습니다. 지우고 올려야 합니다.")
 		}
 	}
 	return meta, e.orNil()
