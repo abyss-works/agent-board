@@ -593,3 +593,26 @@ func TestLegacyDocument(t *testing.T) {
 		t.Errorf("search legacy and other: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPutDocumentRefusesTemplateRemnants(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	for label, content := range map[string]string{
+		"guidance comment":    apiDocText("decision", "<!-- 파일명: history/x.md. 이 주석은 지운다. -->"),
+		"placeholder title":   apiDocText("decision", "본문", "title: <문서 제목>"),
+		"placeholder tags":    apiDocText("decision", "본문", "tags: [<주제어>, <주제어>]"),
+		"placeholder any key": apiDocText("decision", "본문", "status: <채택 | 기각 | 보류>"),
+	} {
+		rec := e.putDocument(t, "AGB", apiDocPriority, "history", content, nil)
+		b := decodeErr(t, rec)
+		if rec.Code != 422 || b.Error.Code != "validation_failed" || len(b.Error.Details) != 1 || b.Error.Details[0].Field != "content" {
+			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+	if rec, l := e.getDocuments(t, "/v1/projects/AGB/documents"); rec.Code != 200 || l.Total != 0 {
+		t.Errorf("refused puts left documents behind: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.putDocument(t, "AGB", apiDocPriority, "history", apiDocText("decision", "본문", "title: 제목", "status: 채택"), nil); rec.Code != 201 {
+		t.Errorf("filled document: %d %s", rec.Code, rec.Body.String())
+	}
+}

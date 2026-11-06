@@ -424,3 +424,74 @@ func TestDocumentJSON(t *testing.T) {
 		t.Errorf("empty metadata JSON = %s", b)
 	}
 }
+
+func TestValidateDocumentRefusesTemplateRemnants(t *testing.T) {
+	const name = "2026-10-20-1544-decision-priority-model.md"
+	doc := func(front, body string) string { return "---\nkind: decision\n" + front + "---\n" + body }
+	guide := "<!-- 파일명: history/yyyy-mm-dd-HHMM-decision-<slug>.md. 이 주석은 지운다. -->"
+	cases := []struct {
+		label, content string
+		want           []string
+	}{
+		{"filled", doc("date: 2026-10-20 15:44\ntitle: 제목\ntags: [a, b]\nstatus: 채택\n", "본문\n"), nil},
+		{"guidance comment", doc("", "# 제목\n\n"+guide+"\n"), []string{"content"}},
+		{"guidance comment on several lines", doc("", "<!--\n파일명: x\n-->\n"), []string{"content"}},
+		{"comment that says to delete it", doc("", "<!-- 이 주석은 지운다 -->\n"), []string{"content"}},
+		{"another comment is fine", doc("", "<!-- 메모 -->\n"), nil},
+		{"placeholder date", doc("date: <yyyy-mm-dd HH:MM>\n", "본문\n"), []string{"content"}},
+		{"placeholder title", doc("title: <문서 제목>\n", "본문\n"), []string{"content"}},
+		{"quoted placeholder", doc("title: \"<문서 제목>\"\n", "본문\n"), []string{"content"}},
+		{"placeholder tags", doc("tags: [<주제어>, <주제어>]\n", "본문\n"), []string{"content"}},
+		{"placeholder in another key", doc("status: <채택 | 기각 | 보류>\n", "본문\n"), []string{"content"}},
+		{"remnants of both kinds, reported at once", doc("title: <문서 제목>\n", guide+"\n"), []string{"content", "content"}},
+		{"angle text that is not the whole value", doc("title: <T> 제네릭\ntags: [a, <b>c]\n", "본문\n"), nil},
+		{"empty value", doc("supersedes:\n", "본문\n"), nil},
+		{"placeholder in the body is left to the CLI", doc("", "<왜 필요했는지>\n"), nil},
+	}
+	for _, c := range cases {
+		_, err := ValidateDocument(name, "history", c.content)
+		if got := violationFields(t, err); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: violations = %v (%v), want %v", c.label, got, err, c.want)
+		}
+	}
+	// A legacy document keeps its rules.
+	if _, err := ValidateDocument("decisions/x.md", "legacy", doc("title: <문서 제목>\n", guide)); err != nil {
+		t.Errorf("legacy: %v", err)
+	}
+	// The archive is checked like the history.
+	if _, err := ValidateDocument(name, "archive", doc("", guide)); err == nil {
+		t.Error("archive must refuse the guidance comment")
+	}
+}
+
+func TestIsPlaceholder(t *testing.T) {
+	for v, want := range map[string]bool{
+		"<문서 제목>":          true,
+		" <a> ":            true,
+		"\"<a>\"":          true,
+		"[<주제어>, <주제어>]":   true,
+		"[a, <주제어>]":       true,
+		"<a> b":            false,
+		"a <b>":            false,
+		"[a, b]":           false,
+		"":                 false,
+		"<":                false,
+		"<>":               true,
+		"2026-10-20 15:44": false,
+	} {
+		if got := IsPlaceholder(v); got != want {
+			t.Errorf("IsPlaceholder(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestFrontMatterEntries(t *testing.T) {
+	got, ok := FrontMatterEntries("---\nkind: report\n# note\n  nested: x\ntitle:  \"a: b\"  # c\ntags: [x, y]\nempty:\nno colon\n---\n본문: 아님\n")
+	want := []FrontMatterEntry{{"kind", "report"}, {"title", "a: b"}, {"tags", "[x, y]"}, {"empty", ""}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("entries = %v, %v, want %v", got, ok, want)
+	}
+	if _, ok := FrontMatterEntries("본문"); ok {
+		t.Error("content without a block must report false")
+	}
+}
