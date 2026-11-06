@@ -439,6 +439,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    ```
    - 프로젝트를 주지 않으면 모든 프로젝트를 찾는다. `-p <KEY,...>`로 프로젝트를, `--type issue,comment,document`로 출처를, `--comment-kind decision,finding,lesson`으로 댓글 종류를 좁힌다.
    - 여러 단어는 모두 포함(AND)이다. 결과가 없으면 단어를 줄여 한 번 더 찾는다.
+   - 서버가 의미 검색을 켜 두었으면 핵심어 대신 자연어 질문으로도 찾을 수 있다. 키워드 검색만으로는 핵심 단어가 있어야 하고 모든 단어가 AND로 걸린다.
    - Expected: 관련도 순 `items`. 항목마다 `type`, `project`, `key`(이슈 키나 문서 이름), `comment_id`, `title`, `kind`, `at`과 일치 부분을 `[ ]`로 표시한 `snippet`이 있다.
    - 기록 문서만 종류나 위치로 좁히려면 `agb doc search "<핵심어>" --kind <종류> --location <위치>`를 쓴다. 이전 체계 기록은 `--location legacy`다.
 2. 관련 있어 보이는 항목은 원문을 읽는다. `snippet`만 보고 판단하지 않는다.
