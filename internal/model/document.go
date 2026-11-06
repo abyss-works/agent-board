@@ -14,22 +14,31 @@ const (
 	DocumentIncident       DocumentKind = "incident"
 	DocumentReport         DocumentKind = "report"
 	DocumentImplementation DocumentKind = "implementation"
+	// DocumentOther is a legacy document whose kind neither its folder nor its
+	// front matter tells. A record document name never carries it.
+	DocumentOther DocumentKind = "other"
 )
 
-// DocumentKinds lists every record document kind.
-var DocumentKinds = []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation}
+// recordKinds are the kinds a record document file name may carry.
+var recordKinds = []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation}
 
-// DocumentLocation is the folder of the management repository that holds a
-// record document.
+// DocumentKinds lists every document kind.
+var DocumentKinds = append(append([]DocumentKind{}, recordKinds...), DocumentOther)
+
+// DocumentLocation is where a document lies in the management repository.
 type DocumentLocation string
 
 const (
 	LocationHistory DocumentLocation = "history"
 	LocationArchive DocumentLocation = "archive"
+	// LocationLegacy holds the documents of the earlier record system: the
+	// decisions, reports and incidents folders and the subfolders of archive.
+	// Their name is the path relative to the repository root.
+	LocationLegacy DocumentLocation = "legacy"
 )
 
-// DocumentLocations lists every folder a record document may lie in.
-var DocumentLocations = []DocumentLocation{LocationHistory, LocationArchive}
+// DocumentLocations lists every location.
+var DocumentLocations = []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}
 
 // ParseDocumentKind returns the document kind named v.
 func ParseDocumentKind(v string) (DocumentKind, bool) { return parseEnum(v, DocumentKinds) }
@@ -74,7 +83,77 @@ func ParseDocumentName(name string) (DocumentKind, bool) {
 	if m == nil {
 		return "", false
 	}
-	return ParseDocumentKind(m[1])
+	return parseEnum(m[1], recordKinds)
+}
+
+// legacyFolderKinds maps the folders of the earlier record system to the kind
+// of their documents. The archive subfolders take the kind from the front
+// matter instead.
+var legacyFolderKinds = map[string]DocumentKind{
+	"decisions": DocumentDecision,
+	"reports":   DocumentReport,
+	"incidents": DocumentIncident,
+}
+
+// ParseLegacyName reports whether name is the path of a legacy document:
+// decisions/, reports/ or incidents/ followed by a file, or archive/ followed
+// by at least one subfolder and a file. The file ends in .md and does not
+// start with _ (a template). Segments are not empty, ".", ".." or hidden, and
+// hold no backslash or control character. folder is the first segment.
+func ParseLegacyName(name string) (folder string, ok bool) {
+	segs := strings.Split(name, "/")
+	file := segs[len(segs)-1]
+	if !strings.HasSuffix(file, ".md") || strings.HasPrefix(file, "_") {
+		return "", false
+	}
+	for _, s := range segs {
+		if s == "" || s[0] == '.' || strings.ContainsAny(s, "\\") || strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+			return "", false
+		}
+	}
+	folder = segs[0]
+	if _, ok := legacyFolderKinds[folder]; ok && len(segs) == 2 {
+		return folder, true
+	}
+	if folder == string(LocationArchive) && len(segs) >= 3 {
+		return folder, true
+	}
+	return "", false
+}
+
+// legacyNameDate is the date at the start of a legacy file name: yyyy-mm-dd,
+// optionally followed by the time as HH-MM or HHMM.
+var legacyNameDate = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})(?:-(\d{2})-?(\d{2})-)?`)
+
+// legacyMeta fills what a legacy document lacks. The kind comes from the
+// folder, or for an archive subfolder from a known front matter kind, and is
+// otherwise other. The date falls back to the one in the file name and the
+// title to the first "# " heading.
+func legacyMeta(folder, name, content string, meta DocumentMeta) DocumentMeta {
+	if k, ok := legacyFolderKinds[folder]; ok {
+		meta.Kind = string(k)
+	} else if _, ok := ParseDocumentKind(meta.Kind); !ok || meta.Kind == string(DocumentOther) {
+		meta.Kind = string(DocumentOther)
+	}
+	if meta.Date == nil {
+		file := name[strings.LastIndex(name, "/")+1:]
+		if m := legacyNameDate.FindStringSubmatch(file); m != nil {
+			d := m[1]
+			if m[2] != "" {
+				d += " " + m[2] + ":" + m[3]
+			}
+			meta.Date = &d
+		}
+	}
+	if meta.Title == nil {
+		for _, line := range strings.Split(strings.TrimPrefix(content, "\xef\xbb\xbf"), "\n") {
+			if t, ok := strings.CutPrefix(strings.TrimRight(line, " \t\r"), "# "); ok {
+				meta.Title = nonEmpty(strings.TrimSpace(t))
+				break
+			}
+		}
+	}
+	return meta
 }
 
 // DocumentMeta is what the server reads from the front matter of a record
@@ -196,7 +275,11 @@ func flowList(value string) []string {
 // ValidateDocument checks the file name, the location and the content of a
 // record document and returns what the front matter says. Every violation is
 // reported at once. The front matter kind must equal the kind in the name.
+// A legacy document is checked by validateLegacy instead.
 func ValidateDocument(name, location, content string) (DocumentMeta, error) {
+	if location == string(LocationLegacy) {
+		return validateLegacy(name, content)
+	}
 	var e ValidationError
 	kind, nameOK := ParseDocumentName(name)
 	if !nameOK {
@@ -217,4 +300,26 @@ func ValidateDocument(name, location, content string) (DocumentMeta, error) {
 		}
 	}
 	return meta, e.orNil()
+}
+
+// validateLegacy checks a legacy document: its name is a legacy path and its
+// content fits the size limit. The front matter is optional because the
+// earlier record system did not require it.
+func validateLegacy(name, content string) (DocumentMeta, error) {
+	var e ValidationError
+	folder, ok := ParseLegacyName(name)
+	if !ok {
+		e.add("name", "이전 체계 문서는 decisions/, reports/, incidents/ 바로 아래나 archive/ 하위 폴더에 있는 *.md 의 상대 경로여야 합니다.")
+	}
+	if len(content) > MaxDocumentBytes {
+		e.add("content", "%d바이트를 넘을 수 없습니다.", MaxDocumentBytes)
+	}
+	if err := e.orNil(); err != nil {
+		return DocumentMeta{}, err
+	}
+	meta, ok := ParseFrontMatter(content)
+	if !ok {
+		meta = DocumentMeta{Tags: []string{}}
+	}
+	return legacyMeta(folder, name, content, meta), nil
 }
