@@ -482,3 +482,29 @@ func (c *Client) GetDocument(ctx context.Context, project, name string) (*Respon
 func (c *Client) SearchDocuments(ctx context.Context, f DocumentFilter) (*Response, error) {
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/documents", f.Values()), nil, nil)
 }
+
+// SearchFilter is the unified search over issues, comments and record
+// documents. Comma separated values are OR.
+type SearchFilter struct {
+	Query       string
+	Project     string
+	Type        string
+	CommentKind string
+	Page
+}
+
+// Values encodes the filter as query parameters.
+func (f SearchFilter) Values() url.Values {
+	v := url.Values{}
+	set(v, "q", f.Query)
+	set(v, "project", f.Project)
+	set(v, "type", f.Type)
+	set(v, "comment_kind", f.CommentKind)
+	f.Page.addTo(v)
+	return v
+}
+
+// Search finds issues, comments and record documents, best match first.
+func (c *Client) Search(ctx context.Context, f SearchFilter) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/search", f.Values()), nil, nil)
+}
