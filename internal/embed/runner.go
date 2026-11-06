@@ -23,6 +23,11 @@ type Runner struct {
 	Interval time.Duration
 	Index    *Index
 	Logger   *slog.Logger
+
+	// similarDone records that the similar documents were computed once, so
+	// that a server started on stored embeddings computes them without waiting
+	// for a change.
+	similarDone bool
 }
 
 // Result counts what one round changed: the sources embedded again and the
@@ -58,22 +63,26 @@ func (r *Runner) round(ctx context.Context) {
 }
 
 // RunOnce embeds every source whose chunks differ from the stored ones, removes
-// the rows of sources that are gone, and reloads the index if anything
-// changed. An error of the embeddings API ends the round; what was stored
+// the rows of sources that are gone, and reloads the index and the similar
+// documents if anything changed (and once on the first round). An error of the embeddings API ends the round; what was stored
 // before it stays.
 func (r *Runner) RunOnce(ctx context.Context) (res Result, err error) {
 	defer func() {
-		if res.Sources+res.Removed == 0 {
+		if res.Sources+res.Removed == 0 && r.similarDone {
 			return
 		}
 		rows, lerr := r.Store.LoadEmbeddings(ctx, r.Model)
+		if lerr == nil {
+			r.Index.Load(rows)
+			lerr = r.Store.ReplaceSimilarDocuments(ctx, r.Model, similarPairs(rows, similarPerDocument, similarFloor))
+		}
 		if lerr != nil {
 			if err == nil {
 				err = lerr
 			}
 			return
 		}
-		r.Index.Load(rows)
+		r.similarDone = true
 	}()
 
 	texts, err := r.Store.SourceTexts(ctx)

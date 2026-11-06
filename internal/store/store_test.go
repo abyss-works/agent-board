@@ -1230,3 +1230,35 @@ func TestMigrateAddsEmbeddingToVersion11Database(t *testing.T) {
 		t.Errorf("issues after the migration = %d, %v", issues, err)
 	}
 }
+
+// TestMigrateAddsSimilarDocumentToVersion12Database upgrades a database written
+// under schema version 12. Migration 0013 adds the empty similar_document table.
+func TestMigrateAddsSimilarDocumentToVersion12Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind", "0010_legacy_document", "0011_comment_fts", "0012_embedding"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := legacy.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if _, err := legacy.Exec(`pragma user_version = 12`); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 12 database: %v", err)
+	}
+	defer s.Close()
+	if n := countRows(t, s, "similar_document"); n != 0 {
+		t.Errorf("similar_document rows = %d", n)
+	}
+}
