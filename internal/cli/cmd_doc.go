@@ -584,6 +584,7 @@ var docSearchCmd = &command{
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
+  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
   --limit <N>             최대 200. 기본 50
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
@@ -592,6 +593,7 @@ var docSearchCmd = &command{
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
+		fs.StringVar(&f.Location, "location", "", "")
 		fs.IntVar(&f.Limit, "limit", 0, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
