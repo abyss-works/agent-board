@@ -19,6 +19,8 @@ type Config struct {
 	Actors  []model.Actor
 	WebDir  string // folder with the built web client; empty means it is not served
 	Backup  Backup
+	// Embedding configures the search by meaning; it is off without an API key.
+	Embedding Embedding
 }
 
 // Backup configures the periodic snapshot upload. It is off until a bucket
@@ -35,6 +37,19 @@ type Backup struct {
 
 // Enabled reports whether backups should run.
 func (b Backup) Enabled() bool { return b.Bucket != "" }
+
+// Embedding configures the embeddings API behind the search by meaning. It is
+// off until an API key is set; then URL and Model are required.
+type Embedding struct {
+	APIKey      string
+	URL         string // full endpoint URL of an OpenAI compatible embeddings API
+	Model       string
+	QueryPrefix string // prepended to the query text only
+	Interval    time.Duration
+}
+
+// Enabled reports whether the search by meaning should run.
+func (e Embedding) Enabled() bool { return e.APIKey != "" }
 
 // MinTokenLength is the shortest AGB_TOKEN the server accepts.
 const MinTokenLength = 32
@@ -54,6 +69,13 @@ func Load(getenv func(string) string) (*Config, error) {
 			Prefix:          getenv("AGB_BACKUP_PREFIX"),
 			Interval:        time.Hour,
 			Retention:       672 * time.Hour,
+		},
+		Embedding: Embedding{
+			APIKey:      getenv("AGB_EMBEDDING_API_KEY"),
+			URL:         getenv("AGB_EMBEDDING_URL"),
+			Model:       getenv("AGB_EMBEDDING_MODEL"),
+			QueryPrefix: strings.ReplaceAll(getenv("AGB_EMBEDDING_QUERY_PREFIX"), `\n`, "\n"),
+			Interval:    time.Minute,
 		},
 	}
 	if cfg.Addr == "" {
@@ -107,6 +129,22 @@ func Load(getenv func(string) string) (*Config, error) {
 		}
 		if cfg.Backup.AccessKeyID == "" || cfg.Backup.SecretAccessKey == "" {
 			errs = append(errs, errors.New("AGB_BACKUP_ACCESS_KEY_ID and AGB_BACKUP_SECRET_ACCESS_KEY are required when AGB_BACKUP_BUCKET is set"))
+		}
+	}
+	if v := getenv("AGB_EMBEDDING_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_INTERVAL must be a positive duration, got %q", v))
+		} else {
+			cfg.Embedding.Interval = d
+		}
+	}
+	if cfg.Embedding.Enabled() {
+		if cfg.Embedding.URL == "" {
+			errs = append(errs, errors.New("AGB_EMBEDDING_URL is required when AGB_EMBEDDING_API_KEY is set"))
+		}
+		if cfg.Embedding.Model == "" {
+			errs = append(errs, errors.New("AGB_EMBEDDING_MODEL is required when AGB_EMBEDDING_API_KEY is set"))
 		}
 	}
 	if len(errs) > 0 {

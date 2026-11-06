@@ -114,8 +114,15 @@ AGB_WEB_DIR=web/dist agb serve
 | `AGB_BACKUP_PREFIX` | 객체 이름 접두어 | `agb` |
 | `AGB_BACKUP_INTERVAL` | 백업 주기. Go duration 형식 | `1h` |
 | `AGB_BACKUP_RETENTION` | 스냅샷 보관 기간. Go duration 형식 | `672h`(4주) |
+| `AGB_EMBEDDING_API_KEY` | 임베딩 API 키. 지정하면 통합 검색이 키워드 검색에 의미 검색을 합친다. 비어 있으면 키워드 검색만 한다. | 비어 있음 |
+| `AGB_EMBEDDING_URL` | OpenAI 호환 임베딩 엔드포인트의 전체 URL(예: `https://openrouter.ai/api/v1/embeddings`). 키를 지정하면 필수 | 없음 |
+| `AGB_EMBEDDING_MODEL` | 임베딩 모델 이름(예: `qwen/qwen3-embedding-8b`). 키를 지정하면 필수 | 없음 |
+| `AGB_EMBEDDING_QUERY_PREFIX` | 검색어에만 앞에 붙이는 문자열. 값에 적은 `\n` 두 글자는 줄바꿈으로 읽는다. | 비어 있음 |
+| `AGB_EMBEDDING_INTERVAL` | 새로 쓰거나 고친 기록을 임베딩하는 주기. Go duration 형식 | `1m` |
 
 백업을 켜면 서버가 시작한 직후와 이후 `AGB_BACKUP_INTERVAL`마다 데이터베이스의 일관된 스냅샷을 gzip으로 압축해 올린다. 마지막 업로드 이후 바뀐 것이 없으면 그 주기의 업로드를 건너뛰고, 보관 기간이 지난 스냅샷은 지운다. 복원 절차는 [deploy/README.md](deploy/README.md)에 있다.
+
+임베딩 API 키를 지정하면 서버가 시작한 직후와 이후 `AGB_EMBEDDING_INTERVAL`마다 이슈, 댓글, 기록 문서를 900자 단위로 나눠 임베딩하고 데이터베이스에 저장한다. 내용이 바뀐 출처만 다시 임베딩하고, 지운 이슈와 그 댓글은 저장분도 지운다. `GET /v1/search`는 키워드 순위와 의미 순위를 RRF로 합쳐 답한다. 검색어를 임베딩하지 못하면 키워드 검색 결과만 돌려준다. 모델을 바꾸면 모든 출처를 다시 임베딩한다.
 
 ## CLI 사용
 

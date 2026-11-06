@@ -1,5 +1,5 @@
 // Package server wires configuration, the store, the HTTP handler and the
-// backup runner into one process.
+// background runners (backup and embedding) into one process.
 package server
 
 import (
@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/api"
 	"github.com/wsk0715/agent-board/internal/backup"
 	"github.com/wsk0715/agent-board/internal/config"
+	"github.com/wsk0715/agent-board/internal/embed"
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
@@ -38,7 +40,10 @@ type Server struct {
 	ln     net.Listener
 	cancel context.CancelFunc
 	done   chan struct{}
-	bgDone chan struct{}
+	bg     sync.WaitGroup
+	// embedder and searcher are set only when the search by meaning is enabled.
+	embedder *embed.Runner
+	searcher *embed.Searcher
 }
 
 // New opens the store and prepares the HTTP server.
@@ -60,11 +65,29 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		st.Close()
 		return nil, fmt.Errorf("declare actors: %w", err)
 	}
+	var embedder *embed.Runner
+	var searcher *embed.Searcher
+	if cfg.Embedding.Enabled() {
+		client := embed.NewClient(cfg.Embedding.URL, cfg.Embedding.APIKey, cfg.Embedding.Model)
+		index := &embed.Index{}
+		rows, err := st.LoadEmbeddings(context.Background(), cfg.Embedding.Model)
+		if err != nil {
+			st.Close()
+			return nil, fmt.Errorf("load embeddings: %w", err)
+		}
+		index.Load(rows)
+		embedder = &embed.Runner{Store: st, Embedder: client, Model: cfg.Embedding.Model, Interval: cfg.Embedding.Interval, Index: index, Logger: opts.Logger}
+		searcher = &embed.Searcher{Embedder: client, Prefix: cfg.Embedding.QueryPrefix, Index: index}
+	}
 	var web fs.FS
 	if cfg.WebDir != "" {
 		web = os.DirFS(cfg.WebDir)
 	}
-	h := api.New(api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web})
+	apiOpts := api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web}
+	if searcher != nil {
+		apiOpts.Semantic = searcher
+	}
+	h := api.New(apiOpts)
 	return &Server{
 		cfg:   cfg,
 		opts:  opts,
@@ -73,8 +96,9 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			Handler:           h,
 			ReadHeaderTimeout: 10 * time.Second,
 		},
-		done:   make(chan struct{}),
-		bgDone: make(chan struct{}),
+		done:     make(chan struct{}),
+		embedder: embedder,
+		searcher: searcher,
 	}, nil
 }
 
@@ -102,26 +126,28 @@ func (s *Server) Start() (string, error) {
 	return ln.Addr().String(), nil
 }
 
-// startBackground launches the backup runner when a bucket is configured.
+// startBackground launches the backup runner when a bucket is configured and
+// the embedding runner when an embeddings API key is configured.
 func (s *Server) startBackground(ctx context.Context) {
-	if !s.cfg.Backup.Enabled() {
+	if s.cfg.Backup.Enabled() {
+		r := &backup.Runner{
+			Store:     s.opts.BackupStore,
+			Source:    s.store,
+			Prefix:    s.cfg.Backup.Prefix,
+			Interval:  s.cfg.Backup.Interval,
+			Retention: s.cfg.Backup.Retention,
+			TempDir:   filepath.Join(s.cfg.DataDir, "backup-tmp"),
+			Logger:    s.opts.Logger,
+		}
+		s.bg.Go(func() { r.Run(ctx) })
+	} else {
 		s.opts.Logger.Info("backup disabled: AGB_BACKUP_BUCKET is empty")
-		close(s.bgDone)
-		return
 	}
-	r := &backup.Runner{
-		Store:     s.opts.BackupStore,
-		Source:    s.store,
-		Prefix:    s.cfg.Backup.Prefix,
-		Interval:  s.cfg.Backup.Interval,
-		Retention: s.cfg.Backup.Retention,
-		TempDir:   filepath.Join(s.cfg.DataDir, "backup-tmp"),
-		Logger:    s.opts.Logger,
+	if s.embedder != nil {
+		s.bg.Go(func() { s.embedder.Run(ctx) })
+	} else {
+		s.opts.Logger.Info("semantic search disabled: AGB_EMBEDDING_API_KEY is empty")
 	}
-	go func() {
-		defer close(s.bgDone)
-		r.Run(ctx)
-	}()
 }
 
 // Shutdown stops accepting connections, waits for in-flight requests until
@@ -132,9 +158,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	err := s.http.Shutdown(ctx)
 	<-s.done
-	if s.ln != nil {
-		<-s.bgDone
-	}
+	s.bg.Wait()
 	if cerr := s.store.Close(); err == nil {
 		err = cerr
 	}
