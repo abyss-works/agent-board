@@ -146,8 +146,10 @@ agb project overview DEMO
 agb issue list -p DEMO --status doing
 agb queue -p DEMO --limit 1
 agb search 정렬 -p DEMO
-# 이슈, 댓글, 기록 문서를 한 번에 찾는다.
+# 이슈, 댓글, 기록 문서를 한 번에 찾는다. recall은 찾은 항목에 연결된 결정과 이슈를 함께 보인다.
 agb find 정렬
+agb recall "정렬 기준을 정한 결정"
+agb graph DEMO-1
 agb milestone list -p DEMO
 
 # 이슈를 등록한다. 에이전트의 요청은 종류별 템플릿의 ## 제목이 모두 있어야 한다.

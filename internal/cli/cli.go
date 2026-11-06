@@ -197,6 +197,7 @@ const Usage = `사용법: agb <명령> [옵션]
   search <검색어>   전문 검색 (issue list -q 와 같음)
   find <검색어>     이슈·댓글·기록 문서 통합 검색
   graph <노드>      이슈·기록 문서에 연결된 이슈와 문서
+  recall <질문>     질문 하나로 관련 결정·사고·이슈와 그 연결
 
 공통 옵션 (명령 앞뒤 어디에나):
   --json            JSON 출력 (서버 응답 그대로). 기본: 파이프·파일일 때
@@ -218,7 +219,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 
 var root = &command{name: "agb", subs: []*command{
 	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
-	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd,
+	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
 // Run executes args and returns the exit code: 0 success, 1 API or

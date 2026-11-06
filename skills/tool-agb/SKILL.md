@@ -431,17 +431,23 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 ### 작업 전에 과거 기록을 찾을 때
 
-착수 전 정찰에서 작업과 관련된 과거 결정과 사고를 찾는다. 이슈, 댓글, 기록 문서를 한 번에 찾는다.
+착수 전 정찰에서 작업과 관련된 과거 결정과 사고를 찾는다. 이슈, 댓글, 기록 문서를 한 번에 찾고, 찾은 항목에 연결된 결정과 이슈를 함께 본다.
 
-1. 핵심어로 검색한다.
+1. 질문으로 찾는다.
    ```
-   agb find "<핵심어>"
+   agb recall "<질문이나 핵심어>"
    ```
-   - 프로젝트를 주지 않으면 모든 프로젝트를 찾는다. `-p <KEY,...>`로 프로젝트를, `--type issue,comment,document`로 출처를, `--comment-kind decision,finding,lesson`으로 댓글 종류를 좁힌다.
-   - 여러 단어는 모두 포함(AND)이다. 결과가 없으면 단어를 줄여 한 번 더 찾는다.
-   - Expected: 관련도 순 `items`. 항목마다 `type`, `project`, `key`(이슈 키나 문서 이름), `comment_id`, `title`, `kind`, `at`과 일치 부분을 `[ ]`로 표시한 `snippet`이 있다.
+   - 통합 검색의 상위 5건마다 결정 그래프에서 바로 연결된 이슈와 문서(상위·선행 이슈, 참조, 기록 문서의 `issue`·`supersedes`·`related`)가 붙어 나온다. `←`는 그 항목을 가리키는 연결, `→`는 그 항목이 가리키는 연결이다.
+   - 프로젝트를 주지 않으면 모든 프로젝트를 찾는다. `-p <KEY,...>`로 프로젝트를, `--type issue,comment,document`로 출처를, `--comment-kind decision,finding,lesson`으로 댓글 종류를, `--limit <N>`(최대 20)으로 결과 수를 정한다.
+   - 키워드 검색은 모든 단어를 AND로 찾는다. 결과가 없으면 핵심어 두세 개로 줄여 한 번 더 찾는다.
+   - Expected: 항목마다 `[type] PROJECT KEY  종류  제목`, 일치 부분(`[ ]`로 표시), 연결 목록. 파이프에서는 `query`, `total`, `items[].hit`, `items[].links[]`(`edge`, `direction`, `node`)를 담은 JSON이다.
+2. 더 넓게 볼 때는 검색만 하거나 한 항목의 연결을 더 따라간다.
+   ```
+   agb find "<핵심어>" --limit 50
+   agb graph <KEY | PROJECT/문서 이름> --depth 2
+   ```
    - 기록 문서만 종류나 위치로 좁히려면 `agb doc search "<핵심어>" --kind <종류> --location <위치>`를 쓴다. 이전 체계 기록은 `--location legacy`다.
-2. 관련 있어 보이는 항목은 원문을 읽는다. `snippet`만 보고 판단하지 않는다.
+3. 관련 있어 보이는 항목은 원문을 읽는다. `snippet`만 보고 판단하지 않는다.
    ```
    agb issue get <KEY>                 # 이슈
    agb issue activity <KEY>            # 댓글
