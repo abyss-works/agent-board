@@ -11,8 +11,8 @@ export type CommentKind = 'decision' | 'finding' | 'lesson'
 export type TopicStatus = 'active' | 'deleted'
 export type MilestoneStatus = 'open' | 'closed' | 'deleted'
 export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
-export type DocumentKind = 'decision' | 'incident' | 'report' | 'implementation'
-export type DocumentLocation = 'history' | 'archive'
+export type DocumentKind = 'decision' | 'incident' | 'report' | 'implementation' | 'other'
+export type DocumentLocation = 'history' | 'archive' | 'legacy'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
 
@@ -23,8 +23,8 @@ export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
 export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted']
-export const DOCUMENT_KINDS: DocumentKind[] = ['decision', 'incident', 'report', 'implementation']
-export const DOCUMENT_LOCATIONS: DocumentLocation[] = ['history', 'archive']
+export const DOCUMENT_KINDS: DocumentKind[] = ['decision', 'incident', 'report', 'implementation', 'other']
+export const DOCUMENT_LOCATIONS: DocumentLocation[] = ['history', 'archive', 'legacy']
 
 export interface Project {
   key: string

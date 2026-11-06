@@ -47,11 +47,13 @@ export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
   incident: '사고',
   report: '보고',
   implementation: '구현',
+  other: '기타',
 }
 
 export const DOCUMENT_LOCATION_LABEL: Record<DocumentLocation, string> = {
   history: 'history',
   archive: 'archive',
+  legacy: 'legacy',
 }
 
 export const KIND_LABEL: Record<ActivityKind, string> = {
