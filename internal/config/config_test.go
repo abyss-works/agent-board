@@ -129,3 +129,46 @@ func TestLoadRejectsUnusableWebDir(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadEmbedding(t *testing.T) {
+	base := map[string]string{"AGB_TOKEN": testToken, "AGB_ACTORS": "owner:user"}
+	with := func(kv ...string) func(string) string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return env(m)
+	}
+
+	cfg, err := Load(with())
+	if err != nil || cfg.Embedding.Enabled() || cfg.Embedding.Interval != time.Minute {
+		t.Errorf("without a key: %+v, %v", cfg.Embedding, err)
+	}
+
+	cfg, err = Load(with("AGB_EMBEDDING_API_KEY", "k", "AGB_EMBEDDING_URL", "https://example.test/v1/embeddings", "AGB_EMBEDDING_MODEL", "m",
+		"AGB_EMBEDDING_QUERY_PREFIX", `Instruct: x\nQuery: `, "AGB_EMBEDDING_INTERVAL", "5m"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := cfg.Embedding
+	if !e.Enabled() || e.APIKey != "k" || e.URL != "https://example.test/v1/embeddings" || e.Model != "m" || e.QueryPrefix != "Instruct: x\nQuery: " || e.Interval != 5*time.Minute {
+		t.Errorf("Embedding = %+v", e)
+	}
+
+	for name, tc := range map[string]struct {
+		kv   []string
+		want string
+	}{
+		"url":      {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_MODEL", "m"}, "AGB_EMBEDDING_URL"},
+		"model":    {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_URL", "https://example.test"}, "AGB_EMBEDDING_MODEL"},
+		"interval": {[]string{"AGB_EMBEDDING_INTERVAL", "soon"}, "AGB_EMBEDDING_INTERVAL"},
+	} {
+		_, err := Load(with(tc.kv...))
+		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret-key") {
+			t.Errorf("%s: err = %v, want it to name %s and not the key", name, err, tc.want)
+		}
+	}
+}
