@@ -431,20 +431,23 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 ### 작업 전에 과거 기록을 찾을 때
 
-착수 전 정찰에서 작업과 관련된 과거 결정과 사고를 찾는다.
+착수 전 정찰에서 작업과 관련된 과거 결정과 사고를 찾는다. 이슈, 댓글, 기록 문서를 한 번에 찾는다.
 
 1. 핵심어로 검색한다.
    ```
-   agb doc search "<핵심어>"
+   agb find "<핵심어>"
    ```
-   - 프로젝트를 주지 않으면 모든 프로젝트를 찾는다. `-p <KEY,...>`로 프로젝트를, `--kind decision,incident,report,implementation,other`로 종류를, `--location legacy`로 이전 체계 기록을 좁힌다.
+   - 프로젝트를 주지 않으면 모든 프로젝트를 찾는다. `-p <KEY,...>`로 프로젝트를, `--type issue,comment,document`로 출처를, `--comment-kind decision,finding,lesson`으로 댓글 종류를 좁힌다.
    - 여러 단어는 모두 포함(AND)이다. 결과가 없으면 단어를 줄여 한 번 더 찾는다.
-   - Expected: 관련도 순 `items`. 항목마다 `project`, `name`, `kind`, `date`, `title`과 일치 부분을 `[ ]`로 표시한 `snippet`이 있다.
-2. 관련 있어 보이는 문서는 원문을 읽는다. `snippet`만 보고 판단하지 않는다.
+   - Expected: 관련도 순 `items`. 항목마다 `type`, `project`, `key`(이슈 키나 문서 이름), `comment_id`, `title`, `kind`, `at`과 일치 부분을 `[ ]`로 표시한 `snippet`이 있다.
+   - 기록 문서만 종류나 위치로 좁히려면 `agb doc search "<핵심어>" --kind <종류> --location <위치>`를 쓴다. 이전 체계 기록은 `--location legacy`다.
+2. 관련 있어 보이는 항목은 원문을 읽는다. `snippet`만 보고 판단하지 않는다.
    ```
-   agb doc get <KEY> <파일명> --content
+   agb issue get <KEY>                 # 이슈
+   agb issue activity <KEY>            # 댓글
+   agb doc get <PROJECT> <이름> --content   # 기록 문서
    ```
-   - Expected: 원문이 그대로 출력된다. 속성만 볼 때는 `--content`를 뺀다.
+   - Expected: 원문이 그대로 출력된다.
 
 ## 이슈 템플릿
 
