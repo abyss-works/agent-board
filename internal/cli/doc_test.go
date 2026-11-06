@@ -685,6 +685,7 @@ func TestDocHelp(t *testing.T) {
 		{[]string{"--help"}, "doc "},
 		{[]string{"doc", "--help"}, "sync"},
 		{[]string{"help", "doc"}, "search"},
+		{[]string{"doc", "new", "--help"}, "--slug"},
 		{[]string{"doc", "put", "--help"}, "history"},
 		{[]string{"doc", "sync", "--help"}, "--root"},
 		{[]string{"doc", "search", "--help"}, "--kind"},
