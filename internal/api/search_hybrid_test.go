@@ -193,3 +193,20 @@ func TestFuseRanksByReciprocalRank(t *testing.T) {
 		t.Errorf("tie = %+v", got)
 	}
 }
+
+// A question longer than the keyword search takes is ranked by meaning alone.
+// Without the search by meaning it is refused as before.
+func TestHybridSearchTakesLongQuestions(t *testing.T) {
+	const long = "/v1/search?q=a+b+c+d+e+f+g+h+i+j+잠금"
+	e, emb := hybridEnv(t)
+	if rec := e.do(t, "GET", long, "", nil); rec.Code != 200 {
+		t.Fatalf("long question: %d %s", rec.Code, rec.Body.String())
+	}
+	emb.fail = true
+	if rec := e.do(t, "GET", long, "", nil); rec.Code != 400 {
+		t.Errorf("long question without meaning: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := newEnv(t).do(t, "GET", long, "", nil); rec.Code != 400 {
+		t.Errorf("long question on a keyword server: %d %s", rec.Code, rec.Body.String())
+	}
+}

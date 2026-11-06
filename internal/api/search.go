@@ -43,23 +43,32 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	f.Limit, f.Offset = q.limit(20, 200), q.offset()
-	if match, err := store.BuildMatch(f.Query); err != nil {
-		q.add("q", "검색어는 최대 10항입니다.")
-	} else if match == "" {
+	// A question longer than the keyword search takes is still a query for
+	// the search by meaning; only the keyword part is left out.
+	match, matchErr := store.BuildMatch(f.Query)
+	switch {
+	case strings.TrimSpace(f.Query) == "" || (matchErr == nil && match == ""):
 		q.add("q", "검색어가 필요합니다.")
+	case matchErr != nil && h.opts.Semantic == nil:
+		q.add("q", "검색어는 최대 10항입니다.")
 	}
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
 	if h.opts.Semantic != nil {
-		items, total, ok, err := h.hybridSearch(r.Context(), f)
+		items, total, ok, err := h.hybridSearch(r.Context(), f, matchErr == nil)
 		if err != nil {
 			writeError(w, h.storeError(r, err))
 			return
 		}
 		if ok {
 			writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+			return
+		}
+		if matchErr != nil {
+			q.add("q", "의미 검색을 쓸 수 없어 키워드로 찾습니다. 키워드 검색어는 최대 10항입니다.")
+			writeError(w, q.finish())
 			return
 		}
 	}
@@ -73,18 +82,21 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 
 // hybridSearch fuses the keyword ranking and the ranking by meaning. ok is
 // false when the query could not be embedded; the caller then answers with the
-// keyword search alone.
-func (h *handler) hybridSearch(ctx context.Context, f store.SearchFilter) (items []model.SearchHit, total int, ok bool, err error) {
+// keyword search alone. withKeywords is false for a query the keyword search
+// cannot take, which then ranks by meaning alone.
+func (h *handler) hybridSearch(ctx context.Context, f store.SearchFilter, withKeywords bool) (items []model.SearchHit, total int, ok bool, err error) {
 	refs, err := h.opts.Semantic.Search(ctx, f.Query, fusionPool)
 	if err != nil {
 		h.opts.Logger.Warn("semantic search failed, answering with keywords only", "err", err.Error())
 		return nil, 0, false, nil
 	}
-	kwFilter := f
-	kwFilter.Limit, kwFilter.Offset = fusionPool, 0
-	keyword, _, err := h.store.Search(ctx, kwFilter)
-	if err != nil {
-		return nil, 0, false, err
+	var keyword []model.SearchHit
+	if withKeywords {
+		kwFilter := f
+		kwFilter.Limit, kwFilter.Offset = fusionPool, 0
+		if keyword, _, err = h.store.Search(ctx, kwFilter); err != nil {
+			return nil, 0, false, err
+		}
 	}
 	semantic, err := h.store.SemanticHits(ctx, refs, f)
 	if err != nil {
