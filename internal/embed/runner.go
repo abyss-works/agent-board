@@ -125,23 +125,40 @@ func (r *Runner) RunOnce(ctx context.Context) (res Result, err error) {
 		res.Removed++
 	}
 
-	for _, j := range jobs {
-		vecs := make([][]float32, 0, len(j.chunks))
-		for start := 0; start < len(j.chunks); start += batchSize {
-			batch, err := r.Embedder.Embed(ctx, j.chunks[start:min(start+batchSize, len(j.chunks))])
+	// Most sources have one or two chunks, so the chunks of several sources
+	// share a request; a group is stored as soon as its vectors are back.
+	for start := 0; start < len(jobs); {
+		end, n := start, 0
+		for end < len(jobs) && (n == 0 || n+len(jobs[end].chunks) <= batchSize) {
+			n += len(jobs[end].chunks)
+			end++
+		}
+		group := jobs[start:end]
+		var texts []string
+		for _, j := range group {
+			texts = append(texts, j.chunks...)
+		}
+		vecs := make([][]float32, 0, len(texts))
+		for b := 0; b < len(texts); b += batchSize {
+			batch, err := r.Embedder.Embed(ctx, texts[b:min(b+batchSize, len(texts))])
 			if err != nil {
-				return res, fmt.Errorf("embed %s %d: %w", j.st.Source, j.st.ID, err)
+				return res, fmt.Errorf("embed %s %d: %w", group[0].st.Source, group[0].st.ID, err)
 			}
 			vecs = append(vecs, batch...)
 		}
-		rows := make([]store.EmbeddingRow, len(j.chunks))
-		for i, c := range j.chunks {
-			rows[i] = store.EmbeddingRow{Source: j.st.Source, SourceID: j.st.ID, Chunk: i, Model: r.Model, SHA256: j.shas[i], Text: c, Vector: normalize(vecs[i])}
+		off := 0
+		for _, j := range group {
+			rows := make([]store.EmbeddingRow, len(j.chunks))
+			for i, c := range j.chunks {
+				rows[i] = store.EmbeddingRow{Source: j.st.Source, SourceID: j.st.ID, Chunk: i, Model: r.Model, SHA256: j.shas[i], Text: c, Vector: normalize(vecs[off+i])}
+			}
+			off += len(j.chunks)
+			if err := r.Store.ReplaceEmbeddings(ctx, j.st.Source, j.st.ID, rows); err != nil {
+				return res, err
+			}
+			res.Sources++
 		}
-		if err := r.Store.ReplaceEmbeddings(ctx, j.st.Source, j.st.ID, rows); err != nil {
-			return res, err
-		}
-		res.Sources++
+		start = end
 	}
 	return res, nil
 }

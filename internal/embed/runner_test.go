@@ -181,7 +181,9 @@ func TestRunOnceEndsTheRoundOnAnAPIError(t *testing.T) {
 	f := newFake()
 	f.failAfter = 1
 	r, st := newRunner(t, f)
-	issue(t, st, "aaa", "")
+	// The first issue fills a request by itself, so the other two need a
+	// second request, which fails.
+	issue(t, st, "aaa", strings.Repeat("x", 900*31))
 	issue(t, st, "bbb", "")
 	issue(t, st, "ccc", "")
 
@@ -190,7 +192,7 @@ func TestRunOnceEndsTheRoundOnAnAPIError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	// The source embedded before the failure stays, and the index knows it.
-	if n := stored(t, st); n != 1 || res.Sources != 1 || len(f.calls) != 1 {
+	if n := stored(t, st); n != batchSize || res.Sources != 1 || len(f.calls) != 1 {
 		t.Errorf("after the error: %d rows, %+v, %d calls", n, res, len(f.calls))
 	}
 	if got := r.Index.Search(fakeVector("aaa"), 5); len(got) != 1 {
@@ -198,7 +200,7 @@ func TestRunOnceEndsTheRoundOnAnAPIError(t *testing.T) {
 	}
 	// The next round retries the rest.
 	f.failAfter = -1
-	if res, err := r.RunOnce(ctx); err != nil || res.Sources != 2 || stored(t, st) != 3 {
+	if res, err := r.RunOnce(ctx); err != nil || res.Sources != 2 || stored(t, st) != batchSize+2 {
 		t.Errorf("retry = %+v, %v, %d rows", res, err, stored(t, st))
 	}
 }
@@ -216,3 +218,15 @@ func TestRunOnceSendsChunksInBatchesOf32(t *testing.T) {
 }
 
 func str(s string) *string { return &s }
+
+// Short sources share a request instead of sending one each.
+func TestRunOnceBatchesAcrossSources(t *testing.T) {
+	f := newFake()
+	r, st := newRunner(t, f)
+	for _, title := range []string{"a", "b", "c", "d", "e"} {
+		issue(t, st, title, "")
+	}
+	if res, err := r.RunOnce(context.Background()); err != nil || res.Sources != 5 || len(f.calls) != 1 || len(f.calls[0]) != 5 {
+		t.Errorf("round = %+v, %v, calls %v", res, err, f.calls)
+	}
+}
