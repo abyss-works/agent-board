@@ -97,13 +97,14 @@ var legacyFolderKinds = map[string]DocumentKind{
 
 // ParseLegacyName reports whether name is the path of a legacy document:
 // decisions/, reports/ or incidents/ followed by a file, or archive/ followed
-// by at least one subfolder and a file. The file ends in .md and does not
-// start with _ (a template). Segments are not empty, ".", ".." or hidden, and
-// hold no backslash or control character. folder is the first segment.
+// by at least one subfolder and a file. The file ends in .md and is not a
+// template: its name neither starts with _ nor ends in .example.md. Segments
+// are not empty, ".", ".." or hidden, and hold no backslash or control
+// character. folder is the first segment.
 func ParseLegacyName(name string) (folder string, ok bool) {
 	segs := strings.Split(name, "/")
 	file := segs[len(segs)-1]
-	if !strings.HasSuffix(file, ".md") || strings.HasPrefix(file, "_") {
+	if !strings.HasSuffix(file, ".md") || strings.HasPrefix(file, "_") || strings.HasSuffix(file, ".example.md") {
 		return "", false
 	}
 	for _, s := range segs {

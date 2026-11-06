@@ -102,6 +102,7 @@ func TestParseLegacyName(t *testing.T) {
 	for _, name := range []string{
 		"",
 		"decisions/_template.md",
+		"archive/2026-10-mgmt/decisions/decision.example.md",
 		"decisions/x.txt",
 		"decisions/sub/x.md",
 		"archive/x.md",
