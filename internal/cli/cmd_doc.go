@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,6 +75,9 @@ var docPutCmd = &command{
 이름이 위치(history, archive)가 되고 파일 이름이 문서 이름이 됩니다. 파일은 UTF-8 이어야 하고 읽은
 바이트 그대로 올라갑니다.
 
+이전 체계의 기록(decisions/, reports/, incidents/ 바로 아래)과 archive/ 하위 폴더의 문서는 위치가 legacy 이고,
+저장소 루트에서 본 상대 경로(예: decisions/2026-10-17-14-30-scope.md)가 문서 이름이 됩니다.
+
 - 처음 올리면 등록됩니다.
 - 같은 내용을 같은 위치로 다시 올리면 바뀌는 것이 없습니다.
 - 같은 내용을 다른 폴더의 파일로 올리면(history 에서 archive 로 옮긴 기록) 위치만 바뀝니다.
@@ -104,10 +108,9 @@ var docPutCmd = &command{
 		if err != nil {
 			return usageErrorf("경로를 해석하지 못했습니다: %v", err)
 		}
-		folder := filepath.Base(filepath.Dir(abs))
-		location, ok := model.ParseDocumentLocation(folder)
+		name, location, ok := docFileName(abs)
 		if !ok {
-			return usageErrorf("기록 문서 파일은 history 나 archive 폴더에 있어야 합니다. %s 의 폴더 이름은 %q 입니다.", path, folder)
+			return usageErrorf("기록 문서 파일은 history 나 archive 폴더, 또는 이전 체계 폴더(decisions, reports, incidents)나 archive 하위 폴더에 있어야 합니다: %s", path)
 		}
 		content, err := readDocContent(path)
 		if err != nil {
@@ -117,19 +120,42 @@ var docPutCmd = &command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.PutDocument(ctx, project, filepath.Base(abs), string(location), content)
+		resp, err := c.PutDocument(ctx, project, name, string(location), content)
 		if err != nil {
 			return err
 		}
 		if err := a.emit(g, resp, a.renderDocument); err != nil {
 			return err
 		}
-		if fu := followUps(content); resp.Status == http.StatusCreated && len(fu) > 0 {
+		if fu := followUps(content); location != model.LocationLegacy && resp.Status == http.StatusCreated && len(fu) > 0 {
 			fmt.Fprintln(a.Stderr, "후속 항목이 있습니다. 이슈로 추적할 것은 등록하고 참조 doc:<파일명>을 붙이세요.")
-			writeFollowUps(a.Stderr, filepath.Base(abs), fu)
+			writeFollowUps(a.Stderr, name, fu)
 		}
 		return nil
 	},
+}
+
+// docFileName names the document a file is: a file directly in history/ or
+// archive/ by its file name, or a legacy file by its path from the root of the
+// git repository that holds it.
+func docFileName(abs string) (name string, location model.DocumentLocation, ok bool) {
+	switch folder := filepath.Base(filepath.Dir(abs)); folder {
+	case string(model.LocationHistory), string(model.LocationArchive):
+		return filepath.Base(abs), model.DocumentLocation(folder), true
+	}
+	root, err := git(filepath.Dir(abs), "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", "", false
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return "", "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if _, ok := model.ParseLegacyName(rel); !ok {
+		return "", "", false
+	}
+	return rel, model.LocationLegacy, true
 }
 
 // docSyncResult sorts the files of a sync by what happened to them.
@@ -171,6 +197,18 @@ type docFile struct {
 	path     string
 }
 
+// repoPath is the path of the file from the repository root, as git lists it.
+func (f docFile) repoPath() string {
+	if f.location == model.LocationLegacy {
+		return f.name
+	}
+	return string(f.location) + "/" + f.name
+}
+
+// legacyFolders are the folders of the earlier record system, which hold
+// their documents directly.
+var legacyFolders = []string{"decisions", "reports", "incidents"}
+
 // docEntry is what the server holds of a document that a sync compares.
 type docEntry struct {
 	location string
@@ -178,12 +216,12 @@ type docEntry struct {
 }
 
 // listDocFiles lists the *.md files that lie directly in the history and
-// archive folders of root, history first, each folder by name. Files named
-// _* are templates and subfolders are not record documents; both are left out.
-// Files whose names are not those of record documents come back as skipped.
+// archive folders of root, history first, each folder by name, and then the
+// legacy files. Files named _* are templates and are left out. Files whose
+// names are not those of record documents come back as skipped.
 func listDocFiles(root string) (files []docFile, skipped []string, err error) {
 	found := false
-	for _, location := range model.DocumentLocations {
+	for _, location := range []model.DocumentLocation{model.LocationHistory, model.LocationArchive} {
 		dir := filepath.Join(root, string(location))
 		entries, err := os.ReadDir(dir)
 		if errors.Is(err, os.ErrNotExist) {
@@ -208,7 +246,76 @@ func listDocFiles(root string) (files []docFile, skipped []string, err error) {
 	if !found {
 		return nil, nil, usageErrorf("%s 에 history/ 나 archive/ 폴더가 없습니다. --root 로 관리 저장소 경로를 주세요.", root)
 	}
-	return files, skipped, nil
+	legacy, tooBig, err := listLegacyFiles(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(files, legacy...), append(skipped, tooBig...), nil
+}
+
+// listLegacyFiles lists the documents of the earlier record system: the *.md
+// files directly in decisions/, reports/ and incidents/, then those in the
+// subfolders of archive/, by path. Only markdown is a document, so logs, code
+// and data stay out. A file over the size limit of the server comes back in
+// tooBig, marked, instead of being refused one sync after another.
+func listLegacyFiles(root string) (files []docFile, tooBig []string, err error) {
+	add := func(path string, d fs.DirEntry) error {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(rel)
+		if _, ok := model.ParseLegacyName(name); !ok {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > model.MaxDocumentBytes {
+			tooBig = append(tooBig, name+" (256KB 초과)")
+			return nil
+		}
+		files = append(files, docFile{name: name, location: model.LocationLegacy, path: path})
+		return nil
+	}
+	for _, folder := range legacyFolders {
+		dir := filepath.Join(root, folder)
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				if err := add(filepath.Join(dir, e.Name()), e); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+	}
+	archive := filepath.Join(root, string(model.LocationArchive))
+	err = filepath.WalkDir(archive, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if path == archive && errors.Is(err, fs.ErrNotExist) {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		if d.IsDir() {
+			if path != archive && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Dir(path) == archive {
+			return nil
+		}
+		return add(path, d)
+	})
+	return files, tooBig, err
 }
 
 // serverDocs lists every document of the project, page by page.
@@ -292,7 +399,9 @@ func syncDocFiles(ctx context.Context, c *client.Client, project string, files [
 			res.Moved = append(res.Moved, f.name)
 		} else {
 			res.Uploaded = append(res.Uploaded, f.name)
-			if fu := followUps(content); len(fu) > 0 {
+			// The open items of the earlier record system are history, not
+			// work to track now.
+			if fu := followUps(content); f.location != model.LocationLegacy && len(fu) > 0 {
 				res.FollowUps = append(res.FollowUps, docFollowUps{Name: f.name, Sections: fu})
 			}
 		}
@@ -378,9 +487,13 @@ var docSyncCmd = &command{
 	name: "sync", summary: "관리 저장소의 기록 문서를 서버와 맞춤",
 	usage: `사용법: agb doc sync --project <KEY> [--root <관리 저장소 경로>]
 
-관리 저장소의 history/ 와 archive/ 에 직접 놓인 *.md 파일을 서버와 맞춥니다. 이름이 _ 로 시작하는 파일(서식)과
-하위 폴더는 보지 않습니다. 이름이 기록 문서 형식(yyyy-mm-dd-HHMM-<종류>-<slug>.md)이 아닌 파일은 올리지
-않고 skipped 로 알립니다.
+관리 저장소의 history/ 와 archive/ 에 직접 놓인 *.md 파일을 서버와 맞춥니다. 이름이 _ 로 시작하는 파일(서식)은
+보지 않습니다. 이름이 기록 문서 형식(yyyy-mm-dd-HHMM-<종류>-<slug>.md)이 아닌 파일은 올리지 않고 skipped 로
+알립니다.
+
+이전 체계의 기록(decisions/, reports/, incidents/ 바로 아래)과 archive/ 하위 폴더의 *.md 파일도 위치 legacy 로
+함께 올립니다. 이름은 저장소 루트에서 본 상대 경로입니다. 256KB 를 넘는 파일은 올리지 않고 skipped 로
+알립니다.
 
 - 서버에 없는 파일은 올립니다(uploaded).
 - 서버에 같은 내용이 있고 위치가 다르면 위치를 옮깁니다(moved).
@@ -470,7 +583,8 @@ var docSearchCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
-  --kind <K>              decision, incident, report, implementation. 쉼표 OR
+  --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
+  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
   --limit <N>             최대 200. 기본 50
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
@@ -479,6 +593,7 @@ var docSearchCmd = &command{
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
+		fs.StringVar(&f.Location, "location", "", "")
 		fs.IntVar(&f.Limit, "limit", 0, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -526,8 +641,8 @@ var docListCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
-  --kind <K>              decision, incident, report, implementation. 쉼표 OR
-  --location <L>          history, archive
+  --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
+  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
   --limit <N>             최대 200. 기본 50
   --offset <N>
 `,

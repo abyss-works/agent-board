@@ -38,11 +38,12 @@ func knowledgeProject() (root, key string, ok bool) {
 // A record document is uploaded once and never changed, so a draft must not
 // reach the server before it is committed.
 func committedDocFiles(root string, files []docFile) ([]docFile, error) {
-	tracked, err := git(root, "ls-files", "--", "history", "archive")
+	paths := append([]string{"--", "history", "archive"}, legacyFolders...)
+	tracked, err := git(root, append([]string{"-c", "core.quotepath=off", "ls-files"}, paths...)...)
 	if err != nil {
 		return nil, err
 	}
-	dirty, err := git(root, "diff", "--name-only", "HEAD", "--", "history", "archive")
+	dirty, err := git(root, append([]string{"-c", "core.quotepath=off", "diff", "--name-only", "HEAD"}, paths...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +56,7 @@ func committedDocFiles(root string, files []docFile) ([]docFile, error) {
 	}
 	var out []docFile
 	for _, f := range files {
-		if keep[string(f.location)+"/"+f.name] {
+		if keep[f.repoPath()] {
 			out = append(out, f)
 		}
 	}
@@ -87,7 +88,12 @@ func (a *App) autoSyncRecords(ctx context.Context, c *client.Client) {
 		return syncDocFiles(ctx, c, project, files, server, res)
 	}()
 	if done := append(res.Uploaded, res.Moved...); len(done) > 0 {
-		fmt.Fprintf(a.Stderr, "기록 문서 %d건을 올렸습니다(%s): %s\n", len(done), project, strings.Join(done, ", "))
+		// The first run in a repository with legacy records uploads them all.
+		names := strings.Join(done, ", ")
+		if len(done) > 10 {
+			names = strings.Join(done[:10], ", ") + fmt.Sprintf(" 외 %d건", len(done)-10)
+		}
+		fmt.Fprintf(a.Stderr, "기록 문서 %d건을 올렸습니다(%s): %s\n", len(done), project, names)
 	}
 	for _, d := range res.FollowUps {
 		fmt.Fprint(a.Stderr, "후속 항목: ")

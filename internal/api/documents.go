@@ -9,7 +9,7 @@ import (
 
 func (h *handler) registerDocuments(mux *http.ServeMux) {
 	route(mux, "/v1/projects/{key}/documents", methods{"GET": h.listDocuments})
-	route(mux, "/v1/projects/{key}/documents/{name}", methods{"GET": h.getDocument, "PUT": h.putDocument})
+	route(mux, "/v1/projects/{key}/documents/{name...}", methods{"GET": h.getDocument, "PUT": h.putDocument})
 	route(mux, "/v1/documents", methods{"GET": h.searchDocuments})
 }
 

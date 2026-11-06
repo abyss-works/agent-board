@@ -553,3 +553,43 @@ func TestDocumentRoutesFollowTheConventions(t *testing.T) {
 		t.Errorf("log = %v", lg)
 	}
 }
+
+// A legacy document is named by its path. The path reaches the server with its
+// slashes as they are or escaped, and both name the same document.
+func TestLegacyDocument(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	const name = "archive/2026-06-hermes-sdlc/agent/notes.md"
+	rec := e.putDocument(t, "AGB", name, "legacy", "# 하네스 조사\n본문\n", nil)
+	var d model.Document
+	decodeJSON(t, rec, &d)
+	if rec.Code != 201 || d.Name != name || d.Location != model.LocationLegacy || d.Kind != model.DocumentOther ||
+		d.Title == nil || *d.Title != "하네스 조사" || rec.Header().Get("Location") != documentPath("AGB", name) {
+		t.Fatalf("put legacy: %d %s Location=%q", rec.Code, rec.Body.String(), rec.Header().Get("Location"))
+	}
+	for _, target := range []string{documentPath("AGB", name), documentPath("AGB", url.PathEscape(name))} {
+		rec := e.do(t, "GET", target, "", nil)
+		var got model.Document
+		decodeJSON(t, rec, &got)
+		if rec.Code != 200 || got.Name != name || got.Content == nil {
+			t.Errorf("get %s: %d %s", target, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := e.putDocument(t, "AGB", "decisions/2026-10-17-14-30-scope.md", "legacy", "본문", nil); rec.Code != 201 {
+		t.Errorf("put a legacy decision without front matter: %d %s", rec.Code, rec.Body.String())
+	}
+	for label, c := range map[string]struct{ name, location string }{
+		"a legacy path in history":   {"decisions/x.md", "history"},
+		"a record name in legacy":    {apiDocBare, "legacy"},
+		"a file directly in archive": {"archive/x.md", "legacy"},
+		"a draft":                    {"draft/x.md", "legacy"},
+	} {
+		if rec := e.putDocument(t, "AGB", c.name, c.location, apiDocText("decision", "본문"), nil); rec.Code != 422 {
+			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+	rec, l := e.getDocuments(t, "/v1/documents?location=legacy&kind=other")
+	if rec.Code != 200 || l.Total != 1 || l.Items[0].Name != name {
+		t.Errorf("search legacy and other: %d %s", rec.Code, rec.Body.String())
+	}
+}

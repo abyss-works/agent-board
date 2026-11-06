@@ -461,6 +461,29 @@ func TestDocuments(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy documents", func(t *testing.T) {
+		const nLegacy = "archive/2026-06-hermes-sdlc/agent/notes.md"
+		d, status := mustPutDocument(t, as("claude"), q.Key, nLegacy, "legacy", "# 하네스 조사 "+word+"\n본문\n")
+		if status != 201 || d.Location != "legacy" || d.Kind != "other" || d.Title == nil || *d.Title != "하네스 조사 "+word {
+			t.Errorf("legacy document = %d %+v", status, d)
+		}
+		dec, status := mustPutDocument(t, as("claude"), q.Key, "decisions/2026-10-17-14-30-scope.md", "legacy", "범위 결정 "+word+"\n")
+		if status != 201 || dec.Kind != "decision" || dec.Date == nil || *dec.Date != "2026-10-17 14:30" {
+			t.Errorf("legacy decision = %d %+v", status, dec)
+		}
+		for _, target := range []string{documentPath(q.Key, nLegacy), documentPath(q.Key, url.PathEscape(nLegacy))} {
+			got := decode[document](t, expect(t, owner.do(t, "GET", target, nil), 200))
+			if got.Name != nLegacy || got.Content == nil {
+				t.Errorf("get %s = %+v", target, got)
+			}
+		}
+		expect(t, putDocument(t, owner, q.Key, "archive/notes.md", "legacy", "# x\n"), 422)
+		found := decodeAs[list[document]](t, owner.do(t, "GET", "/v1/documents?q="+url.QueryEscape(word)+"&location=legacy", nil), 200)
+		if found.Total != 2 {
+			t.Errorf("search of legacy documents = %d", found.Total)
+		}
+	})
+
 	t.Run("a project that is not active", func(t *testing.T) {
 		r := createProject(t, "DD")
 		content := documentText("report", "", "", "", "본문")

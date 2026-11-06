@@ -1036,3 +1036,76 @@ func countRows(t *testing.T, s *Store, table string) int {
 	}
 	return n
 }
+
+// TestMigrateRebuildsDocumentInVersion9Database upgrades a database with
+// documents written under schema version 9. Migration 0010 rebuilds document to
+// accept the location legacy and the kind other; the documents keep their ids,
+// and the search index and its triggers keep working.
+func TestMigrateRebuildsDocumentInVersion9Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-11-06T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 9`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 1, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into document(id, project_id, name, location, kind, title, sha256, size, content, created_at, created_by, updated_at, updated_by)
+		 values (7, 1, '2026-10-20-1544-decision-old.md', 'archive', 'decision', '옛 결정', 'h', 1, '우선순위 큐 본문', `+at+`, 'claude', `+at+`, 'claude')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 9 database: %v", err)
+	}
+	defer s.Close()
+
+	var id int
+	var location string
+	if err := s.db.QueryRow(`select id, location from document where name = '2026-10-20-1544-decision-old.md'`).Scan(&id, &location); err != nil || id != 7 || location != "archive" {
+		t.Errorf("migrated document: id %d, location %q, %v", id, location, err)
+	}
+	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "우선순위", Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+		t.Errorf("search of a migrated document = %d (%d), %v", len(found), total, err)
+	}
+	d, created, err := s.PutDocument(ctx, model.Trace{Actor: "claude", SessionID: "s", ClientHost: "h"}, "AGB", "archive/2026-06-x/notes.md",
+		DocumentInput{Location: "legacy", Content: "# 이전 체계 조사\n본문"})
+	if err != nil || !created || d.Kind != model.DocumentOther || d.Location != model.LocationLegacy || d.Title == nil || *d.Title != "이전 체계 조사" {
+		t.Fatalf("PutDocument of a legacy document = %+v, %v, %v", d, created, err)
+	}
+	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "이전 체계", Locations: []model.DocumentLocation{model.LocationLegacy}, Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+		t.Errorf("search of a legacy document = %d (%d), %v", len(found), total, err)
+	}
+	if _, err := s.db.Exec(`insert into document_fts(document_fts, rank) values ('integrity-check', 1)`); err != nil {
+		t.Errorf("document_fts after the migration: %v", err)
+	}
+	var triggers int
+	if err := s.db.QueryRow(`select count(*) from sqlite_master where type = 'trigger' and tbl_name = 'document'`).Scan(&triggers); err != nil || triggers != 3 {
+		t.Errorf("document triggers = %d, %v; want 3", triggers, err)
+	}
+	if _, err := s.db.Exec(`insert into document(project_id, name, location, kind, sha256, size, content, created_at, created_by, updated_at, updated_by)
+		values (1, 'x.md', 'draft', 'other', 'h', 1, 'c', ` + at + `, 'owner', ` + at + `, 'owner')`); err == nil {
+		t.Error("an unknown location was accepted")
+	}
+}
