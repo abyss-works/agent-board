@@ -1169,3 +1169,64 @@ func TestMigrateIndexesCommentsOfVersion10Database(t *testing.T) {
 		t.Errorf("comment_fts after the migration: %v", err)
 	}
 }
+
+// TestMigrateAddsEmbeddingToVersion11Database upgrades a database written
+// under schema version 11. Migration 0012 adds the empty embedding table and the
+// data that exists stays as it is.
+func TestMigrateAddsEmbeddingToVersion11Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-11-06T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind", "0010_legacy_document", "0011_comment_fts"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 11`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into issue(id, project_id, number, key, title, body, type, status, priority, version,
+		                   created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '이슈', '', 'feature', 'backlog', 'P2', 1, `+at+`, `+at+`, `+at+`, 'owner', 'owner', 'owner')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 11 database: %v", err)
+	}
+	defer s.Close()
+	var version, rows, issues int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil || version != SchemaVersion || SchemaVersion < 12 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, %v", version, SchemaVersion, err)
+	}
+	if err := s.db.QueryRow(`select count(*) from embedding`).Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("embedding rows = %d, %v", rows, err)
+	}
+	if err := s.ReplaceEmbeddings(ctx, SourceIssue, 1, []EmbeddingRow{{Chunk: 0, Model: "m", SHA256: "h", Text: "t", Vector: []float32{1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`insert into embedding(source, source_id, chunk, model, text_sha256, text, vector, created_at) values ('wiki', 1, 0, 'm', 'h', 't', x'00', ` + at + `)`); err == nil {
+		t.Error("an unknown source was accepted")
+	}
+	if err := s.db.QueryRow(`select count(*) from issue`).Scan(&issues); err != nil || issues != 1 {
+		t.Errorf("issues after the migration = %d, %v", issues, err)
+	}
+}
