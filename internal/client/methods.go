@@ -508,3 +508,14 @@ func (f SearchFilter) Values() url.Values {
 func (c *Client) Search(ctx context.Context, f SearchFilter) (*Response, error) {
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/search", f.Values()), nil, nil)
 }
+
+// Graph returns the decision graph around a node ("issue:<KEY>" or
+// "doc:<PROJECT>/<name>") up to depth steps away.
+func (c *Client) Graph(ctx context.Context, node string, depth int) (*Response, error) {
+	v := url.Values{}
+	v.Set("node", node)
+	if depth > 0 {
+		v.Set("depth", strconv.Itoa(depth))
+	}
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/graph", v), nil, nil)
+}
