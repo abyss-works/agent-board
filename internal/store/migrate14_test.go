@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -306,4 +308,46 @@ func TestMigration14ReadsTheWholeLineOfAQuotedValue(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("relations =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+}
+
+// A failing Go step takes the SQL of its migration back with it: the database
+// stays at version 13 and the next start tries again.
+func TestMigration14FailingGoStepLeavesVersion13(t *testing.T) {
+	path := openAt13(t, func(db *sql.DB) { seed13(t, db) })
+	orig := goSteps[14]
+	goSteps[14] = func(ctx context.Context, tx *sql.Tx) error { return errors.New("step failed") }
+	_, err := Open(path)
+	goSteps[14] = orig
+	if err == nil || !strings.Contains(err.Error(), "step failed") {
+		t.Fatalf("Open = %v, want the error of the step", err)
+	}
+
+	db, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := db.QueryRow("pragma user_version").Scan(&version); err != nil || version != 13 {
+		t.Errorf("user_version = %d (%v), want 13", version, err)
+	}
+	// The table still has the column the SQL of version 14 drops, and no relation table exists.
+	var n int
+	if err := db.QueryRow(`select count(*) from pragma_table_info('document') where name = 'location'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("document.location columns = %d (%v), want 1", n, err)
+	}
+	if err := db.QueryRow(`select count(*) from sqlite_master where name = 'document_relation'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("document_relation tables = %d (%v), want 0", n, err)
+	}
+	var docs int
+	if err := db.QueryRow(`select count(*) from document`).Scan(&docs); err != nil || docs != 11 {
+		t.Errorf("documents = %d (%v), want the 11 seeded", docs, err)
+	}
+	db.Close()
+
+	// The next start applies the migration.
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	s.Close()
 }
