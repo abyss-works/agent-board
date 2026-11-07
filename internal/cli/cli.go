@@ -172,7 +172,7 @@ const Usage = `사용법: agb <명령> [옵션]
   config            설정 파일 경로, 표시, 수정 (url, actor, session_id, client_host, 토큰)
   login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
   logout            이 행위자의 토큰 폐기와 로컬 삭제
-  skill             내장 에이전트 스킬 출력과 설치 (~/.agents/skills/tool-agb)
+  skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
 
 상태:
   health            서버 상태 (인증 없음)
@@ -307,6 +307,8 @@ func (a *App) exit(g *globals, err error) int {
 	var ue *usageError
 	var apiErr *client.Error
 	switch {
+	case errors.Is(err, errCheckMismatch):
+		return 1
 	case errors.As(err, &ue):
 		fmt.Fprintf(a.Stderr, "agb: %s\n", ue.msg)
 		if ue.help != "" {
