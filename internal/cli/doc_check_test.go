@@ -242,18 +242,29 @@ func TestDocCheckWithoutATemplateSaysSo(t *testing.T) {
 	if err := json.Unmarshal(h.stdout.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	// The key check is skipped, the comment check is not; the note appears once.
-	if len(got.Files) != 1 || got.Files[0].Name != "history/"+freshName || len(got.Notes) != 1 || !strings.Contains(got.Notes[0], "_decision.md") {
-		t.Errorf("out = %s", h.stdout)
+	// The config names a template for the kind, and it is missing: every file of the kind has that problem.
+	// The key check is skipped, the comment check is not.
+	if len(got.Files) != 2 || len(got.Notes) != 0 {
+		t.Fatalf("out = %s", h.stdout)
+	}
+	for _, f := range got.Files {
+		if !strings.Contains(strings.Join(f.Problems, " "), "종류 decision 의 서식(history/_decision.md)이 없습니다") {
+			t.Errorf("%s lacks the missing template problem: %v", f.Name, f.Problems)
+		}
+	}
+	for _, f := range got.Files {
+		if want := map[string]int{"history/" + freshName: 2, "history/" + goodNewName: 1}[f.Name]; len(f.Problems) != want {
+			t.Errorf("%s: problems = %v, want %d (the missing template, and the comment for the fresh file)", f.Name, f.Problems, want)
+		}
 	}
 
-	// A config without new has no template at all; that is said once as well.
+	// A config without new has no template at all; that is noted once.
 	writeFiles(t, root, map[string]string{".agb.json": `{"project": "CLI", "documents": [{"glob": "history/*.md", "name": "base"}]}`})
 	if code := h.run("doc", "check", "--root", root); code != 1 {
 		t.Fatalf("no new: code=%d out=%s", code, h.stdout)
 	}
 	got = checkOutput{}
-	if err := json.Unmarshal(h.stdout.Bytes(), &got); err != nil || len(got.Notes) != 1 || !strings.Contains(got.Notes[0], "new") {
+	if err := json.Unmarshal(h.stdout.Bytes(), &got); err != nil || len(got.Notes) != 1 || !strings.Contains(got.Notes[0], "new") || strings.Contains(h.stdout.String(), "서식(") {
 		t.Errorf("no new: out = %s (%v)", h.stdout, err)
 	}
 }

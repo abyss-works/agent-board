@@ -153,6 +153,28 @@ func TestDocNewReadsThePathsAndValuesFromTheConfig(t *testing.T) {
 	}
 }
 
+const lessonTemplate = `---
+kind: lesson
+date: <yyyy-mm-dd HH:MM>
+title: <문서 제목>
+---
+
+# <교훈>
+`
+
+func TestDocNewAcceptsAKindWithATemplate(t *testing.T) {
+	root := templateRepo(t)
+	writeFiles(t, root, map[string]string{"history/_lesson.md": lessonTemplate})
+	h := newHarness(t, nil, false)
+	if code := h.run("doc", "new", "lesson", "--slug", "retry-twice", "--title", "두 번 재시도", "--root", root); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "history", "2026-10-17-1200-lesson-retry-twice.md"))
+	if err != nil || !strings.Contains(string(raw), "kind: lesson") || !strings.Contains(string(raw), "# 두 번 재시도") {
+		t.Errorf("file = %q (%v)", raw, err)
+	}
+}
+
 func TestDocNewUsageErrors(t *testing.T) {
 	root := templateRepo(t)
 	writeFiles(t, root, map[string]string{"history/" + newDecisionName: "이미 있음"})
@@ -166,7 +188,9 @@ func TestDocNewUsageErrors(t *testing.T) {
 	}{
 		"existing file":         {[]string{"decision", "--slug", "pick-queue", "--root", root}, newDecisionName},
 		"missing template":      {[]string{"report", "--slug", "x", "--root", root}, filepath.Join(root, "history", "_report.md")},
-		"unknown kind":          {[]string{"plan", "--slug", "x", "--root", root}, "plan"},
+		"kind without template": {[]string{"plan", "--slug", "x", "--root", root}, "plan 의 서식이 없습니다"},
+		"bad kind format":       {[]string{"Plan", "--slug", "x", "--root", root}, "Plan"},
+		"kind with hyphen":      {[]string{"a-b", "--slug", "x", "--root", root}, "a-b"},
 		"other kind":            {[]string{"other", "--slug", "x", "--root", root}, "other"},
 		"no kind":               {[]string{"--slug", "x", "--root", root}, "<종류>"},
 		"no slug":               {[]string{"decision", "--root", root}, "--slug"},

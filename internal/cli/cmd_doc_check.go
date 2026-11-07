@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -82,35 +83,46 @@ func repoMarkdown(root string, cfg *repoConfig, changedOnly bool) ([]string, err
 	return out, nil
 }
 
+// kindTemplate is what the config has for a kind: its template, or the
+// problem of a template that the config names and the repository lacks.
+type kindTemplate struct {
+	tmpl    *string
+	problem string
+}
+
 // templateReader reads the template of a document kind, once per kind.
 type templateReader struct {
 	root  string
 	cfg   *repoConfig
-	cache map[model.DocumentKind]*string
+	cache map[model.DocumentKind]kindTemplate
 	res   *docCheckResult
 	noted bool
 }
 
-func (t *templateReader) of(kind model.DocumentKind) *string {
-	if tmpl, seen := t.cache[kind]; seen {
-		return tmpl
+func (t *templateReader) of(kind model.DocumentKind) kindTemplate {
+	if kt, seen := t.cache[kind]; seen {
+		return kt
 	}
-	var tmpl *string
+	var kt kindTemplate
 	if t.cfg.New == nil {
 		if !t.noted {
 			t.res.Notes = append(t.res.Notes, "설정에 new 가 없어 서식을 읽지 못했습니다. 프런트매터 키와 ## 절은 확인하지 않았습니다.")
 			t.noted = true
 		}
 	} else {
-		path := filepath.Join(t.root, filepath.FromSlash(strings.ReplaceAll(t.cfg.New.Template, "{kind}", string(kind))))
-		if raw, err := readDocContent(path); err == nil {
-			tmpl = &raw
-		} else {
+		rel := strings.ReplaceAll(t.cfg.New.Template, "{kind}", string(kind))
+		path := filepath.Join(t.root, filepath.FromSlash(rel))
+		switch raw, err := readDocContent(path); {
+		case err == nil:
+			kt.tmpl = &raw
+		case errors.Is(err, fs.ErrNotExist):
+			kt.problem = fmt.Sprintf("종류 %s 의 서식(%s)이 없습니다. 이 저장소는 .agb.json 의 new.template 에 서식이 있는 종류만 씁니다.", kind, rel)
+		default:
 			t.res.Notes = append(t.res.Notes, fmt.Sprintf("서식 %s 을 읽지 못해 프런트매터 키와 ## 절은 확인하지 않았습니다.", path))
 		}
 	}
-	t.cache[kind] = tmpl
-	return tmpl
+	t.cache[kind] = kt
+	return kt
 }
 
 // checkDocFile checks one file against the template of its kind.
@@ -125,11 +137,14 @@ func checkDocFile(path string, templates *templateReader) (docCheckFile, string)
 		f.Problems = append(f.Problems, reason)
 		return f, ""
 	}
-	var tmpl *string
+	var kt kindTemplate
 	if kind, ok := model.ParseDocumentName(filepath.Base(path)); ok {
-		tmpl = templates.of(kind)
+		kt = templates.of(kind)
 	}
-	f.Problems = append(f.Problems, model.CheckRecord(filepath.Base(path), content, tmpl)...)
+	f.Problems = append(f.Problems, model.CheckRecord(filepath.Base(path), content, kt.tmpl)...)
+	if kt.problem != "" {
+		f.Problems = append(f.Problems, kt.problem)
+	}
 	return f, content
 }
 
@@ -238,7 +253,10 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 보지 않습니다.
 
 파일마다 한꺼번에 알립니다.
-- 파일명이 yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이고 종류가 기록 종류인지
+- 파일명이 yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식인지. 종류는 영문 소문자로 시작하고 영문 소문자, 숫자, _ 로만
+  이루어진 1~32자입니다 (other 는 가져온 문서 전용)
+- .agb.json 에 new 가 있으면 그 종류의 서식(new.template 의 {kind} 를 종류로 바꾼 파일)이 있는지. 저장소가
+  쓰는 종류는 서식이 있는 종류입니다
 - 닫힌 프런트매터가 있고 kind 가 파일명의 종류와 같으며 title 이 있는지
 - 서식(.agb.json 의 new.template)의 프런트매터 키가 모두 있고 값이 자리표시자(<...>)가 아닌지
 - 서식의 ## 절이 같은 순서로 모두 있는지 (다른 절을 더해도 됩니다)
@@ -247,7 +265,8 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 - 코드 블록과 인라인 코드 밖에 <왜 필요했는지> 같은 자리표시자가 남지 않았는지
 - supersedes, related, issue 가 가리키는 문서와 이슈가 서버에 있는지 (저장소에서 아직 올리지 않은 문서는 있는
   것으로 봅니다)
-서식을 읽지 못하면 키와 ## 절 검사는 건너뛰고 그렇다고 알립니다. 서버에 접속하지 못하면 참조 검사는
+서식을 읽지 못하면 키와 ## 절 검사는 건너뛰고 그렇다고 알립니다. .agb.json 에 new 가 없으면 서식이 없다고
+한 번 알립니다. 서버에 접속하지 못하면 참조 검사는
 건너뛰고 그렇다고 알립니다.
 
 결과를 파이프에는 JSON(checked, files, notes)으로, 터미널에는 파일 이름과 문제 목록으로 출력합니다.
@@ -285,7 +304,7 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 				}
 			}
 		}
-		templates := &templateReader{root: root, cfg: cfg, cache: map[model.DocumentKind]*string{}, res: res}
+		templates := &templateReader{root: root, cfg: cfg, cache: map[model.DocumentKind]kindTemplate{}, res: res}
 		var refs *refChecker
 		var refErr error
 		for _, p := range paths {

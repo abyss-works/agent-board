@@ -100,7 +100,7 @@ func (c *repoConfig) validate() error {
 		if r.Kind != "" {
 			kind, ok := model.ParseDocumentKind(r.Kind)
 			if !ok {
-				return fmt.Errorf("%s.kind: 문서 종류가 아닙니다: %q", field, r.Kind)
+				return fmt.Errorf("%s.kind: 종류는 %s여야 합니다: %q", field, model.DocumentKindFormat, r.Kind)
 			}
 			if kind == model.DocumentOther && !r.Imported {
 				return fmt.Errorf("%s.kind: other는 imported 규칙에만 쓸 수 있습니다.", field)
