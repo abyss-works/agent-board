@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -209,13 +210,30 @@ const Usage = `사용법: agb <명령> [옵션]
 
 공통 옵션 (명령 앞뒤 어디에나):
   --json            JSON 출력 (서버 응답 그대로). 기본: 파이프·파일일 때
-  --fields <a,b>    JSON 출력에서 이 필드만 남김. 목록은 항목마다 남김. JSON 출력을 강제
+  --fields <a,b>    이 필드만 남김. 점 경로(files.name)로 중첩 값을 고름. 목록은 항목마다. JSON 출력을 강제
+  --text            --fields 와 함께. 항목마다 한 줄, 필드는 탭으로 구분 (아래 "--fields 와 --text")
   --table           표 출력. 기본: 터미널일 때
   --url <주소>      서버 주소 (AGB_URL, 설정 파일보다 우선)
   --actor <ID>      행위자 (AGB_ACTOR)
   --session-id <ID> 세션 ID (AGB_SESSION_ID). 기본 cli-YYYYMMDD
   --client-host <H> 기기 이름 (AGB_CLIENT_HOST). 기본 호스트 이름
   --config <경로>   설정 파일 경로
+
+--fields 와 --text (JSON 을 스크립트로 가공하지 않고 옵션으로 고릅니다):
+  --fields a,b      JSON 객체에서 이 키만 남깁니다. 없는 키는 건너뜁니다. 목록 응답(items)은 항목마다 남기고 total 등은 그대로 둡니다.
+                    a.b 는 중첩 객체 a 의 b 입니다. 배열을 만나면 원소마다 적용합니다 (files.name -> {"files":[{"name":..}]}).
+  --text            JSON 대신 텍스트로 출력합니다. --fields 가 필요합니다 (없으면 사용법 오류).
+                    줄 하나가 행 하나, 필드는 탭으로 구분, 머리글은 없습니다.
+                    행: 목록 응답은 items 의 항목, 그 밖에는 모든 경로가 같은 배열 a 로 시작하면(a.x,a.y) a 의 원소, 아니면 응답 전체 한 줄.
+                    값: 문자열은 그대로, 숫자·true·false 는 JSON 글자 그대로, null 과 없는 필드는 빈 칸(열이 밀리지 않음),
+                    배열·객체는 한 줄 JSON. 한 줄에 필드가 둘 이상이면 문자열의 역슬래시, 탭, 줄바꿈을 \\, \t, \n 으로 바꿉니다.
+                    행이 하나이고 필드도 하나면 바꾸지 않고 그대로 출력합니다. 값이 배열이면 원소마다 한 줄입니다.
+  예: agb issue list -p AGB --fields key,status,title --text      키, 상태, 제목을 한 줄씩
+      agb issue get AGB-1 --fields body --text                    본문 원문
+      agb issue activity AGB-1 --fields actor,at,body --text      댓글 작성자, 시각, 본문
+      agb doc sync --fields uploaded,conflicts,rejected --text    올린 것, 충돌, 거절
+      agb doc check --fields files.name,files.problems --text     문제 있는 파일과 문제 (종료 코드는 그대로)
+  doc sync, doc check, recall 도 두 옵션을 따르고, 옵션이 없으면 출력은 전과 같습니다.
 
 우선순위: 옵션 > 환경변수 > 설정 파일. 토큰은 옵션으로 받지 않습니다.
 토큰 선택: 설정 파일의 행위자별 토큰(agb login) > AGB_TOKEN > 설정 파일의 공용 토큰.
@@ -469,16 +487,11 @@ func (a *App) wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// emit writes the response: the body verbatim in JSON mode, otherwise
-// through render.
+// emit writes the response: the chosen fields with --fields, the body
+// verbatim in JSON mode, otherwise through render.
 func (a *App) emit(g *globals, resp *client.Response, render func(w io.Writer, resp *client.Response) error) error {
 	if g.fields != "" {
-		body, err := selectFields(resp.Body, strings.Split(g.fields, ","))
-		if err != nil {
-			return err
-		}
-		writeJSON(a.Stdout, body)
-		return nil
+		return a.emitFields(g, resp.Body)
 	}
 	if a.jsonOutput(g) {
 		writeJSON(a.Stdout, resp.Body)
@@ -487,16 +500,64 @@ func (a *App) emit(g *globals, resp *client.Response, render func(w io.Writer, r
 	return render(a.Stdout, resp)
 }
 
+// emitFields writes the fields --fields names: lines of text with --text,
+// otherwise JSON.
+func (a *App) emitFields(g *globals, body []byte) error {
+	if g.text {
+		text, err := textLines(body, g.fields)
+		if err != nil {
+			return err
+		}
+		io.WriteString(a.Stdout, text)
+		return nil
+	}
+	picked, err := selectFields(body, g.fields)
+	if err != nil {
+		return err
+	}
+	writeJSON(a.Stdout, picked)
+	return nil
+}
+
+// emitValue is emit for a result the CLI builds itself: v stands for the
+// response body.
+func (a *App) emitValue(g *globals, v any, render func(w io.Writer)) error {
+	if g.fields != "" || a.jsonOutput(g) {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(v); err != nil {
+			return err
+		}
+		if g.fields != "" {
+			return a.emitFields(g, buf.Bytes())
+		}
+		a.Stdout.Write(buf.Bytes())
+		return nil
+	}
+	render(a.Stdout)
+	return nil
+}
+
 // emitMany writes several responses: a JSON array of the bodies in JSON
-// mode, otherwise each rendered in turn with a blank line between.
+// mode, otherwise each rendered in turn with a blank line between. With
+// --text the lines of each response follow one another.
 func (a *App) emitMany(g *globals, resps []*client.Response, render func(w io.Writer, resp *client.Response) error) error {
+	if g.text {
+		for _, r := range resps {
+			if err := a.emitFields(g, r.Body); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if g.fields != "" || a.jsonOutput(g) {
 		parts := make([]string, len(resps))
 		for n, r := range resps {
 			body := r.Body
 			if g.fields != "" {
 				var err error
-				if body, err = selectFields(body, strings.Split(g.fields, ",")); err != nil {
+				if body, err = selectFields(body, g.fields); err != nil {
 					return err
 				}
 			}
@@ -514,51 +575,6 @@ func (a *App) emitMany(g *globals, resps []*client.Response, render func(w io.Wr
 		}
 	}
 	return nil
-}
-
-// selectFields keeps only the named top-level fields of a JSON object, or
-// of each object in its items list for list responses, in the given order.
-func selectFields(body []byte, names []string) ([]byte, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil {
-		return nil, fmt.Errorf("--fields 는 JSON 객체 응답에만 씁니다: %w", err)
-	}
-	pick := func(o map[string]json.RawMessage) []byte {
-		var b strings.Builder
-		b.WriteString("{")
-		n := 0
-		for _, name := range names {
-			name = strings.TrimSpace(name)
-			v, ok := o[name]
-			if !ok {
-				continue
-			}
-			if n > 0 {
-				b.WriteString(",")
-			}
-			k, _ := json.Marshal(name)
-			b.Write(k)
-			b.WriteString(":")
-			b.Write(v)
-			n++
-		}
-		b.WriteString("}")
-		return []byte(b.String())
-	}
-	raw, ok := obj["items"]
-	if !ok {
-		return pick(obj), nil
-	}
-	var items []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return pick(obj), nil
-	}
-	picked := make([]json.RawMessage, len(items))
-	for n, it := range items {
-		picked[n] = pick(it)
-	}
-	obj["items"], _ = json.Marshal(picked)
-	return json.Marshal(obj)
 }
 
 // leafFlags builds a leaf command's flag set with the global flags added.

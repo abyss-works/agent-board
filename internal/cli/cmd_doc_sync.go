@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -251,13 +250,11 @@ func shortSHA(sha string) string {
 
 // printDocSync writes the result of a sync: JSON in a pipe, otherwise the
 // counts and the names of each category.
-func (a *App) printDocSync(g *globals, r *docSyncResult) {
-	if a.jsonOutput(g) {
-		enc := json.NewEncoder(a.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.Encode(r)
-		return
-	}
+func (a *App) printDocSync(g *globals, r *docSyncResult) error {
+	return a.emitValue(g, r, func(io.Writer) { a.renderDocSync(r) })
+}
+
+func (a *App) renderDocSync(r *docSyncResult) {
 	summary := fmt.Sprintf("uploaded %d, unchanged %d, conflicts %d", len(r.Uploaded), len(r.Unchanged), len(r.Conflicts))
 	if len(r.Skipped) > 0 {
 		summary += fmt.Sprintf(", skipped %d", len(r.Skipped))
@@ -359,6 +356,7 @@ follow_up_headings 에 적은 제목의 ## 절이 있는 새 문서(가져온 �
 
 결과를 파이프에는 JSON(uploaded, unchanged, conflicts, skipped, rejected, warnings, follow_ups)으로,
 터미널에는 개수와 이름으로 출력합니다. conflicts 나 rejected 가 있으면 출력한 뒤 종료 코드 1로 끝납니다.
+--fields, --text 를 따릅니다. 예: --fields uploaded,conflicts,rejected --text (한 줄, 필드는 탭, 값은 한 줄 JSON).
 
 옵션:
   --project, -p <KEY>     프로젝트 키. 없으면 .agb.json 의 project
@@ -405,7 +403,9 @@ follow_up_headings 에 적은 제목의 ## 절이 있는 새 문서(가져온 �
 		res := newDocSyncResult()
 		res.Skipped = append(res.Skipped, skipped...)
 		syncErr := syncDocFiles(ctx, c, project, files, server, cfg.FollowUpHeadings, res)
-		a.printDocSync(g, res)
+		if err := a.printDocSync(g, res); err != nil {
+			return err
+		}
 		if syncErr != nil {
 			return syncErr
 		}
