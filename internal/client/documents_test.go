@@ -110,8 +110,9 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 	if err != nil || resp.Status != 201 || resp.Decode(&d) != nil || d.Name != name || d.Title == nil || *d.Title != "우선순위 큐 모델" || d.Content != nil {
 		t.Fatalf("put = %+v, %v", resp, err)
 	}
+	// A location of a v0.8.x client with the same content changes nothing.
 	if resp, err = c.PutDocument(ctx, "AGB", name, "archive", content); err != nil || resp.Status != 200 {
-		t.Fatalf("move = %+v, %v", resp, err)
+		t.Fatalf("location only = %+v, %v", resp, err)
 	}
 
 	// Other content: the error carries the hash of the stored content.
@@ -124,7 +125,7 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 
 	resp, err = c.GetDocument(ctx, "AGB", name)
 	var full model.Document
-	if err != nil || resp.Decode(&full) != nil || full.Content == nil || *full.Content != content || full.Location != model.LocationArchive {
+	if err != nil || resp.Decode(&full) != nil || full.Content == nil || *full.Content != content || full.Location != model.LocationHistory {
 		t.Fatalf("get = %+v, %v", full, err)
 	}
 	resp, err = c.ListDocuments(ctx, "AGB", Page{Limit: 500})
@@ -136,7 +137,7 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 	if err != nil || resp.Decode(&list) != nil || list.Total != 1 || len(list.Items) != 1 || list.Limit != 500 || list.Items[0].SHA256 != d.SHA256 || list.Items[0].Content != nil {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
-	resp, err = c.SearchDocuments(ctx, DocumentFilter{Query: "우선순위", Project: "AGB", Kind: "decision", Location: "archive"})
+	resp, err = c.SearchDocuments(ctx, DocumentFilter{Query: "우선순위", Project: "AGB", Kind: "decision", State: "all"})
 	var found struct {
 		Items []model.Document `json:"items"`
 	}

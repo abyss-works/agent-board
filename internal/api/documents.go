@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -22,9 +23,9 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	// Nulls are left at their zero value so that validation reports them.
-	var in store.DocumentInput
-	if _, _, aerr := field(b, "location", &in.Location); aerr != nil {
+	in := store.DocumentInput{LocationOnly: true}
+	var location string
+	if _, _, aerr := field(b, "location", &location); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
@@ -33,6 +34,14 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, name := r.PathValue("key"), r.PathValue("name")
+	if location != "" {
+		loc, ok := model.ParseDocumentLocation(location)
+		if !ok {
+			writeError(w, validationFailed([]Detail{{Field: "location", Message: "history, archive, legacy 중 하나여야 합니다."}}))
+			return
+		}
+		in.Args.ApplyLocation(name, loc)
+	}
 	d, created, err := h.store.PutDocument(r.Context(), TraceFrom(r.Context()), project, name, in)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
@@ -77,11 +86,13 @@ func (h *handler) listDocuments(w http.ResponseWriter, r *http.Request) {
 func (h *handler) searchDocuments(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
 	f := store.DocumentFilter{
-		Query:     q.one("q"),
-		Projects:  q.csv("project"),
-		Kinds:     parseEnumList(q, "kind", model.ParseDocumentKind),
-		Locations: parseEnumList(q, "location", model.ParseDocumentLocation),
+		Query:    q.one("q"),
+		Projects: q.csv("project"),
+		Kinds:    parseEnumList(q, "kind", model.ParseDocumentKind),
+		States:   parseStates(q),
+		Imported: parseBool(q, "imported"),
 	}
+	rejectLocation(q)
 	for _, p := range f.Projects {
 		if !model.ValidProjectKey(p) {
 			q.add("project", "프로젝트 키 형식이 아닙니다.")
@@ -101,4 +112,49 @@ func (h *handler) searchDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+}
+
+// parseStates reads the state filter of a document search: current when none is
+// given, and no filter, which is every state, for all.
+func parseStates(q *query) []model.DocumentState {
+	values := q.csv("state")
+	if len(values) == 0 {
+		return []model.DocumentState{model.StateCurrent}
+	}
+	var out []model.DocumentState
+	for _, v := range values {
+		if v == "all" {
+			return nil
+		}
+		state, ok := model.ParseDocumentState(v)
+		if !ok {
+			q.add("state", fmt.Sprintf("%q는 허용되지 않는 값입니다. current, superseded, archived, all 중 하나여야 합니다.", v))
+			continue
+		}
+		out = append(out, state)
+	}
+	return out
+}
+
+// parseBool reads an optional true or false parameter.
+func parseBool(q *query, name string) *bool {
+	v := q.one(name)
+	switch v {
+	case "":
+		return nil
+	case "true", "false":
+		b := v == "true"
+		return &b
+	}
+	q.add(name, "true 또는 false여야 합니다.")
+	return nil
+}
+
+// rejectLocation refuses the location filter, which the state and imported
+// filters replaced.
+func rejectLocation(q *query) {
+	if _, ok := q.values["location"]; ok {
+		q.seen["location"] = true
+		q.add("location", "location은 없어졌습니다. 상태는 state, 가져온 문서는 imported를 쓰세요.")
+	}
 }

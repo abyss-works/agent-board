@@ -95,7 +95,7 @@ func TestRunOnceIndexesAndSkipsWhatIsCurrent(t *testing.T) {
 	if _, err := st.AddComment(ctx, claude, i.Key, "ccc", str("요약"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.PutDocument(ctx, claude, "AGB", "2026-11-01-0900-report-x.md", store.DocumentInput{Location: "history", Content: "---\nkind: report\n---\n\nbbbb"}); err != nil {
+	if _, _, err := st.PutDocument(ctx, claude, "AGB", "2026-11-01-0900-report-x.md", store.DocumentInput{Content: "---\nkind: report\ntitle: t\n---\n\nbbbb"}); err != nil {
 		t.Fatal(err)
 	}
 

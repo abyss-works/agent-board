@@ -1,9 +1,7 @@
 package model
 
 import (
-	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -23,6 +21,18 @@ func TestDocumentEnums(t *testing.T) {
 		if _, ok := ParseDocumentKind(v); ok {
 			t.Errorf("ParseDocumentKind(%q) must fail", v)
 		}
+	}
+	if want := []DocumentState{StateCurrent, StateSuperseded, StateArchived}; !reflect.DeepEqual(DocumentStates, want) {
+		t.Fatalf("DocumentStates = %v, want %v", DocumentStates, want)
+	}
+	if got, ok := ParseDocumentState("superseded"); !ok || got != StateSuperseded {
+		t.Errorf("ParseDocumentState(superseded) = %q, %v", got, ok)
+	}
+	if _, ok := ParseDocumentState("all"); ok {
+		t.Error("all is a filter, not a state")
+	}
+	if got, ok := ParseRelationKind("about"); !ok || got != RelAbout {
+		t.Errorf("ParseRelationKind(about) = %q, %v", got, ok)
 	}
 	for _, v := range []string{"history", "archive", "legacy"} {
 		if got, ok := ParseDocumentLocation(v); !ok || string(got) != v {
@@ -122,170 +132,137 @@ func TestParseLegacyName(t *testing.T) {
 	}
 }
 
-func TestValidateLegacyDocument(t *testing.T) {
-	cases := []struct {
-		name, content string
-		kind          string
-		date, title   string
-	}{
-		{"decisions/2026-10-17-14-30-scope.md", "# 범위 결정\n\n본문", "decision", "2026-10-17 14:30", "범위 결정"},
-		{"decisions/2026-10-17-1430-scope.md", "\xef\xbb\xbf# 범위\n", "decision", "2026-10-17 14:30", "범위"},
-		{"reports/2026-10-12-src-structure.md", "본문만", "report", "2026-10-12", ""},
-		{"incidents/save-loss.md", "---\nkind: report\ndate: 2026-09-01 10:00\ntitle: 저장 손실\n---\n# 다른 제목", "incident", "2026-09-01 10:00", "저장 손실"},
-		{"archive/2026-06-x/notes.md", "---\nkind: report\n---\n# 조사", "report", "", "조사"},
-		{"archive/2026-06-x/notes.md", "---\nkind: plan\n---\n", "other", "", ""},
-		{"archive/2026-06-x/notes.md", "---\nkind: other\n---\n", "other", "", ""},
-		{"archive/2026-06-x/notes.md", "---\ntitle: 닫히지 않음\n# 제목", "other", "", "제목"},
-	}
-	str := func(s *string) string {
-		if s == nil {
-			return ""
-		}
-		return *s
-	}
-	for _, c := range cases {
-		meta, err := ValidateDocument(c.name, "legacy", c.content)
-		if err != nil {
-			t.Errorf("ValidateDocument(%q) = %v", c.name, err)
-			continue
-		}
-		if meta.Kind != c.kind || str(meta.Date) != c.date || str(meta.Title) != c.title || meta.Tags == nil {
-			t.Errorf("ValidateDocument(%q) = %+v (date %q, title %q), want kind %s, date %q, title %q", c.name, meta, str(meta.Date), str(meta.Title), c.kind, c.date, c.title)
-		}
-	}
-	for _, bad := range []struct{ name, location string }{
-		{"decisions/x.md", "history"},
-		{"2026-10-20-1544-decision-x.md", "legacy"},
-		{"draft/x.md", "legacy"},
-	} {
-		if _, err := ValidateDocument(bad.name, bad.location, "---\nkind: decision\n---\n"); err == nil {
-			t.Errorf("ValidateDocument(%q, %q) must fail", bad.name, bad.location)
-		}
-	}
-	if _, err := ValidateDocument("decisions/x.md", "legacy", strings.Repeat("a", MaxDocumentBytes+1)); err == nil {
-		t.Error("an oversized legacy document must fail")
-	}
-}
-
 func TestParseFrontMatter(t *testing.T) {
 	text := func(s string) *string { return &s }
 	cases := []struct {
 		name    string
 		content string
-		want    DocumentMeta
+		want    FrontMatter
 		ok      bool
 	}{
 		{
 			"a record document",
 			"---\nkind: decision\ndate: 2026-10-20 15:44\nproject: agent-board\ntitle: 우선순위 큐 모델은 등급과 서버 계산 순서로 한다\ntags: [priority, queue, issue-lifecycle]\nauthor: claude\nstatus: 채택\nsupersedes: none\nissue: AGB-40\n---\n\n# 본문\n",
-			DocumentMeta{Kind: "decision", Date: text("2026-10-20 15:44"), Title: text("우선순위 큐 모델은 등급과 서버 계산 순서로 한다"), Tags: []string{"priority", "queue", "issue-lifecycle"}},
+			FrontMatter{Kind: "decision", Date: text("2026-10-20 15:44"), Title: text("우선순위 큐 모델은 등급과 서버 계산 순서로 한다"), Tags: []string{"priority", "queue", "issue-lifecycle"}, Supersedes: []string{"none"}, Issues: []string{"AGB-40"}},
 			true,
 		},
 		{
 			"CRLF line endings",
 			"---\r\nkind: report\r\ndate: 2026-10-19 17:00\r\ntitle: 비교\r\ntags: [a, b]\r\n---\r\n본문\r\n",
-			DocumentMeta{Kind: "report", Date: text("2026-10-19 17:00"), Title: text("비교"), Tags: []string{"a", "b"}},
+			FrontMatter{Kind: "report", Date: text("2026-10-19 17:00"), Title: text("비교"), Tags: []string{"a", "b"}},
 			true,
 		},
 		{
 			"date, title and tags absent",
 			"---\nkind: incident\n---\n본문",
-			DocumentMeta{Kind: "incident", Tags: []string{}},
+			FrontMatter{Kind: "incident", Tags: nil},
 			true,
 		},
 		{
 			"empty values are absent",
 			"---\nkind: incident\ndate:\ntitle:   \ntags:\n---\n",
-			DocumentMeta{Kind: "incident", Tags: []string{}},
+			FrontMatter{Kind: "incident", Tags: []string{}},
 			true,
 		},
 		{
 			"an empty block",
 			"---\n---\n본문",
-			DocumentMeta{Tags: []string{}},
+			FrontMatter{Tags: nil},
 			true,
 		},
 		{
 			"closing line without a final newline",
 			"---\nkind: report\n---",
-			DocumentMeta{Kind: "report", Tags: []string{}},
+			FrontMatter{Kind: "report", Tags: nil},
 			true,
 		},
 		{
 			"trailing spaces on the delimiters",
 			"---  \nkind: report\n---\t\n본문",
-			DocumentMeta{Kind: "report", Tags: []string{}},
+			FrontMatter{Kind: "report", Tags: nil},
 			true,
 		},
 		{
 			"double quoted values",
 			"---\nkind: \"decision\"\ndate: \"2026-10-20 15:44\"\ntitle: \"큐: \\\"등급\\\" 모델\"\ntags: [\"a\", \"b c\"]\n---\n",
-			DocumentMeta{Kind: "decision", Date: text("2026-10-20 15:44"), Title: text(`큐: "등급" 모델`), Tags: []string{"a", "b c"}},
+			FrontMatter{Kind: "decision", Date: text("2026-10-20 15:44"), Title: text(`큐: "등급" 모델`), Tags: []string{"a", "b c"}},
 			true,
 		},
 		{
 			"single quoted values",
 			"---\nkind: 'decision'\ntitle: 'it''s a title'\ntags: ['x', y]\n---\n",
-			DocumentMeta{Kind: "decision", Title: text("it's a title"), Tags: []string{"x", "y"}},
+			FrontMatter{Kind: "decision", Title: text("it's a title"), Tags: []string{"x", "y"}},
 			true,
 		},
 		{
 			"a colon inside a plain value",
 			"---\nkind: decision\ntitle: 질문: 답변\ndate: 2026-10-20 15:44\n---\n",
-			DocumentMeta{Kind: "decision", Date: text("2026-10-20 15:44"), Title: text("질문: 답변"), Tags: []string{}},
+			FrontMatter{Kind: "decision", Date: text("2026-10-20 15:44"), Title: text("질문: 답변"), Tags: nil},
 			true,
 		},
 		{
 			"comments and blank lines in the block",
 			"---\n# 주석\nkind: report # 종류\n\ntitle: C# 언어 # 설명\ntags: [a, b] # 목록\n---\n",
-			DocumentMeta{Kind: "report", Title: text("C# 언어"), Tags: []string{"a", "b"}},
+			FrontMatter{Kind: "report", Title: text("C# 언어"), Tags: []string{"a", "b"}},
 			true,
 		},
 		{
 			"tags that are not a flow list are ignored",
 			"---\nkind: report\ntags: a, b\n---\n",
-			DocumentMeta{Kind: "report", Tags: []string{}},
+			FrontMatter{Kind: "report", Tags: []string{}},
 			true,
 		},
 		{
 			"a block list of tags is not read",
 			"---\nkind: report\ntags:\n  - a\n  - b\ntitle: 제목\n---\n",
-			DocumentMeta{Kind: "report", Title: text("제목"), Tags: []string{}},
+			FrontMatter{Kind: "report", Title: text("제목"), Tags: []string{}},
 			true,
 		},
 		{
 			"empty flow list and empty items",
 			"---\nkind: report\ntags: [ a ,, b , ]\n---\n",
-			DocumentMeta{Kind: "report", Tags: []string{"a", "b"}},
+			FrontMatter{Kind: "report", Tags: []string{"a", "b"}},
 			true,
 		},
 		{
 			"an empty flow list",
 			"---\nkind: report\ntags: []\n---\n",
-			DocumentMeta{Kind: "report", Tags: []string{}},
+			FrontMatter{Kind: "report", Tags: []string{}},
 			true,
 		},
 		{
 			"indented lines belong to the key above",
 			"---\nkind: report\nscope: 첫 줄\n  이어지는 줄: 값\ntitle: 제목\n---\n",
-			DocumentMeta{Kind: "report", Title: text("제목"), Tags: []string{}},
+			FrontMatter{Kind: "report", Title: text("제목"), Tags: nil},
 			true,
 		},
 		{
 			"a later --- in the body is not the block",
 			"---\nkind: report\n---\n본문\n---\ntitle: 아님\n---\n",
-			DocumentMeta{Kind: "report", Tags: []string{}},
+			FrontMatter{Kind: "report", Tags: nil},
 			true,
 		},
-		{"no block", "# 제목\n\n본문", DocumentMeta{}, false},
-		{"empty content", "", DocumentMeta{}, false},
-		{"only the opening line", "---", DocumentMeta{}, false},
-		{"opening line and no close", "---\nkind: report\ntitle: 제목\n", DocumentMeta{}, false},
-		{"text before the block", "서문\n---\nkind: report\n---\n", DocumentMeta{}, false},
-		{"blank line before the block", "\n---\nkind: report\n---\n", DocumentMeta{}, false},
-		{"byte order mark before the block", "\ufeff---\nkind: report\n---\n", DocumentMeta{}, false},
-		{"four dashes", "----\nkind: report\n----\n", DocumentMeta{}, false},
-		{"dashes with text", "--- yaml\nkind: report\n---\n", DocumentMeta{}, false},
+		{
+			"relations and issues",
+			"---\nkind: decision\nsupersedes: 2026-11-05-1333-report-x.md의 결론 중 \"y\"\nrelated: [a.md, 'decisions/b.md']\nissue: AGB-32\nissues: [HAM-4, AGB-50]\n---\n",
+			FrontMatter{Kind: "decision", Supersedes: []string{"2026-11-05-1333-report-x.md의 결론 중 \"y\""}, Related: []string{"a.md", "decisions/b.md"}, Issues: []string{"AGB-32", "HAM-4", "AGB-50"}},
+			true,
+		},
+		{
+			"empty relation values are empty lists",
+			"---\nsupersedes:\nrelated: []\nissue:\n---\n",
+			FrontMatter{Supersedes: []string{}, Related: []string{}, Issues: []string{}},
+			true,
+		},
+		{"no block", "# 제목\n\n본문", FrontMatter{}, false},
+		{"empty content", "", FrontMatter{}, false},
+		{"only the opening line", "---", FrontMatter{}, false},
+		{"opening line and no close", "---\nkind: report\ntitle: 제목\n", FrontMatter{}, false},
+		{"text before the block", "서문\n---\nkind: report\n---\n", FrontMatter{}, false},
+		{"blank line before the block", "\n---\nkind: report\n---\n", FrontMatter{}, false},
+		{"byte order mark before the block", "\ufeff---\nkind: report\n---\n", FrontMatter{}, false},
+		{"four dashes", "----\nkind: report\n----\n", FrontMatter{}, false},
+		{"dashes with text", "--- yaml\nkind: report\n---\n", FrontMatter{}, false},
 	}
 	for _, c := range cases {
 		got, ok := ParseFrontMatter(c.content)
@@ -323,145 +300,6 @@ func violationFields(t *testing.T, err error) []string {
 		out = append(out, f.Field)
 	}
 	return out
-}
-
-func TestValidateDocument(t *testing.T) {
-	const name = "2026-10-20-1544-decision-priority-model.md"
-	front := func(kind string) string { return "---\nkind: " + kind + "\ntitle: 제목\n---\n본문\n" }
-	cases := []struct {
-		label, name, location, content string
-		want                           []string // field of each violation, in order
-	}{
-		{"valid in history", name, "history", front("decision"), nil},
-		{"valid in archive", name, "archive", front("decision"), nil},
-		{"bad name", "priority-model.md", "history", front("decision"), []string{"name"}},
-		{"name of another kind than the front matter", "2026-10-20-1544-report-x.md", "history", front("decision"), []string{"content"}},
-		{"unknown location", name, "draft", front("decision"), []string{"location"}},
-		{"empty location", name, "", front("decision"), []string{"location"}},
-		{"empty content", name, "history", "", []string{"content"}},
-		{"no front matter", name, "history", "# 제목\n본문", []string{"content"}},
-		{"unclosed front matter", name, "history", "---\nkind: decision\n", []string{"content"}},
-		{"front matter without kind", name, "history", "---\ntitle: 제목\n---\n", []string{"content"}},
-		{"front matter kind of another document", name, "history", front("report"), []string{"content"}},
-		{"front matter kind is not a known kind", name, "history", front("plan"), []string{"content"}},
-		{"every violation at once", "x.md", "tmp", "본문", []string{"name", "location", "content"}},
-		{"bad name, and the kind cannot be compared", "x.md", "history", front("decision"), []string{"name"}},
-	}
-	for _, c := range cases {
-		_, err := ValidateDocument(c.name, c.location, c.content)
-		if got := violationFields(t, err); !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s: violations = %v (%v), want %v", c.label, got, err, c.want)
-		}
-	}
-
-	// The metadata comes back with a valid document.
-	meta, err := ValidateDocument(name, "history", "---\nkind: decision\ndate: 2026-10-20 15:44\ntitle: 제목\ntags: [a, b]\n---\n")
-	if err != nil || meta.Kind != "decision" || meta.Date == nil || *meta.Date != "2026-10-20 15:44" || meta.Title == nil || *meta.Title != "제목" || !reflect.DeepEqual(meta.Tags, []string{"a", "b"}) {
-		t.Errorf("meta = %+v, %v", meta, err)
-	}
-}
-
-func TestValidateDocumentSize(t *testing.T) {
-	const name = "2026-10-20-1544-report-big.md"
-	head := "---\nkind: report\n---\n"
-	pad := func(n int, unit string) string { return strings.Repeat(unit, n) }
-	if MaxDocumentBytes != 262144 {
-		t.Fatalf("MaxDocumentBytes = %d, want 262144", MaxDocumentBytes)
-	}
-	for label, c := range map[string]struct {
-		content string
-		ok      bool
-	}{
-		"exactly the limit":      {head + pad(MaxDocumentBytes-len(head), "a"), true},
-		"one byte over":          {head + pad(MaxDocumentBytes-len(head)+1, "a"), false},
-		"bytes, not characters":  {head + pad((MaxDocumentBytes-len(head))/3+1, "가"), false},
-		"multibyte under limit":  {head + pad((MaxDocumentBytes-len(head))/3, "가"), true},
-		"a large oversize body ": {head + pad(2*MaxDocumentBytes, "a"), false},
-	} {
-		_, err := ValidateDocument(name, "history", c.content)
-		got := violationFields(t, err)
-		if c.ok && got != nil || !c.ok && !reflect.DeepEqual(got, []string{"content"}) {
-			t.Errorf("%s: violations = %v", label, got)
-		}
-	}
-}
-
-func TestDocumentJSON(t *testing.T) {
-	at, err := ParseTime("2026-10-21T02:00:00.000Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	date, title := "2026-10-20 15:44", "우선순위 큐 모델은 등급과 서버 계산 순서로 한다"
-	d := Document{
-		Project: "AGB", Name: "2026-10-20-1544-decision-priority-model.md", Location: LocationHistory, Kind: DocumentDecision,
-		Date: &date, Title: &title, Tags: []string{"priority", "queue"}, SHA256: "9f2c", Size: 6120,
-		CreatedAt: at, CreatedBy: "claude", UpdatedAt: at, UpdatedBy: "claude",
-	}
-	b, err := json.Marshal(d)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `{"project":"AGB","name":"2026-10-20-1544-decision-priority-model.md","location":"history","kind":"decision","date":"2026-10-20 15:44",` +
-		`"title":"우선순위 큐 모델은 등급과 서버 계산 순서로 한다","tags":["priority","queue"],"sha256":"9f2c","size":6120,` +
-		`"created_at":"2026-10-21T02:00:00.000Z","created_by":"claude","updated_at":"2026-10-21T02:00:00.000Z","updated_by":"claude"}`
-	if string(b) != want {
-		t.Errorf("document JSON =\n%s\nwant\n%s", b, want)
-	}
-
-	// The content sits between size and created_at; a snippet closes the object.
-	content, snippet := "---\nkind: decision\n---\n", "[우선순위] 큐"
-	d.Content, d.Snippet = &content, &snippet
-	b, _ = json.Marshal(d)
-	for _, w := range []string{`"size":6120,"content":"---\nkind: decision\n---\n","created_at"`, `"updated_by":"claude","snippet":"[우선순위] 큐"}`} {
-		if !strings.Contains(string(b), w) {
-			t.Errorf("JSON lacks %s: %s", w, b)
-		}
-	}
-
-	// A document without front matter fields shows null date and title.
-	b, _ = json.Marshal(Document{Tags: []string{}})
-	if !strings.Contains(string(b), `"date":null,"title":null,"tags":[]`) {
-		t.Errorf("empty metadata JSON = %s", b)
-	}
-}
-
-func TestValidateDocumentRefusesTemplateRemnants(t *testing.T) {
-	const name = "2026-10-20-1544-decision-priority-model.md"
-	doc := func(front, body string) string { return "---\nkind: decision\n" + front + "---\n" + body }
-	guide := "<!-- 파일명: history/yyyy-mm-dd-HHMM-decision-<slug>.md. 이 주석은 지운다. -->"
-	cases := []struct {
-		label, content string
-		want           []string
-	}{
-		{"filled", doc("date: 2026-10-20 15:44\ntitle: 제목\ntags: [a, b]\nstatus: 채택\n", "본문\n"), nil},
-		{"guidance comment", doc("", "# 제목\n\n"+guide+"\n"), []string{"content"}},
-		{"guidance comment on several lines", doc("", "<!--\n파일명: x\n-->\n"), []string{"content"}},
-		{"comment that says to delete it", doc("", "<!-- 이 주석은 지운다 -->\n"), []string{"content"}},
-		{"another comment is fine", doc("", "<!-- 메모 -->\n"), nil},
-		{"placeholder date", doc("date: <yyyy-mm-dd HH:MM>\n", "본문\n"), []string{"content"}},
-		{"placeholder title", doc("title: <문서 제목>\n", "본문\n"), []string{"content"}},
-		{"quoted placeholder", doc("title: \"<문서 제목>\"\n", "본문\n"), []string{"content"}},
-		{"placeholder tags", doc("tags: [<주제어>, <주제어>]\n", "본문\n"), []string{"content"}},
-		{"placeholder in another key", doc("status: <채택 | 기각 | 보류>\n", "본문\n"), []string{"content"}},
-		{"remnants of both kinds, reported at once", doc("title: <문서 제목>\n", guide+"\n"), []string{"content", "content"}},
-		{"angle text that is not the whole value", doc("title: <T> 제네릭\ntags: [a, <b>c]\n", "본문\n"), nil},
-		{"empty value", doc("supersedes:\n", "본문\n"), nil},
-		{"placeholder in the body is left to the CLI", doc("", "<왜 필요했는지>\n"), nil},
-	}
-	for _, c := range cases {
-		_, err := ValidateDocument(name, "history", c.content)
-		if got := violationFields(t, err); !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s: violations = %v (%v), want %v", c.label, got, err, c.want)
-		}
-	}
-	// A legacy document keeps its rules.
-	if _, err := ValidateDocument("decisions/x.md", "legacy", doc("title: <문서 제목>\n", guide)); err != nil {
-		t.Errorf("legacy: %v", err)
-	}
-	// The archive is checked like the history.
-	if _, err := ValidateDocument(name, "archive", doc("", guide)); err == nil {
-		t.Error("archive must refuse the guidance comment")
-	}
 }
 
 func TestIsPlaceholder(t *testing.T) {

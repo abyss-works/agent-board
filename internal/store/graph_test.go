@@ -24,15 +24,15 @@ func TestGraph(t *testing.T) {
 		dNew = "2026-10-21-1544-decision-new.md"
 		dRel = "2026-10-22-1544-report-rel.md"
 	)
-	putDoc(t, s, trClaude, "AGB", dOld, "history", docText("decision", "옛 결정"))
-	putDoc(t, s, trClaude, "AGB", dNew, "history", docText("decision", "새 결정", "issue: AGB-1", "supersedes: "+dOld+"의 결론", "related: [decisions/legacy.md]"))
-	putDoc(t, s, trClaude, "OTH", dRel, "history", docText("report", "다른 프로젝트", "related: ["+dNew+"]"))
-	putDoc(t, s, trClaude, "AGB", "decisions/legacy.md", "legacy", "# 이전 결정\n")
 	parent := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "상위"})
+	putDoc(t, s, trClaude, "AGB", "decisions/legacy.md", "legacy", "# 이전 결정\n")
+	putDoc(t, s, trClaude, "AGB", dOld, "history", docText("decision", "옛 결정"))
+	putDoc(t, s, trClaude, "AGB", dNew, "history", docText("decision", "새 결정", "issue: AGB-1", "supersedes: "+dOld, "related: [decisions/legacy.md]"))
+	putDoc(t, s, trClaude, "OTH", dRel, "history", docText("report", "다른 프로젝트", "related: [AGB/"+dNew+"]"))
 	dep := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "선행"})
 	gone := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "지운 이슈", Status: model.StatusDeleted})
 	child := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "하위", Parent: str(parent.Key), DependsOn: []string{dep.Key},
-		Refs: []string{"doc:" + dNew, "issue:" + gone.Key, "commit:abc1234", "doc:missing.md"}})
+		Refs: []string{"doc:" + dNew, "issue:" + gone.Key, "commit:abc1234"}})
 	if parent.Key != "AGB-1" {
 		t.Fatalf("parent key = %s", parent.Key)
 	}

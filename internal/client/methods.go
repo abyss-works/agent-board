@@ -441,6 +441,11 @@ type DocumentFilter struct {
 	Project  string
 	Kind     string
 	Location string
+	// State is a comma separated list of current, superseded, archived or all;
+	// the server answers with the current documents when it is empty. Imported
+	// is true or false.
+	State    string
+	Imported string
 	Page
 }
 
@@ -451,6 +456,8 @@ func (f DocumentFilter) Values() url.Values {
 	set(v, "project", f.Project)
 	set(v, "kind", f.Kind)
 	set(v, "location", f.Location)
+	set(v, "state", f.State)
+	set(v, "imported", f.Imported)
 	f.Page.addTo(v)
 	return v
 }

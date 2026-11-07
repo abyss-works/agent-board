@@ -52,7 +52,7 @@ func TestRunOnceComputesSimilarDocuments(t *testing.T) {
 		{"2026-11-01-0901-report-b.md", "aaab"},
 		{"2026-11-01-0902-report-c.md", "cccc"},
 	} {
-		if _, _, err := st.PutDocument(ctx, claude, "AGB", d.name, store.DocumentInput{Location: "history", Content: "---\nkind: report\n---\n\n" + d.body}); err != nil {
+		if _, _, err := st.PutDocument(ctx, claude, "AGB", d.name, store.DocumentInput{Content: "---\nkind: report\ntitle: t\n---\n\n" + d.body}); err != nil {
 			t.Fatal(err)
 		}
 	}

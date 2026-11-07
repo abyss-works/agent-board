@@ -230,6 +230,7 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	var verr *model.ValidationError
 	var rerr *store.RefError
 	var ierr *store.ImmutableError
+	var merr *store.MetadataDiffError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return notFound("대상이 없습니다.")
@@ -250,6 +251,15 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 		return conflict("topic_has_children", "활성 하위 주제가 있는 대주제는 삭제할 수 없습니다.")
 	case errors.Is(err, store.ErrCycle):
 		return conflict("cycle", "상위 이슈나 선행 이슈가 순환합니다.")
+	case errors.Is(err, store.ErrSupersedesCycle):
+		return conflict("cycle", "supersedes 관계가 순환합니다. 문서의 일부만 대체하면 related를 쓰세요.")
+	case errors.As(err, &merr):
+		details := make([]Detail, len(merr.Diffs))
+		for i, d := range merr.Diffs {
+			details[i] = Detail{Field: d.Field, Reason: "metadata_differs", Message: "서버에 저장된 값 " + d.Stored + "과 보낸 값 " + d.Sent + "이 다릅니다."}
+		}
+		return &apiError{Status: 409, Code: "conflict", Details: details,
+			Message: "같은 원문의 기록 문서가 다른 메타데이터로 이미 있습니다. 올라간 문서의 아카이브 표시는 POST·DELETE .../archive로, 관계는 POST·DELETE .../relations로 고칩니다."}
 	case errors.Is(err, store.ErrVersionMismatch):
 		return errPreconditionFailed
 	case errors.As(err, &rerr):
@@ -257,7 +267,7 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	case errors.As(err, &verr):
 		details := make([]Detail, len(verr.Fields))
 		for i, f := range verr.Fields {
-			details[i] = Detail{Field: f.Field, Message: f.Message}
+			details[i] = Detail{Field: f.Field, Reason: f.Reason, Message: f.Message}
 		}
 		return validationFailed(details)
 	}
