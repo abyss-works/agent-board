@@ -11,6 +11,7 @@
 ### 스킬
 
 - 기록 문서의 세부 명세(`references/documents.md`의 메타데이터, 상태, 참조 표기, 오류 코드, `.agb.json` 스키마와 예시, 맞지 않는 문서 올리기, v0.8 이관)를 CLI help로 옮기고 스킬에는 가리키는 문장만 남긴다. `references/documents.md`에는 무엇을 올릴지 정하는 규칙만 남는다.
+- `SKILL.md`에서 CLI help와 겹치는 세부(`recall`, `find`, `graph`, `doc search`, `doc sync`, `doc new`, `doc check`, `doc put`, `digest`, `agenda`의 옵션과 출력 항목, 이슈 참조 종류, 상태 사유와 댓글 요약의 길이 한도)를 지우고 `agb <명령> --help`를 가리키게 한다. `agb recall --help`에 출력 읽는 법(연결 방향, 대체 관계 줄, JSON 필드)을 더한다.
 
 ## v0.9.0 (2026-11-07)
 
