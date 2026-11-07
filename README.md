@@ -27,7 +27,7 @@
 - 마일스톤: 프로젝트마다 출시나 목표 단위의 마일스톤을 두고, 이슈에 마일스톤 하나를 붙인다. 목표일을 정할 수 있고 닫거나 삭제할 수 있다. 진행은 취소·삭제한 이슈를 뺀 이슈 중 완료한 수로 조회할 때 계산한다.
 - 사유와 요약: 상태를 바꿀 때 사유를 남기고(취소와 삭제는 필수), 댓글에는 한 줄 요약을 붙인다.
 - 사용자 확인 표시: 에이전트가 만든 이슈는 미확인으로 시작한다. 사용자가 웹 클라이언트에서 확인하거나, 사용자가 대화에서 확인하면 에이전트가 표시한다. 확인 여부는 작업 흐름에 영향을 주지 않는다.
-- 기록 문서: 관리 저장소의 기록 문서를 프로젝트마다 원문 그대로 보존하고, 여러 프로젝트에 걸쳐 FTS5로 검색한다. 이슈, 댓글, 기록 문서를 한 번에 찾는 통합 검색(`GET /v1/search`, `agb find`)이 있다. 이전 체계의 기록과 `archive/` 하위 폴더의 문서는 위치 `legacy`로 함께 보존한다. 서버는 서식의 안내 주석이나 자리표시자(`<...>`) 프런트매터가 남은 문서를 거절한다. 한번 올린 문서는 고치거나 지울 수 없고 위치(`history`, `archive`)만 바꿀 수 있다.
+- 기록 문서: 선례와 근거가 되는 마크다운 문서를 프로젝트마다 원문 그대로 보존하고, 여러 프로젝트에 걸쳐 FTS5로 검색한다. 이슈, 댓글, 기록 문서를 한 번에 찾는 통합 검색(`GET /v1/search`, `agb find`)이 있다. 문서의 상태(유효, 대체됨, 아카이브)는 아카이브 표시와 `supersedes` 관계에서 계산하고, 조회는 기본으로 유효한 문서만 찾는다. 서버는 폴더 이름을 알지 못하고 올라온 문서와 메타데이터만 본다. 형식을 따르지 않던 기존 문서는 가져온 문서(`imported`)로 올린다. 어떤 저장소의 어떤 파일을 어떻게 올릴지는 저장소 최상위의 `.agb.json`이 정한다. 한번 올린 문서의 원문은 고치거나 지울 수 없고 아카이브 표시와 관계만 고칠 수 있다.
 - 백업: 데이터베이스 스냅샷을 S3 호환 오브젝트 저장소(Cloudflare R2)에 주기적으로 올린다.
 - 웹 클라이언트: 보드에서 카드를 끌어 상태를 바꾸고, 3초마다 화면을 다시 불러와 바뀐 항목을 잠깐 강조한다.
 
@@ -182,13 +182,21 @@ EOF
 agb issue update DEMO-1 --add-ref jira:TEAM-261
 agb issue list --ref jira:TEAM-261
 
-# 서식(history/_<종류>.md)에서 새 기록 문서를 만들고, 커밋하기 전에 서식의 흔적이 남았는지 검사한다.
+# 저장소 최상위에 .agb.json을 만들고 documents 규칙을 채운다. 이 파일이 있는 저장소가 agb를 지식 저장소로 쓴다.
+agb init -p DEMO
+
+# 서식(.agb.json의 new.template)에서 새 기록 문서를 만들고, 커밋하기 전에 서식의 흔적이 남았는지 검사한다.
 agb doc new decision --slug pick-queue --title "큐를 고른다"
 agb doc check
 
-# 관리 저장소의 기록 문서를 서버와 맞추고, 서버의 목록을 본다.
-agb doc sync -p DEMO
-agb doc list -p DEMO
+# 저장소의 기록 문서 중 서버에 없는 것을 올리고, 서버의 목록을 본다. 대체됨과 아카이브는 --state로 넓힌다.
+agb doc sync
+agb doc list -p DEMO --state all
+
+# 올린 문서의 메타데이터는 인자로 넘기고, 아카이브 표시와 관계는 전용 명령으로 고친다.
+agb doc put notes/design.md -p DEMO --imported --kind report --title "설계 조사"
+agb doc archive DEMO notes/design.md
+agb doc link DEMO 2026-10-20-1544-decision-priority-model.md --supersedes 2026-10-18-0900-decision-queue-draft.md
 
 # 외부(팀원 MR, 팀 합의)를 기다리면 라벨 external 이슈를 세우고 선행 이슈로 건다. external 이슈는 큐에 나오지 않는다.
 agb issue create -p DEMO -t "API 팀 MR 병합 대기" --label external --body-file wait.md
