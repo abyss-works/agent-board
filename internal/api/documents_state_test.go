@@ -555,3 +555,21 @@ func TestPutDocumentLocationValidation(t *testing.T) {
 		t.Errorf("archived project: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPutDocumentNoRelationValues(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	withFront := strings.Replace(apiDocText("report", "새"), "title:", "supersedes: none\nrelated: none\ntitle:", 1)
+	for label, c := range map[string]struct {
+		name   string
+		fields map[string]any
+	}{
+		"arguments":    {stNew, map[string]any{"content": apiDocText("decision", "새"), "supersedes": []string{"none"}, "related": []string{"", "none"}}},
+		"front matter": {stRep, map[string]any{"content": withFront}},
+	} {
+		rec := e.putFields(t, "AGB", c.name, c.fields, nil)
+		if d := decodeDoc(t, rec); rec.Code != 201 || len(d.Supersedes) != 0 || len(d.Related) != 0 || len(d.UnresolvedRefs) != 0 {
+			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+}

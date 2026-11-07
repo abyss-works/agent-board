@@ -86,7 +86,9 @@ func TestCheckRecordTitleAndRelationNames(t *testing.T) {
 	}{
 		{"names are fine", replace("status: 채택\n", "status: 채택\nsupersedes: 2026-10-19-1000-decision-old.md\nrelated: [2026-10-18-1000-report-a.md, AGB/2026-10-17-1000-report-b.md]\n"), &tmpl, nil, 0},
 		{"a sentence in supersedes", replace("status: 채택\n", "status: 채택\nsupersedes: 2026-10-19-1000-decision-old.md의 결론 중 일부\n"), &tmpl, []string{"supersedes", "related"}, 1},
-		{"none is not a name", replace("status: 채택\n", "status: 채택\nsupersedes: none\n"), &tmpl, []string{"supersedes", `"none"`}, 1},
+		{"none is no relation", replace("status: 채택\n", "status: 채택\nsupersedes: none\nrelated: [none]\n"), &tmpl, nil, 0},
+		{"an empty relation is no relation", replace("status: 채택\n", "status: 채택\nsupersedes:\nrelated: []\n"), &tmpl, nil, 0},
+		{"None is not a name", replace("status: 채택\n", "status: 채택\nsupersedes: None\n"), &tmpl, []string{"supersedes", `"None"`}, 1},
 		{"a sentence in a related list", replace("status: 채택\n", "status: 채택\nrelated: [a.md, 설명 문장]\n"), &tmpl, []string{"related", "설명 문장"}, 1},
 		{"a placeholder is reported once", replace("status: 채택\n", "status: 채택\nsupersedes: <이전 기록 | none>\n"), &tmpl, []string{"supersedes"}, 1},
 		{"an empty title", replace("title: 큐 선택", "title:"), &tmpl, []string{"title"}, 1},

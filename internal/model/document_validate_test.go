@@ -153,6 +153,10 @@ func TestValidateDocumentRules(t *testing.T) {
 		{"supersedes with a sentence", recordName, front("title: 제목", `supersedes: a.md의 결론 중 "x"`), DocumentArgs{}, []violation{{"supersedes[0]", "not_a_name"}}},
 		{"related with a sentence", recordName, front("title: 제목", "related: [a.md, 일부 문서]"), DocumentArgs{}, []violation{{"related[1]", "not_a_name"}}},
 		{"supersedes without .md", recordName, front("title: 제목", "supersedes: a"), DocumentArgs{}, []violation{{"supersedes[0]", "not_a_name"}}},
+		{"supersedes none is no relation", recordName, front("title: 제목", "supersedes: none", "related: none"), DocumentArgs{}, nil},
+		{"none inside a list is no relation", recordName, front("title: 제목", "related: [none, a.md]"), DocumentArgs{}, nil},
+		{"none and empty arguments are no relation", recordName, ok, DocumentArgs{Supersedes: []string{"none"}, Related: []string{"", "none"}}, nil},
+		{"None is not none", recordName, front("title: 제목", "supersedes: None"), DocumentArgs{}, []violation{{"supersedes[0]", "not_a_name"}}},
 		{"cross-project name is a name", recordName, front("title: 제목", "supersedes: AGT/a.md"), DocumentArgs{}, nil},
 		{"every violation at once", "x.md", "본문", DocumentArgs{Supersedes: []string{"뭔가"}}, []violation{{"name", ""}, {"title", "required"}, {"supersedes[0]", "not_a_name"}}},
 		{"too large", recordName, ok + strings.Repeat("a", MaxDocumentBytes), DocumentArgs{}, []violation{{"content", ""}}},
@@ -255,5 +259,20 @@ func TestDocumentJSON(t *testing.T) {
 		`"location":"history","warnings":[{"field":"supersedes[0]","reason":"unresolved","message":"없습니다."}]}`
 	if string(b) != want {
 		t.Errorf("document JSON =\n%s\nwant\n%s", b, want)
+	}
+}
+
+func TestValidateDocumentDropsNoRelationValues(t *testing.T) {
+	meta, err := ValidateDocument(recordName, front("title: 제목", "supersedes: none", "related: [none, a.md, ]"), DocumentArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.Supersedes) != 0 || !reflect.DeepEqual(meta.Related, []string{"a.md"}) {
+		t.Errorf("supersedes = %v, related = %v", meta.Supersedes, meta.Related)
+	}
+	// An argument that is only none still replaces the front matter.
+	meta, err = ValidateDocument(recordName, front("title: 제목", "supersedes: a.md"), DocumentArgs{Supersedes: []string{"none"}})
+	if err != nil || len(meta.Supersedes) != 0 {
+		t.Errorf("supersedes = %v, err = %v", meta.Supersedes, err)
 	}
 }

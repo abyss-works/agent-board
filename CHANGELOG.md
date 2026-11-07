@@ -22,6 +22,7 @@
 - `GET /v1/graph`는 문서의 간선을 관계 표에서 읽고 `state`(`current`, `all`)를 받는다. 기본은 대체됨·아카이브 이웃을 접고 노드의 `folded`에 개수를 둔다. `digest`와 `similar` 후보는 유효한 문서만 쓴다.
 - 이슈 참조 `doc:`가 `doc:PROJECT/이름`으로 다른 프로젝트의 문서를 가리킬 수 있다. 같은 프로젝트에 그 이름의 문서가 있으면 그 문서가 먼저다.
 - 문서 등록의 `location`이 빈 문자열이어도 세 값(`history`, `archive`, `legacy`) 밖이면 422다. 프로젝트 없음(404), 활성이 아님(409)이 값 위반(422)보다 먼저 나간다.
+- `supersedes`, `related`의 값 `none`(소문자)과 빈 값을 관계 없음으로 받는다. 프런트매터와 요청 인자 양쪽에 적용하고, 목록 안의 `none`과 빈 항목은 건너뛴다. `agb doc check`도 같은 규칙을 따른다. `POST .../relations`의 `target`은 바뀌지 않는다.
 
 ### CLI
 

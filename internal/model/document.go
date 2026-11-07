@@ -617,6 +617,9 @@ func ValidateDocument(name, content string, args DocumentArgs) (DocumentMeta, er
 		{"issues", args.Issues, fm.Issues, &meta.Issues},
 	} {
 		if v := firstList(rel.args, rel.fm); v != nil {
+			if rel.field != "issues" {
+				v = withoutNoRelation(v)
+			}
 			*rel.dst = v
 		}
 		for i, t := range *rel.dst {
@@ -635,6 +638,24 @@ func ValidateDocument(name, content string, args DocumentArgs) (DocumentMeta, er
 		}
 	}
 	return meta, e.orNil()
+}
+
+// isNoRelation reports whether a supersedes or related value says there is no
+// relation: an empty value, or none in lower case.
+func isNoRelation(s string) bool {
+	v := strings.TrimSpace(s)
+	return v == "" || v == "none"
+}
+
+// withoutNoRelation drops the values that say there is no relation.
+func withoutNoRelation(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, t := range items {
+		if !isNoRelation(t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func firstNonNil(vals ...*string) *string {

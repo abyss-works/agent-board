@@ -352,12 +352,12 @@ func TestDocCheckSkipsTheRelationsWhenTheServerIsOutOfReach(t *testing.T) {
 func TestDocCheckRefusesWhatTheServerWouldRefuseInRelations(t *testing.T) {
 	root := checkRepo(t)
 	sentence := strings.Replace(relDecision, "supersedes: 2026-10-10-1000-decision-old.md", "supersedes: 2026-10-10-1000-decision-old.md의 결론 중 일부", 1)
-	writeFiles(t, root, map[string]string{"history/" + goodNewName: sentence, "history/" + freshName: strings.Replace(relDecision, "supersedes: 2026-10-10-1000-decision-old.md", "supersedes: none", 1)})
+	writeFiles(t, root, map[string]string{"history/" + goodNewName: sentence, "history/" + freshName: strings.Replace(relDecision, "supersedes: 2026-10-10-1000-decision-old.md", "supersedes: None", 1)})
 	h := newHarness(t, nil, false)
 	if code := h.run("doc", "check", "--root", root); code != 1 {
 		t.Fatalf("code=%d out=%s", code, h.stdout)
 	}
-	if out := h.stdout.String(); !strings.Contains(out, "related로 씁니다") || !strings.Contains(out, `none`) {
+	if out := h.stdout.String(); !strings.Contains(out, "related로 씁니다") || !strings.Contains(out, `None`) {
 		t.Errorf("output:\n%s", out)
 	}
 }
