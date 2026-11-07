@@ -42,7 +42,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 에이전트는 자기 행위자의 토큰으로만 접속한다. 토큰은 기기 승인으로 받아 설정 파일에 행위자별로 저장되고, 이후 명령이 자동으로 쓴다.
 
-- 공용 토큰(`AGB_TOKEN` 환경변수, `agb config set-token`)은 사용자 행위자 전용이다. 에이전트는 쓰지 않는다. 셸 환경에 `AGB_TOKEN`이 있으면 그 값이 먼저 쓰여 403이 나므로, 그 셸에서 해제한다(`unset AGB_TOKEN`, PowerShell은 `Remove-Item Env:AGB_TOKEN`).
+- 공용 토큰(`AGB_TOKEN` 환경변수, `agb config set-token`)은 사용자 행위자 전용이다. 에이전트는 쓰지 않는다. `agb login`으로 받은 행위자별 토큰이 설정 파일에 있으면 그 토큰이 `AGB_TOKEN`보다 먼저 쓰이므로 환경변수를 해제할 필요가 없다. 행위자별 토큰이 없는 상태에서 `AGB_TOKEN`이나 공용 토큰이 쓰여 403이 나면, 그 셸에서 `AGB_TOKEN`을 해제하고(`unset AGB_TOKEN`, PowerShell은 `Remove-Item Env:AGB_TOKEN`) `agb login`을 한다.
 - 다른 행위자의 토큰이나 `--actor`를 쓰지 않는다.
 - 설정 파일의 토큰 값을 읽거나 출력하지 않는다. 토큰이 저장된 행위자는 `agb config show`의 `actor_tokens`로 본다.
 
