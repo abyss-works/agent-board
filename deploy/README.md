@@ -79,6 +79,8 @@ AGB_IMAGE_TAG=git-<이전 sha7> docker compose -f deploy/compose.prod.yaml --env
 
 데이터는 볼륨 `agb_agb-data`에 있으므로 이미지를 바꿔도 남는다.
 
+스키마 마이그레이션이 든 릴리즈는 이 방법으로 되돌릴 수 없다. 마이그레이션은 데이터베이스의 스키마 버전을 올리고, 이전 바이너리는 더 새로운 스키마를 만나면 `schema version N, expected M` 오류로 시작을 거부한다. 이런 릴리즈는 배포 직전에 운영 데이터베이스의 SQLite 스냅샷을 떠 둔다. 롤백은 컨테이너를 멈추고, 스냅샷으로 `agb.db`를 되돌리고(`agb.db-wal`, `agb.db-shm`을 지운다. 절차는 아래 "백업에서 복원"의 3단계와 같다), 이전 태그로 띄우는 순서다.
+
 ## 백업에서 복원
 
 1. 컨테이너를 멈춘다: `docker stop agb-agb-1`
