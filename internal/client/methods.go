@@ -336,6 +336,35 @@ func (c *Client) DeleteMilestone(ctx context.Context, id int64) (*Response, erro
 	return c.Request(ctx, http.MethodDelete, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
+// PutMessage posts a message to the message space of a project. in holds
+// title and optionally to, body and ttl.
+func (c *Client) PutMessage(ctx context.Context, project string, in map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/messages", in, nil)
+}
+
+// ListMessages lists the messages of a project, newest first. An empty to
+// matches every addressee; all adds the expired and deleted messages. A zero
+// page field is left to the server default.
+func (c *Client) ListMessages(ctx context.Context, project, to string, all bool, page Page) (*Response, error) {
+	v := url.Values{}
+	set(v, "to", to)
+	page.addTo(v)
+	if all {
+		v.Set("all", "true")
+	}
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/messages", v), nil, nil)
+}
+
+// GetMessage fetches one message with its body, whatever its state.
+func (c *Client) GetMessage(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// DeleteMessage soft deletes a message.
+func (c *Client) DeleteMessage(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
 // CreateDeviceAuthorization asks the server to let an agent actor in on a
 // device. It is the first step of a login, made without a token, so it sends
 // neither the token nor the trace headers. The response holds the device code
