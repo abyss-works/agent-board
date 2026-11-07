@@ -31,11 +31,9 @@ func TestDocumentMethodsBuildRequests(t *testing.T) {
 		body   string
 	}{
 		{"put", func() (*Response, error) {
-			return c.PutDocument(ctx, "AGB", name, "history", "---\nkind: decision\n---\n본문\n")
+			return c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: "---\nkind: decision\n---\n본문\n"})
 		},
-			"PUT", "/v1/projects/AGB/documents/" + name, "", `{"content":"---\nkind: decision\n---\n본문\n","location":"history"}`},
-		{"put into the archive", func() (*Response, error) { return c.PutDocument(ctx, "AGB", name, "archive", "x") },
-			"PUT", "/v1/projects/AGB/documents/" + name, "", `{"content":"x","location":"archive"}`},
+			"PUT", "/v1/projects/AGB/documents/" + name, "", `{"content":"---\nkind: decision\n---\n본문\n"}`},
 		{"list", func() (*Response, error) { return c.ListDocuments(ctx, "AGB", Page{}) }, "GET", "/v1/projects/AGB/documents", "", ""},
 		{"list a page", func() (*Response, error) { return c.ListDocuments(ctx, "AGB", Page{Limit: 500, Offset: 500}) },
 			"GET", "/v1/projects/AGB/documents", "limit=500&offset=500", ""},
@@ -66,7 +64,7 @@ func TestDocumentMethodsBuildRequests(t *testing.T) {
 					t.Fatalf("body %q: %v", rec.body, err)
 				}
 				json.Unmarshal([]byte(tc.body), &want)
-				if len(got) != 2 || got["content"] != want["content"] || got["location"] != want["location"] {
+				if len(got) != len(want) || got["content"] != want["content"] {
 					t.Errorf("body = %q, want %q", rec.body, tc.body)
 				}
 			} else if len(rec.body) != 0 {
@@ -78,7 +76,7 @@ func TestDocumentMethodsBuildRequests(t *testing.T) {
 	// The content goes out as it is: markup characters are not escaped and a
 	// line break is the JSON escape of the byte, nothing else.
 	rec.body = nil
-	if _, err := c.PutDocument(ctx, "AGB", name, "history", "<a> & é\r\n"); err != nil {
+	if _, err := c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: "<a> & é\r\n"}); err != nil {
 		t.Fatal(err)
 	}
 	htmlEscape := func(code string) string { return `\` + "u" + code }
@@ -111,18 +109,18 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 
 	const name = "2026-10-20-1544-decision-priority-model.md"
 	content := "---\nkind: decision\ndate: 2026-10-20 15:44\ntitle: 우선순위 큐 모델\ntags: [priority, queue]\n---\n\n등급 <P0> & 서버 계산 순서\r\n"
-	resp, err := c.PutDocument(ctx, "AGB", name, "history", content)
+	resp, err := c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: content})
 	var d model.Document
 	if err != nil || resp.Status != 201 || resp.Decode(&d) != nil || d.Name != name || d.Title == nil || *d.Title != "우선순위 큐 모델" || d.Content != nil {
 		t.Fatalf("put = %+v, %v", resp, err)
 	}
-	// A location of a v0.8.x client with the same content changes nothing.
-	if resp, err = c.PutDocument(ctx, "AGB", name, "archive", content); err != nil || resp.Status != 200 {
-		t.Fatalf("location only = %+v, %v", resp, err)
+	// The same content and metadata again changes nothing.
+	if resp, err = c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: content}); err != nil || resp.Status != 200 {
+		t.Fatalf("same again = %+v, %v", resp, err)
 	}
 
 	// Other content: the error carries the hash of the stored content.
-	_, err = c.PutDocument(ctx, "AGB", name, "archive", content+"x")
+	_, err = c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: content + "x"})
 	var apiErr *Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 409 || apiErr.Code != "conflict" || len(apiErr.Details) != 1 ||
 		apiErr.Details[0].Reason != "immutable" || apiErr.Details[0].SHA256 != d.SHA256 {
@@ -131,7 +129,7 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 
 	resp, err = c.GetDocument(ctx, "AGB", name)
 	var full model.Document
-	if err != nil || resp.Decode(&full) != nil || full.Content == nil || *full.Content != content || full.Location != model.LocationHistory {
+	if err != nil || resp.Decode(&full) != nil || full.Content == nil || *full.Content != content || full.State != model.StateCurrent {
 		t.Fatalf("get = %+v, %v", full, err)
 	}
 	resp, err = c.ListDocuments(ctx, "AGB", Page{Limit: 500})

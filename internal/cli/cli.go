@@ -185,7 +185,8 @@ const Usage = `사용법: agb <명령> [옵션]
   milestone         마일스톤 목록·단건·생성·수정·닫기·다시 열기·삭제
   template          이슈 종류별 본문 템플릿 목록·출력
   issue             이슈 목록·단건·생성·수정·삭제·확인·댓글·활동
-  doc               기록 문서 작성·검사·등록·동기화·검색·조회
+  doc               기록 문서 작성·검사·등록·동기화·상태 수정·검색·조회
+  init              저장소 최상위에 .agb.json 만들기 (agb 를 지식 저장소로 씀)
 
 조회:
   agenda            프로젝트별 사용자 차례, 에이전트 할 일, 대기 (별칭 next)
@@ -218,7 +219,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, initCmd,
 	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
@@ -329,6 +330,7 @@ func (a *App) exit(g *globals, err error) int {
 func (a *App) printAPIError(g *globals, e *client.Error) {
 	if a.jsonOutput(g) && len(e.Body) > 0 && e.Code != "http_error" {
 		writeJSON(a.Stderr, e.Body)
+		a.printMetadataDiffersHint(e)
 		return
 	}
 	fmt.Fprintf(a.Stderr, "agb: %d %s: %s\n", e.Status, e.Code, e.Message)
@@ -350,6 +352,17 @@ func (a *App) printAPIError(g *globals, e *client.Error) {
 		fmt.Fprintf(a.Stderr, "  `agb login --actor %s`로 다시 로그인하세요.\n", orPlaceholder(a.requestActor(g)))
 	case e.Status == http.StatusForbidden && hasReason(e.Details, "actor_mismatch"):
 		fmt.Fprintf(a.Stderr, "  이 행위자의 토큰이 없거나 다른 행위자의 토큰입니다. `agb login --actor %s`를 실행하세요.\n", orPlaceholder(a.requestActor(g)))
+	}
+	a.printMetadataDiffersHint(e)
+}
+
+// printMetadataDiffersHint tells what to do about a document that is on the
+// server with the same content and other metadata: only the archive mark and
+// the relations can be changed, each with a command of its own.
+func (a *App) printMetadataDiffersHint(e *client.Error) {
+	if e.Status == http.StatusConflict && hasReason(e.Details, "metadata_differs") {
+		fmt.Fprintln(a.Stderr, "  올린 문서의 아카이브 표시는 agb doc archive|unarchive 로, 관계(supersedes, related, 이슈)는 agb doc link|unlink 로 고칩니다.")
+		fmt.Fprintln(a.Stderr, "  종류, 날짜, 제목, 태그, 가져온 문서 여부, 경로는 고칠 수 없으니 서버의 값을 그대로 둡니다.")
 	}
 }
 

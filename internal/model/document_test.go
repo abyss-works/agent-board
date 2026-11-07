@@ -95,43 +95,6 @@ func TestParseDocumentName(t *testing.T) {
 	}
 }
 
-func TestParseLegacyName(t *testing.T) {
-	valid := map[string]string{
-		"decisions/2026-10-17-14-30-scope-stack-deploy.md":  "decisions",
-		"reports/2026-10-12-src-structure.md":               "reports",
-		"incidents/save-loss.md":                            "incidents",
-		"archive/2026-06-hermes-sdlc/README.md":             "archive",
-		"archive/2026-10-mgmt-framework/mgmt/ops/deploy.md": "archive",
-		"decisions/결정 기록.md":                                "decisions",
-	}
-	for name, want := range valid {
-		if got, ok := ParseLegacyName(name); !ok || got != want {
-			t.Errorf("ParseLegacyName(%q) = %q, %v; want %q", name, got, ok, want)
-		}
-	}
-	for _, name := range []string{
-		"",
-		"decisions/_template.md",
-		"archive/2026-10-mgmt/decisions/decision.example.md",
-		"decisions/x.txt",
-		"decisions/sub/x.md",
-		"archive/x.md",
-		"history/2026-10-20-1544-decision-x.md",
-		"2026-10-20-1544-decision-x.md",
-		"/decisions/x.md",
-		"decisions//x.md",
-		"archive/../decisions/x.md",
-		"archive/.hidden/x.md",
-		"archive/a\\b/x.md",
-		"decisions/a\nb.md",
-		"draft/x.md",
-	} {
-		if got, ok := ParseLegacyName(name); ok {
-			t.Errorf("ParseLegacyName(%q) = %q, want a rejection", name, got)
-		}
-	}
-}
-
 func TestParseFrontMatter(t *testing.T) {
 	text := func(s string) *string { return &s }
 	cases := []struct {

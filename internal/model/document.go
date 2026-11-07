@@ -196,25 +196,6 @@ func ValidImportedName(name string) bool {
 	return ValidDocumentPath(name) && strings.HasSuffix(file, ".md") && !strings.HasPrefix(file, "_") && !strings.HasSuffix(file, ".example.md")
 }
 
-// ParseLegacyName reports whether name is the path of a document of the
-// earlier record system: decisions/, reports/ or incidents/ followed by a file,
-// or archive/ followed by at least one subfolder and a file. folder is the first
-// segment. Only the command line client uses it, to find such files.
-func ParseLegacyName(name string) (folder string, ok bool) {
-	if !ValidImportedName(name) {
-		return "", false
-	}
-	segs := strings.Split(name, "/")
-	folder = segs[0]
-	switch folder {
-	case "decisions", "reports", "incidents":
-		return folder, len(segs) == 2
-	case string(LocationArchive):
-		return folder, len(segs) >= 3
-	}
-	return "", false
-}
-
 // nameDate is the date at the start of a file name: yyyy-mm-dd, optionally
 // followed by the time as HH-MM or HHMM.
 var nameDate = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})(?:-(\d{2})-?(\d{2})-)?`)

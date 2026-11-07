@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// decisionTemplate is a shortened history/_decision.md.
+// decisionTemplate is a shortened decision template.
 const decisionTemplate = `---
 kind: decision
 date: <yyyy-mm-dd HH:MM>
@@ -34,12 +34,16 @@ status: <채택 | 기각 | 보류>
 
 const newDecisionName = "2026-10-17-1200-decision-pick-queue.md"
 
-// templateRepo is a management repository with the decision template.
+// newConfig makes the documents of history/ the ones agb doc new writes.
+const newConfig = `{"project": "AGB", "documents": [{"glob": "history/*.md", "name": "base"}],
+  "new": {"template": "history/_{kind}.md", "output": "history", "values": {"project": "agent-board", "author": "claude"}}}`
+
+// templateRepo is a repository with the decision template and the config for it.
 func templateRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{
-		"AGENTS.md":            "# AGENTS\n\n## 프로젝트\n\n- 이름: agent-board\n- 성격: 개인\n",
+		".agb.json":            newConfig,
 		"history/_decision.md": decisionTemplate,
 	})
 	return root
@@ -84,15 +88,15 @@ status: <채택 | 기각 | 보류>
 	}
 }
 
-func TestDocNewWithoutTitleOrProject(t *testing.T) {
+func TestDocNewWithoutTitleOrValues(t *testing.T) {
 	root := templateRepo(t)
-	writeFiles(t, root, map[string]string{"AGENTS.md": "# AGENTS\n"})
+	writeFiles(t, root, map[string]string{".agb.json": `{"project": "AGB", "new": {"template": "history/_{kind}.md", "output": "history"}}`})
 	h := newHarness(t, nil, false)
 	if code := h.run("doc", "new", "decision", "--slug", "pick-queue", "--root", root); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 	raw, _ := os.ReadFile(filepath.Join(root, "history", newDecisionName))
-	for _, keep := range []string{"project: <프로젝트 이름>", "title: <문서 제목>", "# <결정 제목>", "date: 2026-10-17 12:00", "author: claude"} {
+	for _, keep := range []string{"project: <프로젝트 이름>", "title: <문서 제목>", "# <결정 제목>", "date: 2026-10-17 12:00", "author: <작성한 에이전트나 사람>"} {
 		if !strings.Contains(string(raw), keep) {
 			t.Errorf("the file must keep %q:\n%s", keep, raw)
 		}
@@ -116,7 +120,7 @@ func TestDocNewQuotesAValueYamlWouldMisread(t *testing.T) {
 
 func TestDocNewDefaultRootIsTheGitTopLevel(t *testing.T) {
 	root := gitRepo(t)
-	writeFiles(t, root, map[string]string{"history/_decision.md": decisionTemplate, "sub/x.txt": "x"})
+	writeFiles(t, root, map[string]string{".agb.json": newConfig, "history/_decision.md": decisionTemplate, "sub/x.txt": "x"})
 	t.Chdir(filepath.Join(root, "sub"))
 	h := newHarness(t, nil, false)
 	if code := h.run("doc", "new", "decision", "--slug", "pick-queue"); code != 0 {
@@ -127,27 +131,52 @@ func TestDocNewDefaultRootIsTheGitTopLevel(t *testing.T) {
 	}
 }
 
+func TestDocNewReadsThePathsAndValuesFromTheConfig(t *testing.T) {
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		".agb.json": `{"project": "AGB", "new": {"template": "tmpl/{kind}.tpl.md", "output": "out/records", "values": {"author": "codex"}}}`,
+		"tmpl/report.tpl.md": "---\nkind: report\ndate: <d>\ntitle: <t>\nauthor: <a>\n---\n\n# <제목>\n\n<!-- 안내 한 줄 -->\n\n" +
+			"```md\n<!-- 코드 안의 주석 -->\n```\n\n## 절\n",
+		"out/records/.keep": "",
+	})
+	h := newHarness(t, nil, false)
+	if code := h.run("doc", "new", "report", "--slug", "survey", "--title", "조사", "--root", root); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "out", "records", "2026-10-17-1200-report-survey.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\nkind: report\ndate: 2026-10-17 12:00\ntitle: 조사\nauthor: codex\n---\n\n# 조사\n\n```md\n<!-- 코드 안의 주석 -->\n```\n\n## 절\n"
+	if string(raw) != want {
+		t.Errorf("file =\n%q\nwant\n%q", raw, want)
+	}
+}
+
 func TestDocNewUsageErrors(t *testing.T) {
 	root := templateRepo(t)
 	writeFiles(t, root, map[string]string{"history/" + newDecisionName: "이미 있음"})
 	notRepo := t.TempDir()
+	noNew := t.TempDir()
+	writeFiles(t, noNew, map[string]string{".agb.json": `{"project": "AGB"}`})
 	h := newHarness(t, nil, false)
 	for label, c := range map[string]struct {
 		args []string
 		want string
 	}{
-		"existing file":           {[]string{"decision", "--slug", "pick-queue", "--root", root}, newDecisionName},
-		"missing template":        {[]string{"report", "--slug", "x", "--root", root}, filepath.Join(root, "history", "_report.md")},
-		"unknown kind":            {[]string{"plan", "--slug", "x", "--root", root}, "plan"},
-		"other kind":              {[]string{"other", "--slug", "x", "--root", root}, "other"},
-		"no kind":                 {[]string{"--slug", "x", "--root", root}, "<종류>"},
-		"no slug":                 {[]string{"decision", "--root", root}, "--slug"},
-		"upper case slug":         {[]string{"decision", "--slug", "Pick", "--root", root}, "slug"},
-		"slug with space":         {[]string{"decision", "--slug", "a b", "--root", root}, "slug"},
-		"slug with slash":         {[]string{"decision", "--slug", "../a", "--root", root}, "slug"},
-		"empty slug":              {[]string{"decision", "--slug", "", "--root", root}, "--slug"},
-		"too many args":           {[]string{"decision", "extra", "--slug", "x", "--root", root}, "extra"},
-		"root without a template": {[]string{"decision", "--slug", "x", "--root", notRepo}, "_decision.md"},
+		"existing file":         {[]string{"decision", "--slug", "pick-queue", "--root", root}, newDecisionName},
+		"missing template":      {[]string{"report", "--slug", "x", "--root", root}, filepath.Join(root, "history", "_report.md")},
+		"unknown kind":          {[]string{"plan", "--slug", "x", "--root", root}, "plan"},
+		"other kind":            {[]string{"other", "--slug", "x", "--root", root}, "other"},
+		"no kind":               {[]string{"--slug", "x", "--root", root}, "<종류>"},
+		"no slug":               {[]string{"decision", "--root", root}, "--slug"},
+		"upper case slug":       {[]string{"decision", "--slug", "Pick", "--root", root}, "slug"},
+		"slug with space":       {[]string{"decision", "--slug", "a b", "--root", root}, "slug"},
+		"slug with slash":       {[]string{"decision", "--slug", "../a", "--root", root}, "slug"},
+		"empty slug":            {[]string{"decision", "--slug", "", "--root", root}, "--slug"},
+		"too many args":         {[]string{"decision", "extra", "--slug", "x", "--root", root}, "extra"},
+		"root without a config": {[]string{"decision", "--slug", "x", "--root", notRepo}, ".agb.json"},
+		"config without new":    {[]string{"decision", "--slug", "x", "--root", noNew}, "new"},
 	} {
 		if code := h.run(append([]string{"doc", "new"}, c.args...)...); code != 2 || !strings.Contains(h.stderr.String(), c.want) {
 			t.Errorf("%s: code=%d stderr=%s", label, code, h.stderr)

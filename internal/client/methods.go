@@ -460,16 +460,6 @@ func (f DocumentFilter) Values() url.Values {
 	return v
 }
 
-// PutDocument registers a record document of a project with the folder it lies
-// in and its original content, as clients of v0.8.x do; PutDocumentWith is the
-// call with metadata. The server stores the content as it is; the same content
-// again changes nothing, and other content under the same name is refused with
-// 409 (reason immutable).
-func (c *Client) PutDocument(ctx context.Context, project, name, location, content string) (*Response, error) {
-	path := "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
-	return c.Request(ctx, http.MethodPut, path, map[string]any{"location": location, "content": content}, nil)
-}
-
 // DocumentPut is a put request of a record document with its metadata. A field
 // left nil is not sent and the front matter or the fallback of the server
 // decides it; a list that is empty but not nil is sent as an empty list.
