@@ -37,6 +37,7 @@
 - `agb find`는 기본으로 열린 이슈와 유효한 문서를 찾고 `--status`, `--state`로 넓힌다. `agb recall`은 `--status`, `--state`를 받는다. `find`, `recall`, `doc list`, `doc search`는 상태 열과 `supersedes`, `superseded_by`를 보인다. `doc list`, `doc search`는 `--location`을 없애고 `--state`, `--imported`를 받는다. `doc get`은 상태와 관계를 보인다. `agb graph --state all`과 접힌 이웃 표시를 더한다.
 - CLI가 더는 쓰지 않는 `AGENTS.md` 해석, 폴더 상수, 이전 체계 경로 판별을 지운다.
 - `agb doc check`가 본문의 `<신설 2021.11.30>` 같은 숫자가 든 꺾쇠 표기를 자리표시자로 보지 않는다. 숫자가 없는 `<왜 필요했는지>` 같은 서식 자리표시자는 계속 잡는다.
+- 토큰 선택 순서를 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰으로 바꾼다. 이전에는 `AGB_TOKEN`이 행위자별 토큰보다 앞서, 셸에 공용 토큰이 있으면 에이전트 행위자의 요청이 403이었다. 행위자별 토큰이 없는 행위자와 설정 파일이 없는 사용은 그대로다.
 - `agb issue comment --status done`은 작업 위치 댓글이 없는 이슈에서 경고를 내지 않는다. 작업 위치가 있는데 병합 커밋을 찾지 못할 때만 경고한다.
 
 ### 웹 클라이언트
