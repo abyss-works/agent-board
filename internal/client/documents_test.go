@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -149,5 +150,126 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 	}
 	if _, err := c.GetDocument(ctx, "AGB", "2026-10-21-0900-report-none.md"); !errors.As(err, &apiErr) || apiErr.Status != 404 {
 		t.Errorf("missing document err = %v", err)
+	}
+}
+
+func TestDocumentStateMethodsBuildRequests(t *testing.T) {
+	rec := newRecorder(t)
+	c := rec.client()
+	ctx := context.Background()
+	const name = "2026-10-20-1544-decision-priority-model.md"
+	text := func(s string) *string { return &s }
+	yes := true
+	cases := []struct {
+		label  string
+		call   func() (*Response, error)
+		method string
+		path   string
+		query  string
+		body   string
+	}{
+		{"put with nothing but the content", func() (*Response, error) {
+			return c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: "본문"})
+		}, "PUT", "/v1/projects/AGB/documents/" + name, "", `{"content":"본문"}`},
+		{"put with every field", func() (*Response, error) {
+			return c.PutDocumentWith(ctx, "AGB", name, DocumentPut{Content: "본문", Kind: text("decision"), Date: text("2026-10-20"), Title: text("제목"), Path: text("a/b.md"),
+				Tags: []string{"a"}, Supersedes: []string{"x.md"}, Related: []string{}, Issues: []string{"AGB-1"}, Archived: &yes, Imported: &yes})
+		}, "PUT", "/v1/projects/AGB/documents/" + name, "",
+			`{"archived":true,"content":"본문","date":"2026-10-20","imported":true,"issues":["AGB-1"],"kind":"decision","path":"a/b.md","related":[],"supersedes":["x.md"],"tags":["a"],"title":"제목"}`},
+		{"put of a path name", func() (*Response, error) {
+			return c.PutDocumentWith(ctx, "AGB", "notes/a.md", DocumentPut{Content: "x", Imported: &yes})
+		}, "PUT", "/v1/projects/AGB/documents/notes/a.md", "", `{"content":"x","imported":true}`},
+		{"archive", func() (*Response, error) { return c.ArchiveDocument(ctx, "AGB", name) }, "POST", "/v1/projects/AGB/documents/" + name + "/archive", "", ""},
+		{"unarchive", func() (*Response, error) { return c.UnarchiveDocument(ctx, "AGB", name) }, "DELETE", "/v1/projects/AGB/documents/" + name + "/archive", "", ""},
+		{"add a relation", func() (*Response, error) { return c.AddDocumentRelation(ctx, "AGB", name, "supersedes", "x.md") },
+			"POST", "/v1/projects/AGB/documents/" + name + "/relations", "", `{"kind":"supersedes","target":"x.md"}`},
+		{"remove a relation", func() (*Response, error) { return c.RemoveDocumentRelation(ctx, "AGB", name, "about", "AGB-1") },
+			"DELETE", "/v1/projects/AGB/documents/" + name + "/relations", "", `{"kind":"about","target":"AGB-1"}`},
+		{"activity", func() (*Response, error) { return c.DocumentActivity(ctx, "AGB", name, Page{Limit: 10, Offset: 5}) },
+			"GET", "/v1/projects/AGB/documents/" + name + "/activity", "limit=10&offset=5", ""},
+		{"search by state", func() (*Response, error) {
+			return c.SearchDocuments(ctx, DocumentFilter{State: "all", Imported: "true"})
+		}, "GET", "/v1/documents", "imported=true&state=all", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			rec.header, rec.body = nil, nil
+			if _, err := tc.call(); err != nil {
+				t.Fatal(err)
+			}
+			if rec.method != tc.method || rec.path != tc.path || rec.query.Encode() != tc.query {
+				t.Errorf("request = %s %s?%s, want %s %s?%s", rec.method, rec.path, rec.query.Encode(), tc.method, tc.path, tc.query)
+			}
+			if tc.body == "" {
+				if len(rec.body) != 0 {
+					t.Errorf("body = %q, want none", rec.body)
+				}
+				return
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(rec.body, &got); err != nil {
+				t.Fatalf("body %q: %v", rec.body, err)
+			}
+			json.Unmarshal([]byte(tc.body), &want)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("body = %s, want %s", rec.body, tc.body)
+			}
+		})
+	}
+}
+
+func TestDocumentStateAgainstRealHandler(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "agb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	actors := []model.Actor{{ID: "owner", Kind: model.ActorUser}}
+	ctx := context.Background()
+	if err := st.EnsureActors(ctx, actors); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(api.New(api.Options{Token: testToken, Actors: actors, Version: "t", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Store: st}))
+	defer srv.Close()
+	c := newClient(srv.URL)
+	if _, err := c.CreateProject(ctx, "AGB", "agent-board"); err != nil {
+		t.Fatal(err)
+	}
+	const old, next = "2026-10-01-1000-decision-old.md", "2026-10-02-1000-decision-new.md"
+	title := "제목"
+	var d struct {
+		model.Document
+		Warnings []model.DocumentWarning `json:"warnings"`
+	}
+	resp, err := c.PutDocumentWith(ctx, "AGB", old, DocumentPut{Content: "본문", Title: &title})
+	if err != nil || resp.Status != 201 || resp.Decode(&d) != nil || d.State != model.StateCurrent || d.Warnings == nil {
+		t.Fatalf("put = %+v, %v", resp, err)
+	}
+	if resp, err = c.PutDocumentWith(ctx, "AGB", next, DocumentPut{Content: "새 본문", Title: &title, Supersedes: []string{old}}); err != nil || resp.Status != 201 {
+		t.Fatalf("put with a relation = %+v, %v", resp, err)
+	}
+	if resp, err = c.GetDocument(ctx, "AGB", old); err != nil || resp.Decode(&d) != nil || d.State != model.StateSuperseded || !reflect.DeepEqual(d.SupersededBy, []string{next}) {
+		t.Fatalf("get = %+v, %v", d.Document, err)
+	}
+	if resp, err = c.ArchiveDocument(ctx, "AGB", next); err != nil || resp.Decode(&d) != nil || d.State != model.StateArchived {
+		t.Fatalf("archive = %+v, %v", d.Document, err)
+	}
+	if resp, err = c.RemoveDocumentRelation(ctx, "AGB", next, "supersedes", old); err != nil || resp.Decode(&d) != nil || len(d.Supersedes) != 0 {
+		t.Fatalf("remove = %+v, %v", d.Document, err)
+	}
+	var apiErr *Error
+	if _, err = c.AddDocumentRelation(ctx, "AGB", next, "related", "nothing.md"); !errors.As(err, &apiErr) || apiErr.Status != 422 || apiErr.Details[0].Reason != "unresolved" {
+		t.Errorf("unresolved relation err = %v", err)
+	}
+	resp, err = c.DocumentActivity(ctx, "AGB", next, Page{})
+	var list struct {
+		Items []model.DocumentActivity `json:"items"`
+		Total int                      `json:"total"`
+	}
+	if err != nil || resp.Decode(&list) != nil || list.Total != 2 || len(list.Items) != 2 || list.Items[0].Changes["supersedes"].To == nil {
+		t.Errorf("activity = %+v, %v", list, err)
+	}
+	if _, err = c.UnarchiveDocument(ctx, "AGB", next); err != nil {
+		t.Errorf("unarchive: %v", err)
 	}
 }

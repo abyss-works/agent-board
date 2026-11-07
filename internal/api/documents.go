@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
@@ -10,26 +11,59 @@ import (
 
 func (h *handler) registerDocuments(mux *http.ServeMux) {
 	route(mux, "/v1/projects/{key}/documents", methods{"GET": h.listDocuments})
-	route(mux, "/v1/projects/{key}/documents/{name...}", methods{"GET": h.getDocument, "PUT": h.putDocument})
 	route(mux, "/v1/documents", methods{"GET": h.searchDocuments})
+
+	// A document name may hold slashes, so one pattern takes the name and the
+	// suffix; a name ends in .md and never in the suffix of a sub-resource.
+	byPart := map[string]http.HandlerFunc{
+		"":           methods{"GET": h.getDocument, "PUT": h.putDocument}.serve(),
+		"/archive":   methods{"POST": h.archiveDocument, "DELETE": h.unarchiveDocument}.serve(),
+		"/relations": methods{"POST": h.addRelation, "DELETE": h.removeRelation}.serve(),
+		"/activity":  methods{"GET": h.documentActivity}.serve(),
+	}
+	mux.HandleFunc("/v1/projects/{key}/documents/{name...}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		for _, part := range []string{"/archive", "/relations", "/activity"} {
+			if trimmed, ok := strings.CutSuffix(name, part); ok && trimmed != "" {
+				r.SetPathValue("name", trimmed)
+				byPart[part](w, r)
+				return
+			}
+		}
+		byPart[""](w, r)
+	})
+}
+
+// documentFields are the fields of a put request.
+var documentFields = map[string]bool{
+	"content": true, "location": true, "kind": true, "date": true, "title": true, "tags": true, "supersedes": true,
+	"related": true, "issues": true, "archived": true, "imported": true, "path": true,
 }
 
 // putDocument stores a record document: 201 for a new one, 200 for the same
-// content again, which also moves the document when the location differs.
-// Other content under the same name is a 409.
+// content and metadata again. Other content under the same name is a 409, and so
+// is other metadata for the same content. A null field is a field that was not
+// sent.
 func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, map[string]bool{"location": true, "content": true})
+	b, aerr := readBody(w, r, documentFields)
 	if aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	in := store.DocumentInput{LocationOnly: true}
+	var in store.DocumentInput
 	var location string
-	if _, _, aerr := field(b, "location", &location); aerr != nil {
+	if aerr := firstError(decodeField(b, "content", &in.Content), decodeField(b, "location", &location)); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	if _, _, aerr := field(b, "content", &in.Content); aerr != nil {
+	args := &in.Args
+	if aerr := firstError(
+		decodeOptional(b, "kind", &args.Kind), decodeOptional(b, "date", &args.Date),
+		decodeOptional(b, "title", &args.Title), decodeOptional(b, "path", &args.Path),
+		decodeOptional(b, "archived", &args.Archived), decodeOptional(b, "imported", &args.Imported),
+		decodeList(b, "tags", &args.Tags), decodeList(b, "supersedes", &args.Supersedes),
+		decodeList(b, "related", &args.Related), decodeList(b, "issues", &args.Issues),
+	); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
@@ -40,7 +74,9 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 			writeError(w, validationFailed([]Detail{{Field: "location", Message: "history, archive, legacy 중 하나여야 합니다."}}))
 			return
 		}
-		in.Args.ApplyLocation(name, loc)
+		// A client of v0.8.x sends the content and a location, nothing else.
+		in.LocationOnly = !args.HasMetadata()
+		args.ApplyLocation(name, loc)
 	}
 	d, created, err := h.store.PutDocument(r.Context(), TraceFrom(r.Context()), project, name, in)
 	if err != nil {
@@ -53,6 +89,124 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, d)
+}
+
+func firstError(errs ...*apiError) *apiError {
+	for _, e := range errs {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// decodeField decodes a field into dst when it is present and not null.
+func decodeField[T any](b body, name string, dst *T) *apiError {
+	_, _, aerr := field(b, name, dst)
+	return aerr
+}
+
+// decodeOptional decodes a field into a new value that dst points to when the
+// field is present and not null.
+func decodeOptional[T any](b body, name string, dst **T) *apiError {
+	var v T
+	present, null, aerr := field(b, name, &v)
+	if aerr == nil && present && !null {
+		*dst = &v
+	}
+	return aerr
+}
+
+// decodeList decodes a list of text into dst when it is present and not null.
+// An empty list is a list that was sent; dst is nil otherwise.
+func decodeList(b body, name string, dst *[]string) *apiError {
+	list := []string{}
+	present, null, aerr := field(b, name, &list)
+	if aerr == nil && present && !null {
+		if list == nil {
+			list = []string{}
+		}
+		*dst = list
+	}
+	return aerr
+}
+
+// archiveDocument and unarchiveDocument mark a record document archived and take
+// the mark off. A body, if any, is not read.
+func (h *handler) archiveDocument(w http.ResponseWriter, r *http.Request) { h.setArchived(w, r, true) }
+func (h *handler) unarchiveDocument(w http.ResponseWriter, r *http.Request) {
+	h.setArchived(w, r, false)
+}
+
+func (h *handler) setArchived(w http.ResponseWriter, r *http.Request, archived bool) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	d, err := h.store.SetDocumentArchived(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), r.PathValue("name"), archived)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (h *handler) addRelation(w http.ResponseWriter, r *http.Request) { h.changeRelation(w, r, true) }
+func (h *handler) removeRelation(w http.ResponseWriter, r *http.Request) {
+	h.changeRelation(w, r, false)
+}
+
+// changeRelation adds or removes the one relation that the body names.
+func (h *handler) changeRelation(w http.ResponseWriter, r *http.Request, add bool) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	b, aerr := readBody(w, r, map[string]bool{"kind": true, "target": true})
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var kind, target string
+	if aerr := firstError(decodeField(b, "kind", &kind), decodeField(b, "target", &target)); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var bad []Detail
+	rel, ok := model.ParseRelationKind(kind)
+	if !ok {
+		bad = append(bad, Detail{Field: "kind", Message: "supersedes, related, about 중 하나여야 합니다."})
+	}
+	if strings.TrimSpace(target) == "" {
+		bad = append(bad, Detail{Field: "target", Message: "대상이 필요합니다. supersedes와 related는 문서 이름, about은 이슈 키입니다."})
+	}
+	if len(bad) > 0 {
+		writeError(w, validationFailed(bad))
+		return
+	}
+	d, err := h.store.ChangeDocumentRelation(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), r.PathValue("name"), rel, target, add)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+// documentActivity lists the changes of the archive mark and the relations of
+// one document, newest first.
+func (h *handler) documentActivity(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	limit, offset := q.limit(50, 200), q.offset()
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	items, total, err := h.store.ListDocumentActivity(r.Context(), r.PathValue("key"), r.PathValue("name"), limit, offset)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope(items, total, limit, offset))
 }
 
 func (h *handler) getDocument(w http.ResponseWriter, r *http.Request) {

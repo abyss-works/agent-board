@@ -463,12 +463,91 @@ func (f DocumentFilter) Values() url.Values {
 }
 
 // PutDocument registers a record document of a project with the folder it lies
-// in and its original content. The server stores the content as it is; the same
-// content again changes nothing or moves the document, and other content under
-// the same name is refused with 409 (reason immutable).
+// in and its original content, as clients of v0.8.x do; PutDocumentWith is the
+// call with metadata. The server stores the content as it is; the same content
+// again changes nothing, and other content under the same name is refused with
+// 409 (reason immutable).
 func (c *Client) PutDocument(ctx context.Context, project, name, location, content string) (*Response, error) {
 	path := "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
 	return c.Request(ctx, http.MethodPut, path, map[string]any{"location": location, "content": content}, nil)
+}
+
+// DocumentPut is a put request of a record document with its metadata. A field
+// left nil is not sent and the front matter or the fallback of the server
+// decides it; a list that is empty but not nil is sent as an empty list.
+type DocumentPut struct {
+	Content    string
+	Kind       *string
+	Date       *string
+	Title      *string
+	Path       *string
+	Tags       []string
+	Supersedes []string
+	Related    []string
+	Issues     []string
+	Archived   *bool
+	Imported   *bool
+}
+
+func (p DocumentPut) body() map[string]any {
+	b := map[string]any{"content": p.Content}
+	for name, v := range map[string]*string{"kind": p.Kind, "date": p.Date, "title": p.Title, "path": p.Path} {
+		if v != nil {
+			b[name] = *v
+		}
+	}
+	for name, v := range map[string][]string{"tags": p.Tags, "supersedes": p.Supersedes, "related": p.Related, "issues": p.Issues} {
+		if v != nil {
+			b[name] = v
+		}
+	}
+	for name, v := range map[string]*bool{"archived": p.Archived, "imported": p.Imported} {
+		if v != nil {
+			b[name] = *v
+		}
+	}
+	return b
+}
+
+// PutDocumentWith registers a record document with the metadata of p. The
+// answer is 201 for a new document and 200 for the same content and metadata;
+// other content is refused with 409 (reason immutable) and other metadata with
+// 409 (reason metadata_differs). The body of the answer carries warnings.
+func (c *Client) PutDocumentWith(ctx context.Context, project, name string, p DocumentPut) (*Response, error) {
+	return c.Request(ctx, http.MethodPut, documentPath(project, name), p.body(), nil)
+}
+
+func documentPath(project, name string) string {
+	return "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
+}
+
+// ArchiveDocument marks a record document archived, and UnarchiveDocument takes
+// the mark off. Both answer with the document.
+func (c *Client) ArchiveDocument(ctx context.Context, project, name string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, documentPath(project, name)+"/archive", nil, nil)
+}
+
+func (c *Client) UnarchiveDocument(ctx context.Context, project, name string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, documentPath(project, name)+"/archive", nil, nil)
+}
+
+// AddDocumentRelation adds one relation to a record document, and
+// RemoveDocumentRelation takes one away. kind is supersedes, related or about;
+// the target is a document name, or an issue key for about.
+func (c *Client) AddDocumentRelation(ctx context.Context, project, name, kind, target string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, documentPath(project, name)+"/relations", map[string]string{"kind": kind, "target": target}, nil)
+}
+
+func (c *Client) RemoveDocumentRelation(ctx context.Context, project, name, kind, target string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, documentPath(project, name)+"/relations", map[string]string{"kind": kind, "target": target}, nil)
+}
+
+// DocumentActivity lists the changes of the archive mark and the relations of a
+// record document, newest first.
+func (c *Client) DocumentActivity(ctx context.Context, project, name string, p Page) (*Response, error) {
+	v := url.Values{}
+	p.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery(documentPath(project, name)+"/activity", v), nil, nil)
 }
 
 // ListDocuments lists the record documents of a project by name, without their
