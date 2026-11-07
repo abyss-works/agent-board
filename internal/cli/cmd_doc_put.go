@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/internal/model"
 )
 
 // fileRepo finds the repository of a file: the nearest folder above it that
@@ -158,11 +157,7 @@ follow_up_headings 에 적은 제목의 ## 절이 있는 새 문서는 그 항�
 		if err := a.emit(g, resp, a.renderDocument); err != nil {
 			return err
 		}
-		if put, err := decode[model.DocumentResult](resp); err == nil {
-			for _, w := range put.Warnings {
-				fmt.Fprintf(a.Stderr, "경고: %s: %s\n", w.Field, w.Message)
-			}
-		}
+		a.printWarnings(resp)
 		if fu := followUps(content, cfgHeadings(cfg)); !isImported && resp.Status == http.StatusCreated && len(fu) > 0 {
 			fmt.Fprintln(a.Stderr, "후속 항목이 있습니다. 이슈로 추적할 것은 등록하고 참조 doc:<문서 이름>을 붙이세요.")
 			writeFollowUps(a.Stderr, name, fu)

@@ -16,8 +16,9 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·목록·검색·조회", subs: []*command{
-	docNewCmd, docCheckCmd, docPutCmd, docSyncCmd, docListCmd, docSearchCmd, docGetCmd,
+var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·상태 수정·목록·검색·조회", subs: []*command{
+	docNewCmd, docCheckCmd, docPutCmd, docSyncCmd, docArchiveCmd, docUnarchiveCmd, docLinkCmd, docUnlinkCmd, docActivityCmd,
+	docListCmd, docSearchCmd, docGetCmd,
 }}
 
 // errNotUTF8 reports a record document file that is not text the server could
