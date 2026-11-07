@@ -13,7 +13,7 @@ const (
 	// similarFloor is the lowest cosine similarity that still links two
 	// documents. Chosen on the records of four management repositories with
 	// qwen/qwen3-embedding-8b; another model may need another floor.
-	similarFloor = 0.0
+	similarFloor = 0.70
 )
 
 // similarPairs finds, for each document among rows, the nearest other
