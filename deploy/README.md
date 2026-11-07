@@ -31,6 +31,7 @@ EndpointSlice의 주소와 포트는 환경 파일의 `AGB_BIND`, `AGB_PORT`와 
 - `AGB_TOKEN`: 공용 토큰. 32자 이상이어야 한다.
 - `AGB_ACTORS`: 행위자 목록. `id:kind`를 쉼표로 잇는다. 예: `owner:user,claude:agent`
 - `AGB_BACKUP_BUCKET`, `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY`: S3 호환 오브젝트 저장소(Cloudflare R2) 백업 설정이다. 모두 생략하면 백업이 꺼진다. 버킷을 지정하면 나머지 셋도 필요하다. 엔드포인트는 `https://<계정 ID>.r2.cloudflarestorage.com` 형식이고, 키는 그 버킷 하나에 객체 읽기·쓰기 권한만 준 R2 API 토큰의 S3 자격 증명이다. 백업이 켜지면 서버 시작 직후와 이후 1시간마다(바뀐 것이 있을 때) 스냅샷을 올린다.
+- `AGB_EMBEDDING_API_KEY`, `AGB_EMBEDDING_URL`, `AGB_EMBEDDING_MODEL`, `AGB_EMBEDDING_QUERY_PREFIX`, `AGB_EMBEDDING_INTERVAL`: 의미 검색 설정이다. 모두 생략하면 의미 검색이 꺼지고 키워드 검색만 한다. 키를 지정하면 URL과 모델도 필요하다. 각 키의 뜻은 저장소 루트 `README.md`의 환경 변수 표를 따른다.
 
 ### 러너
 
