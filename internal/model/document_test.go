@@ -2,22 +2,20 @@ package model
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestDocumentEnums(t *testing.T) {
-	if want := []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation, DocumentOther}; !reflect.DeepEqual(DocumentKinds, want) {
-		t.Fatalf("DocumentKinds = %v, want %v", DocumentKinds, want)
-	}
 	if want := []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}; !reflect.DeepEqual(DocumentLocations, want) {
 		t.Fatalf("DocumentLocations = %v, want %v", DocumentLocations, want)
 	}
-	for _, v := range []string{"decision", "incident", "report", "implementation", "other"} {
+	for _, v := range []string{"decision", "incident", "report", "implementation", "other", "lesson", "a1_b", "a", strings.Repeat("a", 32)} {
 		if got, ok := ParseDocumentKind(v); !ok || string(got) != v {
 			t.Errorf("ParseDocumentKind(%q) = %q, %v", v, got, ok)
 		}
 	}
-	for _, v := range []string{"", "plan", "Decision", "note", "decision,report"} {
+	for _, v := range []string{"", "Lesson", "a-b", "1a", "_a", "a b", "한글", strings.Repeat("a", 33), "decision,report"} {
 		if _, ok := ParseDocumentKind(v); ok {
 			t.Errorf("ParseDocumentKind(%q) must fail", v)
 		}
@@ -57,6 +55,9 @@ func TestParseDocumentName(t *testing.T) {
 		"2026-10-21-0900-report-0123456789.md":            DocumentReport,
 		"1999-01-01-0000-report-x.md":                     DocumentReport,
 		"2026-10-21-0900-implementation-a-b-c-d-e-f-g.md": DocumentImplementation,
+		"2026-10-21-0900-lesson-retry-twice.md":           "lesson",
+		"2026-10-21-0900-a1_b-x.md":                       "a1_b",
+		"2026-10-21-0900-plan-x.md":                       "plan",
 	}
 	for name, want := range valid {
 		if got, ok := ParseDocumentName(name); !ok || got != want {
@@ -69,7 +70,9 @@ func TestParseDocumentName(t *testing.T) {
 		"2026-10-20-1544-decision-priority-model",
 		"2026-10-20-1544-decision-priority-model.txt",
 		"2026-10-20-1544-decision-priority-model.md.md",
-		"2026-10-20-1544-plan-priority-model.md",
+		"2026-10-20-1544-Plan-priority-model.md",
+		"2026-10-20-1544-1a-priority-model.md",
+		"2026-10-20-1544-" + strings.Repeat("a", 33) + "-x.md",
 		"2026-10-20-1544-Decision-priority-model.md",
 		"2026-10-20-1544-decision-Priority.md",
 		"2026-10-20-1544-decision-priority_model.md",

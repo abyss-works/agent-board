@@ -467,6 +467,7 @@ func TestSearchDocuments(t *testing.T) {
 		"?project=NOPE":                            "",
 		"?kind=decision":                           join(apiDocPriority, apiDocBare),
 		"?kind=decision,report":                    join(apiDocPriority, apiDocLinear, apiDocBare),
+		"?kind=lesson":                             "",
 		"?state=archived":                          apiDocRelease,
 		"?state=current,archived":                  all,
 		"?project=AGB&kind=decision&state=current": join(apiDocPriority, apiDocBare),
@@ -493,7 +494,7 @@ func TestSearchDocuments(t *testing.T) {
 	}
 
 	for _, query := range []string{
-		"?kind=plan", "?kind=decision,plan", "?location=history", "?state=old", "?project=agb", "?project=A", "?project=AGB,x",
+		"?kind=Bad", "?kind=decision,Bad", "?kind=a-b", "?location=history", "?state=old", "?project=agb", "?project=A", "?project=AGB,x",
 		"?kind=decision&kind=report", "?project=AGB&project=OTH", "?q=a&q=b", "?limit=0", "?limit=201", "?offset=-1",
 		"?sort=date", "?status=all", "?content=true",
 		"?q=" + url.QueryEscape(strings.Repeat("a ", 11)),
@@ -509,6 +510,19 @@ func TestSearchDocuments(t *testing.T) {
 	}
 	if rec, l := search("?limit=200"); rec.Code != 200 || l.Limit != 200 {
 		t.Errorf("limit 200: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDocumentOfANewKindIsStoredAndFiltered(t *testing.T) {
+	e := newEnv(t)
+	e.seedDocuments(t)
+	const lesson = "2026-10-22-1000-lesson-retry-twice.md"
+	e.mustPutDocument(t, "AGB", lesson, "history", apiDocText("lesson", "두 번 재시도한다."))
+	for query, want := range map[string]string{"?kind=lesson": lesson, "?kind=lesson,report": lesson + "," + apiDocLinear} {
+		rec, l := e.getDocuments(t, "/v1/documents"+query)
+		if rec.Code != 200 || apiDocNames(l.Items) != want {
+			t.Errorf("%s: %d %s", query, rec.Code, rec.Body.String())
+		}
 	}
 }
 
