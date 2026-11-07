@@ -88,7 +88,7 @@ var RelationKinds = []RelationKind{RelSupersedes, RelRelated, RelAbout}
 func ParseRelationKind(v string) (RelationKind, bool) { return parseEnum(v, RelationKinds) }
 
 // MaxDocumentBytes is the largest content of a record document.
-const MaxDocumentBytes = 256 * 1024
+const MaxDocumentBytes = 1024 * 1024
 
 // MaxDocumentPathRunes is the longest path of a record document.
 const MaxDocumentPathRunes = 500

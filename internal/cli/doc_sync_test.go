@@ -159,7 +159,7 @@ func TestDocSyncUploadsOnlyCommittedFiles(t *testing.T) {
 		".gitignore":          "notes/*ignored*\n",
 		"notes/" + nCommitted: docText("decision", "커밋"),
 		"notes/" + nEdited:    docText("decision", "고치기 전"),
-		"notes/" + nBig:       "x" + strings.Repeat("a", 256*1024),
+		"notes/" + nBig:       "x" + strings.Repeat("a", 1<<20),
 	})
 	commitAll(t, root)
 	writeFiles(t, root, map[string]string{
@@ -180,7 +180,7 @@ func TestDocSyncUploadsOnlyCommittedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(got.Skipped, "\n")
-	for _, want := range []string{"notes/" + nEdited, "notes/" + nDraft, "notes/" + nBig + " (256KB 초과)"} {
+	for _, want := range []string{"notes/" + nEdited, "notes/" + nDraft, "notes/" + nBig + " (1MB 초과)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("skipped lacks %q: %v", want, got.Skipped)
 		}
