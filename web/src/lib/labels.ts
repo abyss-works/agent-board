@@ -52,7 +52,7 @@ export const DOCUMENT_KIND_LABEL: Record<string, string> = {
 
 /** 종류의 이름. 이름 표에 없는 종류는 서버가 준 문자열 그대로 보인다. */
 export function documentKindLabel(kind: DocumentKind): string {
-  return DOCUMENT_KIND_LABEL[kind] ?? kind
+  return Object.hasOwn(DOCUMENT_KIND_LABEL, kind) ? DOCUMENT_KIND_LABEL[kind] : kind
 }
 
 export const DOCUMENT_STATE_LABEL: Record<DocumentState, string> = {

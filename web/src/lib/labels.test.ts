@@ -20,4 +20,8 @@ describe('documentKindLabel', () => {
     expect(documentKindLabel('decision')).toBe('결정')
     expect(documentKindLabel('lesson')).toBe('lesson')
   })
+  it('Object의 속성 이름도 원문으로 보인다', () => {
+    expect(documentKindLabel('constructor')).toBe('constructor')
+    expect(documentKindLabel('toString')).toBe('toString')
+  })
 })
