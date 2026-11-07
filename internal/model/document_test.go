@@ -333,3 +333,24 @@ func TestFrontMatterEntries(t *testing.T) {
 		t.Error("content without a block must report false")
 	}
 }
+
+func TestFrontMatterRawEntriesKeepTheValueAsWritten(t *testing.T) {
+	content := `---
+supersedes: "a.md" 의 일부 # 설명
+related: 'b.md'
+title: "x #y"
+empty:
+---
+본문
+`
+	got, ok := FrontMatterRawEntries(content)
+	want := []FrontMatterEntry{{"supersedes", `"a.md" 의 일부`}, {"related", `'b.md'`}, {"title", `"x`}, {"empty", ""}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("raw entries = %v (%v), want %v", got, ok, want)
+	}
+	// The scalar reading is the same as before: the quoted part only.
+	scalar, _ := FrontMatterEntries(content)
+	if scalar[0].Value != "a.md" || scalar[2].Value != "x #y" {
+		t.Errorf("entries = %v", scalar)
+	}
+}

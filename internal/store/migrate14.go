@@ -145,13 +145,14 @@ func backfillRelations(ctx context.Context, tx *sql.Tx, c *backfillCounts) error
 
 	for _, d := range docs {
 		c.Documents++
-		entries, ok := model.FrontMatterEntries(d.content)
+		entries, ok := model.FrontMatterRawEntries(d.content)
 		if !ok {
 			continue
 		}
 		for _, en := range entries {
 			switch en.Key {
 			case "supersedes", "related":
+				// The value as written: a quoted name followed by words is a sentence.
 				names := backfillFileRE.FindAllString(en.Value, -1)
 				if len(names) == 0 || model.IsPlaceholder(en.Value) {
 					if strings.TrimSpace(en.Value) != "" {

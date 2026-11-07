@@ -314,6 +314,19 @@ type FrontMatterEntry struct {
 // lines and lines without a colon are skipped. ok is false when content does
 // not start with a closed block.
 func FrontMatterEntries(content string) (entries []FrontMatterEntry, ok bool) {
+	return frontMatterEntries(content, yamlScalar)
+}
+
+// FrontMatterRawEntries lists the lines of FrontMatterEntries with the value as
+// written: quotes stay and so does any text after a closing quote, and only the
+// space around the value and a trailing comment (" #") are dropped. A reader
+// that has to tell a name from a sentence about it needs this form, since
+// yamlScalar keeps just the quoted part.
+func FrontMatterRawEntries(content string) (entries []FrontMatterEntry, ok bool) {
+	return frontMatterEntries(content, rawScalar)
+}
+
+func frontMatterEntries(content string, read func(string) string) (entries []FrontMatterEntry, ok bool) {
 	first, rest, found := strings.Cut(content, "\n")
 	if !found || !isFence(first) {
 		return nil, false
@@ -328,9 +341,22 @@ func FrontMatterEntries(content string) (entries []FrontMatterEntry, ok bool) {
 		if !hasValue || key == "" || key[0] == ' ' || key[0] == '\t' || key[0] == '#' {
 			continue
 		}
-		entries = append(entries, FrontMatterEntry{strings.TrimRight(key, " \t"), yamlScalar(value)})
+		entries = append(entries, FrontMatterEntry{strings.TrimRight(key, " \t"), read(value)})
 	}
 	return nil, false
+}
+
+// rawScalar is the text of a single-line value without the space around it and
+// without the comment (" #") that ends it.
+func rawScalar(v string) string {
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "#") {
+		return ""
+	}
+	if i := strings.Index(v, " #"); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
 }
 
 // IsPlaceholder reports whether a front matter value is a template

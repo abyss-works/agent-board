@@ -280,3 +280,30 @@ func TestMigration14FromTheStartAddsTheTables(t *testing.T) {
 		}
 	}
 }
+
+// A quoted value is read whole: what follows the closing quote makes it a
+// sentence, so the replacement is partial and the relation is related.
+func TestMigration14ReadsTheWholeLineOfAQuotedValue(t *testing.T) {
+	path := openAt13(t, func(db *sql.DB) {
+		seed13(t, db)
+		insertOldDoc(t, db, 12, 1, "2026-10-09-1000-report-quoted-sentence.md", "history", "report", fm("kind: report", `supersedes: "`+mA+`" 의 결론 중 일부`))
+		insertOldDoc(t, db, 13, 1, "2026-10-09-1100-report-quoted-name.md", "history", "report", fm("kind: report", `supersedes: "`+mA+`"   # 대체`))
+		insertOldDoc(t, db, 14, 1, "2026-10-09-1200-report-quoted-list.md", "history", "report", fm("kind: report", `supersedes: ["`+mA+`", '`+mB+`']`))
+	})
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got := queryStrings(t, s, `select r.document_id, r.kind, t.name from document_relation r join document t on t.id = r.target_document_id
+		where r.document_id >= 12 order by 1, 3`)
+	want := []string{
+		"12|related|" + mA,
+		"13|supersedes|" + mA,
+		"14|supersedes|" + mA,
+		"14|supersedes|" + mB,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("relations =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
