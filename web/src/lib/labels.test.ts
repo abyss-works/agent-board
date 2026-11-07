@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { STATUS_LABEL, TYPE_LABEL, statusLabel, typeLabel } from './labels'
+import { STATUS_LABEL, TYPE_LABEL, documentKindLabel, statusLabel, typeLabel } from './labels'
 
 describe('이름 표', () => {
   it('상태 이름은 서버의 여섯 상태에만 있다', () => {
@@ -12,5 +12,12 @@ describe('이름 표', () => {
     expect(statusLabel('todo')).toBe('할 일')
     expect(typeLabel('decision')).toBe('결정 대기')
     expect(statusLabel('unknown')).toBe('unknown')
+  })
+})
+
+describe('documentKindLabel', () => {
+  it('알려진 종류는 이름으로, 모르는 종류는 원문으로 보인다', () => {
+    expect(documentKindLabel('decision')).toBe('결정')
+    expect(documentKindLabel('lesson')).toBe('lesson')
   })
 })

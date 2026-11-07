@@ -2,7 +2,7 @@ import { ArchiveIcon, FileTextIcon, SearchIcon, XIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useDocuments, type DocumentFilters } from '@/api/queries'
-import { DOCUMENT_KINDS, DOCUMENT_STATES, type DocumentKind, type DocumentState, type RecordDocument } from '@/api/types'
+import { DOCUMENT_STATES, type DocumentKind, type DocumentState, type RecordDocument } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { LabelChip } from '@/components/issue/meta'
@@ -11,8 +11,8 @@ import { PageHeader } from '@/components/layout/page-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { documentPath } from '@/lib/documents'
-import { DOCUMENT_KIND_LABEL, DOCUMENT_STATE_LABEL } from '@/lib/labels'
+import { documentKindOptions, documentPath } from '@/lib/documents'
+import { DOCUMENT_STATE_LABEL, documentKindLabel } from '@/lib/labels'
 import { cn } from '@/lib/utils'
 import { FilterMenu } from './issues-page'
 
@@ -29,7 +29,7 @@ function DocumentRow({ doc, showProject }: { doc: RecordDocument; showProject: b
       <span className="w-28 shrink-0 pt-px text-[0.6875rem] tabular-nums text-muted-foreground">{doc.date ?? doc.name.slice(0, 10)}</span>
       {showProject ? <span className="w-10 shrink-0 pt-px font-mono text-[0.6875rem] text-muted-foreground">{doc.project}</span> : null}
       <Badge variant="outline" className="shrink-0">
-        {DOCUMENT_KIND_LABEL[doc.kind]}
+        {documentKindLabel(doc.kind)}
       </Badge>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -118,7 +118,9 @@ export function DocumentsPage() {
   }
 
   const filters: DocumentFilters = { project, q, kind, state }
-  const total = useDocuments(filters).data?.total
+  const loaded = useDocuments(filters).data
+  const total = loaded?.total
+  const kindOptions = documentKindOptions([...(loaded?.items.map((d) => d.kind) ?? []), ...kind])
   const hasFilter = kind.length + state.length > 0 || q !== ''
 
   return (
@@ -140,10 +142,10 @@ export function DocumentsPage() {
         <FilterMenu
           label="종류"
           icon={<FileTextIcon className="size-3.5 text-muted-foreground" />}
-          values={DOCUMENT_KINDS}
+          values={kindOptions}
           selected={kind}
           onToggle={toggle('kind', kind)}
-          render={(k: DocumentKind) => DOCUMENT_KIND_LABEL[k]}
+          render={(k: DocumentKind) => documentKindLabel(k)}
         />
         <FilterMenu
           label="상태"

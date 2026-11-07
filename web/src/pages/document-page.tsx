@@ -11,7 +11,7 @@ import { Markdown } from '@/components/markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { frontMatterIssueKeys, splitFrontMatter } from '@/lib/documents'
-import { DOCUMENT_KIND_LABEL, DOCUMENT_STATE_LABEL } from '@/lib/labels'
+import { DOCUMENT_STATE_LABEL, documentKindLabel } from '@/lib/labels'
 import { formatKst } from '@/lib/time'
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -29,7 +29,7 @@ function Meta({ doc, issueKeys }: { doc: RecordDocument; issueKeys: string[] }) 
       <Field label="프로젝트">
         <span className="font-mono">{doc.project}</span>
       </Field>
-      <Field label="종류">{DOCUMENT_KIND_LABEL[doc.kind]}</Field>
+      <Field label="종류">{documentKindLabel(doc.kind)}</Field>
       <Field label="날짜">{doc.date ?? '없음'}</Field>
       <Field label="상태">{DOCUMENT_STATE_LABEL[doc.state]}</Field>
       {doc.tags.length > 0 ? (
@@ -86,7 +86,7 @@ export function DocumentPage() {
             기록
           </span>
         }
-        meta={doc ? <Badge variant="outline">{DOCUMENT_KIND_LABEL[doc.kind]}</Badge> : null}
+        meta={doc ? <Badge variant="outline">{documentKindLabel(doc.kind)}</Badge> : null}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {q.isPending ? <Loading /> : null}
