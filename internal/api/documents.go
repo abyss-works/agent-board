@@ -51,8 +51,8 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in store.DocumentInput
-	var location string
-	if aerr := firstError(decodeField(b, "content", &in.Content), decodeField(b, "location", &location)); aerr != nil {
+	var location *string
+	if aerr := firstError(decodeField(b, "content", &in.Content), decodeOptional(b, "location", &location)); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
@@ -68,8 +68,13 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, name := r.PathValue("key"), r.PathValue("name")
-	if location != "" {
-		loc, ok := model.ParseDocumentLocation(location)
+	if location != nil {
+		// A location is checked after the project, as every value is: 404, 409, then 422.
+		if err := h.checkProjectActive(r, project); err != nil {
+			writeError(w, h.storeError(r, err))
+			return
+		}
+		loc, ok := model.ParseDocumentLocation(*location)
 		if !ok {
 			writeError(w, validationFailed([]Detail{{Field: "location", Message: "history, archive, legacy 중 하나여야 합니다."}}))
 			return
@@ -89,6 +94,19 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, d)
+}
+
+// checkProjectActive reports a project that does not exist or is not active
+// with the error the store gives for it.
+func (h *handler) checkProjectActive(r *http.Request, key string) error {
+	p, err := h.store.GetProject(r.Context(), key)
+	if err != nil {
+		return err
+	}
+	if p.Status != model.ProjectActive {
+		return store.ErrProjectNotActive
+	}
+	return nil
 }
 
 func firstError(errs ...*apiError) *apiError {

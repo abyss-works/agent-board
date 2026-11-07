@@ -525,3 +525,33 @@ func sameSet(a, b string) bool {
 	}
 	return true
 }
+
+func TestPutDocumentLocationValidation(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	content := jsonString(apiDocText("decision", "본문"))
+
+	// A location that is sent but empty is not a location: 422, not a skipped compatibility branch.
+	for _, loc := range []string{`""`, `"stuff"`, `"History"`} {
+		rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":`+content+`,"location":`+loc+`}`, nil)
+		if rec.Code != 422 || !reflect.DeepEqual(details(t, rec), []string{"location:"}) {
+			t.Errorf("location %s: %d %s", loc, rec.Code, rec.Body.String())
+		}
+	}
+	// A null location is a location that was not sent.
+	if rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":`+content+`,"location":null}`, nil); rec.Code != 201 {
+		t.Errorf("null location: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The checks run in the order of the specification: project (404), activity (409), then values (422).
+	bad := `{"content":` + content + `,"location":"stuff"}`
+	if rec := e.do(t, "PUT", documentPath("NONE", stNew), bad, nil); rec.Code != 404 {
+		t.Errorf("unknown project: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do(t, "PATCH", "/v1/projects/AGB", `{"status":"archived"}`, nil); rec.Code != 200 {
+		t.Fatalf("archive project: %d", rec.Code)
+	}
+	if rec := e.do(t, "PUT", documentPath("AGB", stNew), bad, nil); rec.Code != 409 || !reflect.DeepEqual(details(t, rec), []string{":project_not_active"}) {
+		t.Errorf("archived project: %d %s", rec.Code, rec.Body.String())
+	}
+}
