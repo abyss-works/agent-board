@@ -424,3 +424,35 @@ func TestDocSyncAndPutReportFollowUps(t *testing.T) {
 		t.Errorf("no headings: code=%d out=%s", code, h2.stdout)
 	}
 }
+
+// A file under a folder named history is classified by the rules of .agb.json
+// alone, by put and by sync alike; the folder name is no input.
+func TestDocPutAndSyncClassifyAFileByTheSameRule(t *testing.T) {
+	const rel = "archive/x/history/a.md"
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		".agb.json": `{"project": "CLI", "documents": [{"glob": "archive/**/*.md", "name": "path", "imported": true, "archived": true}]}`,
+		rel:         "# 조사\n\n본문\n",
+	})
+	commitAll(t, root)
+	srv := docSyncServer(t, nil, map[string]canned{putPath(rel): {status: 201, body: serverDoc("CLI", rel, "history", "a")}})
+	h := newHarness(t, srv, false)
+
+	if code := h.run("doc", "put", filepath.Join(root, filepath.FromSlash(rel))); code != 0 {
+		t.Fatalf("put code=%d stderr=%s", code, h.stderr)
+	}
+	putReq := srv.last()
+	if code := h.run("doc", "sync", "--root", root); code != 0 {
+		t.Fatalf("sync code=%d stderr=%s", code, h.stderr)
+	}
+	puts := srv.putRequests()
+	if len(puts) != 2 {
+		t.Fatalf("puts = %v", srv.puts())
+	}
+	if puts[0].Path != puts[1].Path || puts[0].Body != puts[1].Body {
+		t.Errorf("put and sync differ:\nput  %s %s\nsync %s %s", puts[0].Path, puts[0].Body, puts[1].Path, puts[1].Body)
+	}
+	if body := decodeBody(t, putReq); body["imported"] != true || body["archived"] != true || strings.Contains(putReq.Body, "location") {
+		t.Errorf("body = %v", body)
+	}
+}
