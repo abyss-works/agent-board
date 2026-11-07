@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -176,5 +177,22 @@ func TestMessageErrors(t *testing.T) {
 	}
 	if rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"title":"t"}`, map[string]string{"Authorization": "-", "X-Actor": "-"}); rec.Code != 401 {
 		t.Errorf("without auth: %d", rec.Code)
+	}
+}
+
+func TestMessageWritesNeedActiveProject(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	m := e.putMessage(t, "AGB", `{"title":"t"}`)
+	if rec := e.do(t, "PATCH", "/v1/projects/AGB", `{"status":"archived"}`, nil); rec.Code != 200 {
+		t.Fatalf("archive: %d %s", rec.Code, rec.Body)
+	}
+	for _, rec := range []*httptest.ResponseRecorder{
+		e.do(t, "POST", "/v1/projects/AGB/messages", `{"title":"t"}`, nil),
+		e.do(t, "DELETE", fmt.Sprintf("/v1/messages/%d", m.ID), "", nil),
+	} {
+		if rec.Code != 409 || !strings.Contains(rec.Body.String(), "project_not_active") || !strings.Contains(rec.Body.String(), "메시지") {
+			t.Errorf("%d %s", rec.Code, rec.Body)
+		}
 	}
 }

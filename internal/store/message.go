@@ -182,12 +182,20 @@ func (s *Store) CreateMessage(ctx context.Context, tr model.Trace, project strin
 }
 
 // DeleteMessage marks a message deleted. The row stays. Deleting a message
-// that is already deleted changes nothing.
+// that is already deleted changes nothing. A project that is not active
+// takes no deletion, like any other write.
 func (s *Store) DeleteMessage(ctx context.Context, tr model.Trace, id int64) (*model.Message, error) {
 	now := s.stamp()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if _, err := getMessage(ctx, tx, id, now); err != nil {
 			return err
+		}
+		var status string
+		if err := tx.QueryRowContext(ctx, `select p.status from message m join project p on p.id = m.project_id where m.id = ?`, id).Scan(&status); err != nil {
+			return err
+		}
+		if model.ProjectStatus(status) != model.ProjectActive {
+			return ErrProjectNotActive
 		}
 		_, err := tx.ExecContext(ctx, `update message set deleted_at = ?, deleted_by = ? where id = ? and deleted_at is null`, now.String(), tr.Actor, id)
 		return err

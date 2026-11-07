@@ -217,3 +217,19 @@ func TestMessageAge(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteMessageNeedsActiveProject(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	m := putMessage(t, s, "AGB", "", "t", "")
+	st := model.ProjectArchived
+	if _, err := s.UpdateProject(ctx, trOwner, "AGB", ProjectPatch{Status: &st}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteMessage(ctx, trOwner, m.ID); !errors.Is(err, ErrProjectNotActive) {
+		t.Errorf("delete in archived project err = %v", err)
+	}
+	if got, _ := s.GetMessage(ctx, m.ID); got.State != model.MessageActive {
+		t.Errorf("state = %s", got.State)
+	}
+}
