@@ -990,7 +990,7 @@ func TestMigrateAddsDocumentToVersion7Database(t *testing.T) {
 	}
 	for label, err := range map[string]error{
 		"the same name again":      insert("a.md", "report", 0),
-		"an unknown kind":          insert("c.md", "plan", 0),
+		"a kind over 32 chars":     insert("c.md", strings.Repeat("a", 33), 0),
 		"an empty kind":            insert("d.md", "", 0),
 		"kind other not imported":  insert("e.md", "other", 0),
 		"imported out of the flag": insert("f.md", "decision", 2),
