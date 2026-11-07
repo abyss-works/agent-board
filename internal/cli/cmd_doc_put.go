@@ -51,6 +51,9 @@ var docPutCmd = &command{
 
 follow_up_headings 에 적은 제목의 ## 절이 있는 새 문서는 그 항목을 표준 오류에 알립니다.
 
+필드별 우선순위, 상태, 참조 표기, 오류 코드와 대처, 형식에 맞지 않는 문서를 올리는 법은 agb help doc-format
+으로 봅니다. .agb.json 의 규칙은 agb help repo-config 로 봅니다.
+
 옵션:
   --project, -p <KEY>     프로젝트 키. 없으면 .agb.json 의 project
   --kind <종류>           decision, incident, report, implementation, other(가져온 문서만)

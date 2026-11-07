@@ -88,3 +88,17 @@ func TestRecallWidensTheScopeAndShowsDocumentStates(t *testing.T) {
 		}
 	}
 }
+
+// The help is the reference for the output: the skill does not repeat it.
+func TestRecallHelpDescribesOutput(t *testing.T) {
+	h := newHarness(t, newFakeServer(t), true)
+	if code := h.run("recall", "--help"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	for _, want := range []string{"←", "→", "supersedes:", "superseded_by:", "items[].links[]", "edge", "direction", "node"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("recall --help lacks %q:\n%s", want, out)
+		}
+	}
+}

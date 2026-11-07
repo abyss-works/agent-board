@@ -16,10 +16,17 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·상태 수정·목록·검색·조회", subs: []*command{
+var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·상태 수정·목록·검색·조회", note: docHelpNote, subs: []*command{
 	docNewCmd, docCheckCmd, docPutCmd, docSyncCmd, docArchiveCmd, docUnarchiveCmd, docLinkCmd, docUnlinkCmd, docActivityCmd,
 	docListCmd, docSearchCmd, docGetCmd,
 }}
+
+// docHelpNote points the help of agb doc to the pages that hold the details of
+// the documents and of the .agb.json that decides which files are uploaded.
+const docHelpNote = `
+기록 문서의 형식, 메타데이터, 상태, 참조 표기, 오류와 대처는 agb help doc-format 으로 봅니다.
+.agb.json 의 키, 규칙, 예시는 agb help repo-config 로 봅니다.
+`
 
 // errNotUTF8 reports a record document file that is not text the server could
 // keep as it is.

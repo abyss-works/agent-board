@@ -2,6 +2,17 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
+## v0.9.1 (2026-11-08)
+
+### CLI
+
+- 주제 help `agb help repo-config`(`.agb.json`의 키, 규칙, 예시), `agb help doc-format`(기록 문서의 형식, 메타데이터, 상태, 참조 표기, 오류 코드와 대처, 형식에 맞지 않는 문서 올리기), `agb help migrate-v0.8`(v0.8에서 옮겨 오는 절차)을 더한다. `agb --help`가 주제 목록을 보이고, `agb init --help`, `agb doc --help`, `agb doc put --help`가 해당 주제를 가리킨다.
+
+### 스킬
+
+- 기록 문서의 세부 명세(`references/documents.md`의 메타데이터, 상태, 참조 표기, 오류 코드, `.agb.json` 스키마와 예시, 맞지 않는 문서 올리기, v0.8 이관)를 CLI help로 옮기고 스킬에는 가리키는 문장만 남긴다. `references/documents.md`에는 무엇을 올릴지 정하는 규칙만 남는다.
+- `SKILL.md`에서 CLI help와 겹치는 세부(`recall`, `find`, `graph`, `doc search`, `doc sync`, `doc new`, `doc check`, `doc put`, `digest`, `agenda`의 옵션과 출력 항목, 이슈 참조 종류, 상태 사유와 댓글 요약의 길이 한도)를 지우고 `agb <명령> --help`를 가리키게 한다. `agb recall --help`에 출력 읽는 법(연결 방향, 대체 관계 줄, JSON 필드)을 더한다.
+
 ## v0.9.0 (2026-11-07)
 
 ### 운영자 확인 사항
