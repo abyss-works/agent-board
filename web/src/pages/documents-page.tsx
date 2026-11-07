@@ -2,7 +2,7 @@ import { ArchiveIcon, FileTextIcon, SearchIcon, XIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useDocuments, type DocumentFilters } from '@/api/queries'
-import { DOCUMENT_KINDS, DOCUMENT_LOCATIONS, type DocumentKind, type DocumentLocation, type RecordDocument } from '@/api/types'
+import { DOCUMENT_KINDS, DOCUMENT_STATES, type DocumentKind, type DocumentState, type RecordDocument } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { LabelChip } from '@/components/issue/meta'
@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { documentPath } from '@/lib/documents'
-import { DOCUMENT_KIND_LABEL, DOCUMENT_LOCATION_LABEL } from '@/lib/labels'
+import { DOCUMENT_KIND_LABEL, DOCUMENT_STATE_LABEL } from '@/lib/labels'
 import { cn } from '@/lib/utils'
 import { FilterMenu } from './issues-page'
 
@@ -34,10 +34,10 @@ function DocumentRow({ doc, showProject }: { doc: RecordDocument; showProject: b
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[0.8125rem] text-foreground">{doc.title ?? doc.name}</span>
-          {doc.location === 'archive' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[0.625rem] text-muted-foreground" title="archive 폴더의 기록">
+          {doc.state !== 'current' ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[0.625rem] text-muted-foreground" title={`판단 근거가 아닌 기록: ${DOCUMENT_STATE_LABEL[doc.state]}`}>
               <ArchiveIcon className="size-3" />
-              archive
+              {DOCUMENT_STATE_LABEL[doc.state]}
             </span>
           ) : null}
         </div>
@@ -67,7 +67,7 @@ function DocumentList({ filters }: { filters: DocumentFilters }) {
   if (!items || items.length === 0) {
     let text = '기록 문서가 없습니다. 에이전트가 agb doc sync로 올립니다.'
     if (filters.q) text = '검색 결과가 없습니다. 붙여 쓴 말은 중간을 찾지 못하니 단어를 줄여 다시 찾으세요.'
-    else if (filters.kind.length + filters.location.length > 0) text = '조건에 맞는 기록 문서가 없습니다.'
+    else if (filters.kind.length + filters.state.length > 0) text = '조건에 맞는 기록 문서가 없습니다.'
     return <EmptyState>{text}</EmptyState>
   }
   return (
@@ -88,7 +88,7 @@ export function DocumentsPage() {
   const { project } = useAppState()
   const [params, setParams] = useSearchParams()
   const kind = csv(params.get('kind'))
-  const location = csv(params.get('location'))
+  const state = csv(params.get('state'))
   const q = params.get('q') ?? ''
 
   const update = (patch: Record<string, string | null>) => {
@@ -110,16 +110,16 @@ export function DocumentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const toggle = (name: 'kind' | 'location', current: readonly string[]) => (v: string, on: boolean) => {
+  const toggle = (name: 'kind' | 'state', current: readonly string[]) => (v: string, on: boolean) => {
     const set = new Set(current)
     if (on) set.add(v)
     else set.delete(v)
     update({ [name]: [...set].join(',') || null })
   }
 
-  const filters: DocumentFilters = { project, q, kind, location }
+  const filters: DocumentFilters = { project, q, kind, state }
   const total = useDocuments(filters).data?.total
-  const hasFilter = kind.length + location.length > 0 || q !== ''
+  const hasFilter = kind.length + state.length > 0 || q !== ''
 
   return (
     <>
@@ -146,12 +146,12 @@ export function DocumentsPage() {
           render={(k: DocumentKind) => DOCUMENT_KIND_LABEL[k]}
         />
         <FilterMenu
-          label="위치"
+          label="상태"
           icon={<ArchiveIcon className="size-3.5 text-muted-foreground" />}
-          values={DOCUMENT_LOCATIONS}
-          selected={location}
-          onToggle={toggle('location', location)}
-          render={(l: DocumentLocation) => DOCUMENT_LOCATION_LABEL[l]}
+          values={DOCUMENT_STATES}
+          selected={state}
+          onToggle={toggle('state', state)}
+          render={(s: DocumentState) => DOCUMENT_STATE_LABEL[s]}
         />
         <div className="ml-auto flex items-center gap-1">
           {hasFilter ? (

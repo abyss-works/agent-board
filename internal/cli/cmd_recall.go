@@ -21,6 +21,9 @@ var recallCmd = &command{
 issue·supersedes·related, 그리고
 의미 검색을 켠 서버에서는 내용이 비슷한 문서(similar, 점수 표시)입니다. 댓글이 찾아지면 그 댓글이 달린 이슈의 연결을 봅니다.
 
+작업 전 선례를 찾는 명령이라 기본은 지운 것을 뺀 모든 이슈와 유효한 문서(current)입니다. 대체됨·아카이브
+문서는 --state 로 넓힙니다. 결과 옆의 괄호는 이슈의 상태나 문서의 상태입니다.
+
 서버가 의미 검색을 켜 두었으면 질문 문장을 그대로 줍니다. 키워드 검색만 하는 서버에서는 모든 단어를 AND 로
 찾으므로 핵심어 두세 개를 줍니다.
 
@@ -28,6 +31,8 @@ issue·supersedes·related, 그리고
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --type <T>              issue, comment, document. 쉼표 OR
   --comment-kind <K>      댓글 종류 decision, finding, lesson. 쉼표 OR
+  --status <S>            이슈와 댓글이 달린 이슈의 상태. 기본은 지운 것을 뺀 전부. open, closed, all 또는 상태 이름. 쉼표 OR
+  --state <S>             문서의 상태. current(기본, 유효), superseded, archived, all. 쉼표 OR
   --limit <N>             연결을 붙일 검색 결과 수. 기본 5, 최대 20
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
@@ -37,6 +42,8 @@ issue·supersedes·related, 그리고
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Type, "type", "", "")
 		fs.StringVar(&f.CommentKind, "comment-kind", "", "")
+		fs.StringVar(&f.Status, "status", "", "")
+		fs.StringVar(&f.State, "state", "", "")
 		fs.IntVar(&f.Limit, "limit", 5, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -65,7 +72,7 @@ issue·supersedes·related, 그리고
 		for _, h := range hits.Items {
 			item := recallItem{Hit: h, Links: []recallLink{}}
 			node := recallNode(h)
-			gr, err := c.Graph(ctx, node, 1)
+			gr, err := c.Graph(ctx, node, 1, "")
 			if err != nil {
 				return err
 			}
@@ -140,7 +147,13 @@ func (a *App) renderRecall(w io.Writer, r recallResult) {
 		if n > 0 {
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintf(w, "%d. [%s] %s %s  %s  %s\n", n+1, h.Type, h.Project, key, deref(h.Kind, "-"), deref(h.Title, "-"))
+		fmt.Fprintf(w, "%d. [%s] %s %s  %s (%s)  %s\n", n+1, h.Type, h.Project, key, deref(h.Kind, "-"), hitState(h), deref(h.Title, "-"))
+		if len(h.Supersedes) > 0 {
+			fmt.Fprintf(w, "   supersedes: %s\n", strings.Join(h.Supersedes, ", "))
+		}
+		if len(h.SupersededBy) > 0 {
+			fmt.Fprintf(w, "   superseded_by: %s\n", strings.Join(h.SupersededBy, ", "))
+		}
 		if s := strings.Join(strings.Fields(h.Snippet), " "); s != "" {
 			fmt.Fprintf(w, "   %s\n", s)
 		}
@@ -150,8 +163,8 @@ func (a *App) renderRecall(w io.Writer, r recallResult) {
 				arrow = "←"
 			}
 			status := ""
-			if l.Node.Status != nil {
-				status = " (" + *l.Node.Status + ")"
+			if s := nodeState(l.Node); s != "-" {
+				status = " (" + s + ")"
 			}
 			fmt.Fprintf(w, "   %s %s %s %s%s  %s\n", arrow, edgeLabel(l.Edge, l.Score), l.Node.ID, l.Node.Kind, status, deref(l.Node.Title, "-"))
 		}

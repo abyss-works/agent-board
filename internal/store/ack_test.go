@@ -395,7 +395,7 @@ func TestOtherChangesKeepTheAcknowledgement(t *testing.T) {
 		{"priority", IssueInput{}, IssuePatch{Priority: &p0}},
 		{"parent", IssueInput{}, IssuePatch{Parent: Optional[string]{Set: true, Value: &other.Key}}},
 		{"depends_on", IssueInput{}, IssuePatch{DependsOn: &[]string{other.Key}}},
-		{"refs", IssueInput{}, IssuePatch{Refs: &[]string{"doc:api.md"}}},
+		{"refs", IssueInput{}, IssuePatch{Refs: &[]string{"file:api.md"}}},
 		{"topic", IssueInput{}, IssuePatch{Topic: Optional[int64]{Set: true, Value: &topic.ID}}},
 		{"milestone", IssueInput{}, IssuePatch{Milestone: Optional[int64]{Set: true, Value: &milestone.ID}}},
 		{"recheck_condition", IssueInput{Type: model.TypeObservation, RecheckCondition: str("다음 릴리즈")},

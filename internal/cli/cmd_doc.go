@@ -4,14 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -20,8 +16,9 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·목록·검색·조회", subs: []*command{
-	docNewCmd, docCheckCmd, docPutCmd, docSyncCmd, docListCmd, docSearchCmd, docGetCmd,
+var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·상태 수정·목록·검색·조회", subs: []*command{
+	docNewCmd, docCheckCmd, docPutCmd, docSyncCmd, docArchiveCmd, docUnarchiveCmd, docLinkCmd, docUnlinkCmd, docActivityCmd,
+	docListCmd, docSearchCmd, docGetCmd,
 }}
 
 // errNotUTF8 reports a record document file that is not text the server could
@@ -54,290 +51,25 @@ func (a *App) renderDocument(w io.Writer, resp *client.Response) error {
 	fields(w, [][2]string{
 		{"project", d.Project},
 		{"name", d.Name},
-		{"location", string(d.Location)},
+		{"state", string(d.State)},
 		{"kind", string(d.Kind)},
 		{"date", deref(d.Date, "-")},
 		{"title", deref(d.Title, "-")},
 		{"tags", joinOr(d.Tags, "-")},
+		{"archived", yesNo(d.Archived)},
+		{"imported", yesNo(d.Imported)},
+		{"path", deref(d.Path, "-")},
+		{"supersedes", joinOr(d.Supersedes, "-")},
+		{"superseded_by", joinOr(d.SupersededBy, "-")},
+		{"related", joinOr(d.Related, "-")},
+		{"issues", joinOr(d.Issues, "-")},
+		{"unresolved", unresolvedText(d.UnresolvedRefs)},
 		{"sha256", d.SHA256},
 		{"size", strconv.Itoa(d.Size)},
 		{"created", formatTime(d.CreatedAt, a.Location) + " (" + d.CreatedBy + ")"},
 		{"updated", formatTime(d.UpdatedAt, a.Location) + " (" + d.UpdatedBy + ")"},
 	})
 	return nil
-}
-
-var docPutCmd = &command{
-	name: "put", summary: "기록 문서 파일 하나를 서버에 등록",
-	usage: `사용법: agb doc put <파일> --project <KEY>
-
-관리 저장소의 history/ 나 archive/ 에 있는 기록 문서 파일 하나를 서버에 등록합니다. 파일이 있는 폴더의
-이름이 위치(history, archive)가 되고 파일 이름이 문서 이름이 됩니다. 파일은 UTF-8 이어야 하고 읽은
-바이트 그대로 올라갑니다.
-
-이전 체계의 기록(decisions/, reports/, incidents/ 바로 아래)과 archive/ 하위 폴더의 문서는 위치가 legacy 이고,
-저장소 루트에서 본 상대 경로(예: decisions/2026-10-17-14-30-scope.md)가 문서 이름이 됩니다.
-
-- 처음 올리면 등록됩니다.
-- 같은 내용을 같은 위치로 다시 올리면 바뀌는 것이 없습니다.
-- 같은 내용을 다른 폴더의 파일로 올리면(history 에서 archive 로 옮긴 기록) 위치만 바뀝니다.
-- 같은 이름에 다른 내용이면 서버가 409(immutable)로 거절합니다. 기록 문서는 고칠 수 없습니다.
-
-처음 등록한 문서에 "남은 것", "미확인", "후속"이 든 ## 절이 있으면 그 항목을 표준 오류에 알립니다.
-
-옵션:
-  --project, -p <KEY>     프로젝트 키 (필수)
-`,
-	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		fs := leafFlags("doc put", g)
-		var project string
-		fs.StringVar(&project, "project", "", "")
-		fs.StringVar(&project, "p", "", "")
-		pos, err := parseArgs(fs, args)
-		if err != nil {
-			return err
-		}
-		path, err := one(pos, "<파일>")
-		if err != nil {
-			return err
-		}
-		if project == "" {
-			return usageErrorf("--project 가 필요합니다.")
-		}
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			return usageErrorf("경로를 해석하지 못했습니다: %v", err)
-		}
-		name, location, ok := docFileName(abs)
-		if !ok {
-			return usageErrorf("기록 문서 파일은 history 나 archive 폴더, 또는 이전 체계 폴더(decisions, reports, incidents)나 archive 하위 폴더에 있어야 합니다: %s", path)
-		}
-		content, err := readDocContent(path)
-		if err != nil {
-			return usageErrorf("파일을 읽지 못했습니다: %v", err)
-		}
-		c, err := a.client(g, true)
-		if err != nil {
-			return err
-		}
-		resp, err := c.PutDocument(ctx, project, name, string(location), content)
-		if err != nil {
-			return err
-		}
-		if err := a.emit(g, resp, a.renderDocument); err != nil {
-			return err
-		}
-		if fu := followUps(content); location != model.LocationLegacy && resp.Status == http.StatusCreated && len(fu) > 0 {
-			fmt.Fprintln(a.Stderr, "후속 항목이 있습니다. 이슈로 추적할 것은 등록하고 참조 doc:<파일명>을 붙이세요.")
-			writeFollowUps(a.Stderr, name, fu)
-		}
-		return nil
-	},
-}
-
-// docFileName names the document a file is: a file directly in history/ or
-// archive/ by its file name, or a legacy file by its path from the root of the
-// git repository that holds it.
-func docFileName(abs string) (name string, location model.DocumentLocation, ok bool) {
-	switch folder := filepath.Base(filepath.Dir(abs)); folder {
-	case string(model.LocationHistory), string(model.LocationArchive):
-		return filepath.Base(abs), model.DocumentLocation(folder), true
-	}
-	root, err := git(filepath.Dir(abs), "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", "", false
-	}
-	rel, err := filepath.Rel(root, abs)
-	if err != nil {
-		return "", "", false
-	}
-	rel = filepath.ToSlash(rel)
-	if _, ok := model.ParseLegacyName(rel); !ok {
-		return "", "", false
-	}
-	return rel, model.LocationLegacy, true
-}
-
-// docSyncResult sorts the files of a sync by what happened to them.
-type docSyncResult struct {
-	Uploaded  []string       `json:"uploaded"`
-	Moved     []string       `json:"moved"`
-	Unchanged []string       `json:"unchanged"`
-	Conflicts []docConflict  `json:"conflicts"`
-	Skipped   []string       `json:"skipped"`
-	Rejected  []docRejected  `json:"rejected"`
-	FollowUps []docFollowUps `json:"follow_ups"`
-}
-
-// docFollowUps are the open sections of a document the sync uploaded.
-type docFollowUps struct {
-	Name     string     `json:"name"`
-	Sections []followUp `json:"sections"`
-}
-
-// docConflict is a file whose content differs from the document of the same
-// name on the server. It is not uploaded.
-type docConflict struct {
-	Name         string `json:"name"`
-	LocalSHA256  string `json:"local_sha256"`
-	ServerSHA256 string `json:"server_sha256"`
-}
-
-// docRejected is a file the server, or the CLI for a file that is not UTF-8,
-// refused with a reason.
-type docRejected struct {
-	Name   string `json:"name"`
-	Reason string `json:"reason"`
-}
-
-// docFile is a record document file of the management repository.
-type docFile struct {
-	name     string
-	location model.DocumentLocation
-	path     string
-}
-
-// repoPath is the path of the file from the repository root, as git lists it.
-func (f docFile) repoPath() string {
-	if f.location == model.LocationLegacy {
-		return f.name
-	}
-	return string(f.location) + "/" + f.name
-}
-
-// legacyFolders are the folders of the earlier record system, which hold
-// their documents directly.
-var legacyFolders = []string{"decisions", "reports", "incidents"}
-
-// docEntry is what the server holds of a document that a sync compares.
-type docEntry struct {
-	location string
-	sha256   string
-}
-
-// listDocFiles lists the *.md files that lie directly in the history and
-// archive folders of root, history first, each folder by name, and then the
-// legacy files. Files named _* are templates and are left out. Files whose
-// names are not those of record documents come back as skipped.
-func listDocFiles(root string) (files []docFile, skipped []string, err error) {
-	found := false
-	for _, location := range []model.DocumentLocation{model.LocationHistory, model.LocationArchive} {
-		dir := filepath.Join(root, string(location))
-		entries, err := os.ReadDir(dir)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		found = true
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || !strings.HasSuffix(name, ".md") || strings.HasPrefix(name, "_") {
-				continue
-			}
-			if _, ok := model.ParseDocumentName(name); !ok {
-				skipped = append(skipped, name)
-				continue
-			}
-			files = append(files, docFile{name: name, location: location, path: filepath.Join(dir, name)})
-		}
-	}
-	if !found {
-		return nil, nil, usageErrorf("%s 에 history/ 나 archive/ 폴더가 없습니다. --root 로 관리 저장소 경로를 주세요.", root)
-	}
-	legacy, tooBig, err := listLegacyFiles(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	return append(files, legacy...), append(skipped, tooBig...), nil
-}
-
-// listLegacyFiles lists the documents of the earlier record system: the *.md
-// files directly in decisions/, reports/ and incidents/, then those in the
-// subfolders of archive/, by path. Only markdown is a document, so logs, code
-// and data stay out. A file over the size limit of the server comes back in
-// tooBig, marked, instead of being refused one sync after another.
-func listLegacyFiles(root string) (files []docFile, tooBig []string, err error) {
-	add := func(path string, d fs.DirEntry) error {
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		name := filepath.ToSlash(rel)
-		if _, ok := model.ParseLegacyName(name); !ok {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if info.Size() > model.MaxDocumentBytes {
-			tooBig = append(tooBig, name+" (256KB 초과)")
-			return nil
-		}
-		files = append(files, docFile{name: name, location: model.LocationLegacy, path: path})
-		return nil
-	}
-	for _, folder := range legacyFolders {
-		dir := filepath.Join(root, folder)
-		entries, err := os.ReadDir(dir)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				if err := add(filepath.Join(dir, e.Name()), e); err != nil {
-					return nil, nil, err
-				}
-			}
-		}
-	}
-	archive := filepath.Join(root, string(model.LocationArchive))
-	err = filepath.WalkDir(archive, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if path == archive && errors.Is(err, fs.ErrNotExist) {
-				return filepath.SkipDir
-			}
-			return err
-		}
-		if d.IsDir() {
-			if path != archive && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Dir(path) == archive {
-			return nil
-		}
-		return add(path, d)
-	})
-	return files, tooBig, err
-}
-
-// serverDocs lists every document of the project, page by page.
-func serverDocs(ctx context.Context, c *client.Client, project string) (map[string]docEntry, error) {
-	docs := map[string]docEntry{}
-	for offset := 0; ; {
-		resp, err := c.ListDocuments(ctx, project, client.Page{Limit: 500, Offset: offset})
-		if err != nil {
-			return nil, err
-		}
-		l, err := decode[listOf[model.Document]](resp)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range l.Items {
-			docs[d.Name] = docEntry{location: string(d.Location), sha256: d.SHA256}
-		}
-		offset += len(l.Items)
-		if len(l.Items) == 0 || offset >= l.Total {
-			return docs, nil
-		}
-	}
 }
 
 // apiReason summarizes a refusal of the server in one line.
@@ -356,227 +88,6 @@ func apiReason(e *client.Error) string {
 	return strings.Join(parts, "; ")
 }
 
-// syncDocFiles brings the files to the server and sorts them into res. A
-// refusal that is about one file puts that file aside; any other error ends
-// the sync and is returned.
-func syncDocFiles(ctx context.Context, c *client.Client, project string, files []docFile, server map[string]docEntry, res *docSyncResult) error {
-	for _, f := range files {
-		content, err := readDocContent(f.path)
-		if errors.Is(err, errNotUTF8) {
-			res.Rejected = append(res.Rejected, docRejected{Name: f.name, Reason: err.Error()})
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		sha := sha256Hex(content)
-		cur, onServer := server[f.name]
-		switch {
-		case onServer && cur.sha256 != sha:
-			res.Conflicts = append(res.Conflicts, docConflict{Name: f.name, LocalSHA256: sha, ServerSHA256: cur.sha256})
-			continue
-		case onServer && cur.location == string(f.location):
-			res.Unchanged = append(res.Unchanged, f.name)
-			continue
-		}
-		if _, err := c.PutDocument(ctx, project, f.name, string(f.location), content); err != nil {
-			var apiErr *client.Error
-			if !errors.As(err, &apiErr) {
-				return err
-			}
-			switch {
-			case apiErr.Status == http.StatusConflict && hasReason(apiErr.Details, "immutable"):
-				res.Conflicts = append(res.Conflicts, docConflict{Name: f.name, LocalSHA256: sha, ServerSHA256: immutableSHA(apiErr.Details)})
-				continue
-			case apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusRequestEntityTooLarge:
-				res.Rejected = append(res.Rejected, docRejected{Name: f.name, Reason: apiReason(apiErr)})
-				continue
-			}
-			return err
-		}
-		server[f.name] = docEntry{location: string(f.location), sha256: sha}
-		if onServer {
-			res.Moved = append(res.Moved, f.name)
-		} else {
-			res.Uploaded = append(res.Uploaded, f.name)
-			// The open items of the earlier record system are history, not
-			// work to track now.
-			if fu := followUps(content); f.location != model.LocationLegacy && len(fu) > 0 {
-				res.FollowUps = append(res.FollowUps, docFollowUps{Name: f.name, Sections: fu})
-			}
-		}
-	}
-	return nil
-}
-
-// immutableSHA is the hash of the stored content that a refusal reports.
-func immutableSHA(details []client.Detail) string {
-	for _, d := range details {
-		if d.SHA256 != "" {
-			return d.SHA256
-		}
-	}
-	return ""
-}
-
-func shortSHA(sha string) string {
-	if len(sha) > 8 {
-		return sha[:8]
-	}
-	return sha
-}
-
-// printDocSync writes the result of a sync: JSON in a pipe, otherwise the
-// counts and the names of each category.
-func (a *App) printDocSync(g *globals, r *docSyncResult) {
-	if a.jsonOutput(g) {
-		enc := json.NewEncoder(a.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.Encode(r)
-		return
-	}
-	summary := fmt.Sprintf("uploaded %d, moved %d, unchanged %d, conflicts %d", len(r.Uploaded), len(r.Moved), len(r.Unchanged), len(r.Conflicts))
-	if len(r.Skipped) > 0 {
-		summary += fmt.Sprintf(", skipped %d", len(r.Skipped))
-	}
-	if len(r.Rejected) > 0 {
-		summary += fmt.Sprintf(", rejected %d", len(r.Rejected))
-	}
-	fmt.Fprintln(a.Stdout, summary)
-	section := func(title string, lines []string) {
-		if len(lines) == 0 {
-			return
-		}
-		fmt.Fprintf(a.Stdout, "\n== %s (%d) ==\n", title, len(lines))
-		for _, line := range lines {
-			fmt.Fprintln(a.Stdout, line)
-		}
-	}
-	section("uploaded", r.Uploaded)
-	section("moved", r.Moved)
-	section("unchanged", r.Unchanged)
-	var conflicts, rejected []string
-	for _, c := range r.Conflicts {
-		conflicts = append(conflicts, fmt.Sprintf("%s  local %s  server %s", c.Name, shortSHA(c.LocalSHA256), shortSHA(c.ServerSHA256)))
-	}
-	for _, x := range r.Rejected {
-		rejected = append(rejected, x.Name+"  "+x.Reason)
-	}
-	section("conflicts", conflicts)
-	section("skipped", r.Skipped)
-	section("rejected", rejected)
-	if len(r.FollowUps) > 0 {
-		fmt.Fprintf(a.Stdout, "\n== follow-ups (%d) ==\n", len(r.FollowUps))
-		for _, d := range r.FollowUps {
-			writeFollowUps(a.Stdout, d.Name, d.Sections)
-		}
-	}
-}
-
-// writeFollowUps lists the open sections of one document.
-func writeFollowUps(w io.Writer, name string, sections []followUp) {
-	fmt.Fprintln(w, name)
-	for _, s := range sections {
-		for _, it := range s.Items {
-			fmt.Fprintf(w, "  [%s] %s\n", s.Section, it)
-		}
-	}
-}
-
-// uncommittedDocFiles names the files of all that are not in committed, as
-// skipped entries.
-func uncommittedDocFiles(all, committed []docFile) []string {
-	kept := map[string]bool{}
-	for _, f := range committed {
-		kept[f.repoPath()] = true
-	}
-	var out []string
-	for _, f := range all {
-		if !kept[f.repoPath()] {
-			out = append(out, f.repoPath()+" (커밋하지 않았거나 커밋 뒤 바뀜)")
-		}
-	}
-	return out
-}
-
-var docSyncCmd = &command{
-	name: "sync", summary: "관리 저장소의 기록 문서를 서버와 맞춤",
-	usage: `사용법: agb doc sync --project <KEY> [--root <관리 저장소 경로>]
-
-관리 저장소의 history/ 와 archive/ 에 직접 놓인 *.md 파일을 서버와 맞춥니다. 커밋했고 그 뒤 바뀌지 않은
-파일만 올리며, 나머지는 skipped 로 알립니다. --root 가 git 저장소가 아니면 아무것도 올리지 않고 실패합니다.
-이름이 _ 로 시작하는 파일(서식)은
-보지 않습니다. 이름이 기록 문서 형식(yyyy-mm-dd-HHMM-<종류>-<slug>.md)이 아닌 파일은 올리지 않고 skipped 로
-알립니다.
-
-이전 체계의 기록(decisions/, reports/, incidents/ 바로 아래)과 archive/ 하위 폴더의 *.md 파일도 위치 legacy 로
-함께 올립니다. 이름은 저장소 루트에서 본 상대 경로입니다. 256KB 를 넘는 파일은 올리지 않고 skipped 로
-알립니다.
-
-- 서버에 없는 파일은 올립니다(uploaded).
-- 서버에 같은 내용이 있고 위치가 다르면 위치를 옮깁니다(moved).
-- 내용도 위치도 같으면 그대로 둡니다(unchanged).
-- 서버의 같은 이름 문서와 내용(sha256)이 다르면 올리지 않고 conflicts 로 알립니다. 덮어쓰지 않습니다.
-- 서버가 규칙 위반으로 거절한 파일과 UTF-8 이 아닌 파일은 rejected 로 알립니다.
-
-새로 올린 문서에 "남은 것", "미확인", "후속"이 든 ## 절이 있으면 그 항목을 follow_ups 로 알립니다. 이슈는
-만들지 않습니다.
-
-결과를 파이프에는 JSON(uploaded, moved, unchanged, conflicts, skipped, rejected, follow_ups)으로, 터미널에는
-개수와 이름으로 출력합니다. conflicts 나 rejected 가 있으면 출력한 뒤 종료 코드 1로 끝납니다.
-
-옵션:
-  --project, -p <KEY>     프로젝트 키 (필수)
-  --root <경로>           관리 저장소 경로. 기본 현재 폴더
-`,
-	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		fs := leafFlags("doc sync", g)
-		var project, root string
-		fs.StringVar(&project, "project", "", "")
-		fs.StringVar(&project, "p", "", "")
-		fs.StringVar(&root, "root", ".", "")
-		pos, err := parseArgs(fs, args)
-		if err != nil {
-			return err
-		}
-		if err := none(pos); err != nil {
-			return err
-		}
-		if project == "" {
-			return usageErrorf("--project 가 필요합니다.")
-		}
-		files, skipped, err := listDocFiles(root)
-		if err != nil {
-			return err
-		}
-		committed, err := committedDocFiles(root, files)
-		if err != nil {
-			return fmt.Errorf("커밋 여부를 확인하지 못해 올리지 않았습니다. --root 는 git 저장소여야 합니다: %w", err)
-		}
-		skipped = append(skipped, uncommittedDocFiles(files, committed)...)
-		files = committed
-		c, err := a.client(g, true)
-		if err != nil {
-			return err
-		}
-		server, err := serverDocs(ctx, c, project)
-		if err != nil {
-			return err
-		}
-		res := &docSyncResult{Uploaded: []string{}, Moved: []string{}, Unchanged: []string{}, Conflicts: []docConflict{}, Skipped: []string{}, Rejected: []docRejected{}, FollowUps: []docFollowUps{}}
-		res.Skipped = append(res.Skipped, skipped...)
-		syncErr := syncDocFiles(ctx, c, project, files, server, res)
-		a.printDocSync(g, res)
-		if syncErr != nil {
-			return syncErr
-		}
-		if len(res.Conflicts)+len(res.Rejected) > 0 {
-			return fmt.Errorf("충돌 %d건, 거절 %d건: 서버의 기록 문서는 고칠 수 없어 올리지 않았습니다. 출력의 conflicts, rejected 를 확인하세요.", len(res.Conflicts), len(res.Rejected))
-		}
-		return nil
-	},
-}
-
 func (a *App) renderDocumentSearch(w io.Writer, resp *client.Response) error {
 	l, err := decode[listOf[model.Document]](resp)
 	if err != nil {
@@ -586,13 +97,16 @@ func (a *App) renderDocumentSearch(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "검색 결과가 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"PROJECT", "NAME", "KIND", "DATE", "TITLE", "SNIPPET"}}
+	tb := &table{header: []string{"PROJECT", "NAME", "STATE", "KIND", "DATE", "TITLE", "SNIPPET"}}
+	var rel []supersession
 	for _, d := range l.Items {
 		// A snippet cuts the original, so it carries its line breaks.
 		snippet := strings.Join(strings.Fields(deref(d.Snippet, "")), " ")
-		tb.add(d.Project, d.Name, string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"), snippet)
+		tb.add(d.Project, d.Name, string(d.State), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"), snippet)
+		rel = append(rel, docSupersession(d))
 	}
 	tb.write(w, a.TermWidth)
+	printSupersession(w, rel)
 	footer(w, len(l.Items), l.Total, l.Offset)
 	return nil
 }
@@ -605,10 +119,14 @@ var docSearchCmd = &command{
 여러 단어는 모두 포함(AND)이고, 전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾습니다. 관련도 순이고
 결과에 snippet 이 붙습니다. 원문은 agb doc get <KEY> <파일명> --content 로 읽습니다.
 
+기본은 유효한(current) 문서만 찾습니다. 대체됨·아카이브 문서는 --state 로 넓힙니다. 결과의 STATE 열은
+문서의 상태이고, 다른 문서를 대체하거나 대체되었으면 표 아래에 이름을 보입니다.
+
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
-  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
+  --state <S>             current(기본, 유효), superseded(대체됨), archived(아카이브), all. 쉼표 OR
+  --imported <true|false> 가져온 문서만(true), 일반 문서만(false). 없으면 둘 다
   --limit <N>             최대 200. 기본 50
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
@@ -617,7 +135,8 @@ var docSearchCmd = &command{
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
-		fs.StringVar(&f.Location, "location", "", "")
+		fs.StringVar(&f.State, "state", "", "")
+		fs.StringVar(&f.Imported, "imported", "", "")
 		fs.IntVar(&f.Limit, "limit", 0, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -648,11 +167,14 @@ func (a *App) renderDocumentList(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "기록 문서가 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"PROJECT", "NAME", "LOCATION", "KIND", "DATE", "TITLE"}}
+	tb := &table{header: []string{"PROJECT", "NAME", "STATE", "KIND", "DATE", "TITLE"}}
+	var rel []supersession
 	for _, d := range l.Items {
-		tb.add(d.Project, d.Name, string(d.Location), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"))
+		tb.add(d.Project, d.Name, string(d.State), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"))
+		rel = append(rel, docSupersession(d))
 	}
 	tb.write(w, a.TermWidth)
+	printSupersession(w, rel)
 	footer(w, len(l.Items), l.Total, l.Offset)
 	return nil
 }
@@ -662,11 +184,13 @@ var docListCmd = &command{
 	usage: `사용법: agb doc list [옵션]
 
 서버에 등록된 기록 문서를 날짜 최신 순으로 보입니다. 프로젝트를 주지 않으면 모든 프로젝트를 봅니다.
+기본은 유효한(current) 문서만 보입니다. 대체됨·아카이브 문서는 --state 로 넓힙니다.
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
-  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
+  --state <S>             current(기본, 유효), superseded(대체됨), archived(아카이브), all. 쉼표 OR
+  --imported <true|false> 가져온 문서만(true), 일반 문서만(false). 없으면 둘 다
   --limit <N>             최대 200. 기본 50
   --offset <N>
 `,
@@ -676,7 +200,8 @@ var docListCmd = &command{
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
-		fs.StringVar(&f.Location, "location", "", "")
+		fs.StringVar(&f.State, "state", "", "")
+		fs.StringVar(&f.Imported, "imported", "", "")
 		fs.IntVar(&f.Limit, "limit", 0, "")
 		fs.IntVar(&f.Offset, "offset", 0, "")
 		pos, err := parseArgs(fs, args)

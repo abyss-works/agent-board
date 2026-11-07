@@ -16,13 +16,13 @@ const (
 	similarFloor = 0.70
 )
 
-// similarPairs finds, for each document among rows, the nearest other
-// documents whose score is at least floor, at most perDocument each. A
-// document's vector is the normalized mean of its chunk vectors.
+// similarPairs finds, for each document among rows that is current, the nearest
+// other current documents whose score is at least floor, at most perDocument
+// each. A document's vector is the normalized mean of its chunk vectors.
 //
 // ponytail: compares every pair of documents, O(n²·d). Fine for a few
 // thousand documents; use the in-memory index per document beyond that.
-func similarPairs(rows []store.EmbeddingRow, perDocument int, floor float64) []store.SimilarPair {
+func similarPairs(rows []store.EmbeddingRow, perDocument int, floor float64, current map[int64]bool) []store.SimilarPair {
 	type doc struct {
 		id  int64
 		vec []float32
@@ -31,7 +31,7 @@ func similarPairs(rows []store.EmbeddingRow, perDocument int, floor float64) []s
 	var docs []*doc
 	byID := map[int64]*doc{}
 	for _, r := range rows {
-		if r.Source != "document" {
+		if r.Source != "document" || !current[r.SourceID] {
 			continue
 		}
 		d := byID[r.SourceID]

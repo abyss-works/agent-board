@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/store"
@@ -28,6 +29,10 @@ type Runner struct {
 	// that a server started on stored embeddings computes them without waiting
 	// for a change.
 	similarDone bool
+	// current holds the documents that were current when the similar documents
+	// were computed; a document that gains or loses that state, by being
+	// archived or superseded, calls for another computation.
+	current []int64
 }
 
 // Result counts what one round changed: the sources embedded again and the
@@ -64,17 +69,29 @@ func (r *Runner) round(ctx context.Context) {
 
 // RunOnce embeds every source whose chunks differ from the stored ones, removes
 // the rows of sources that are gone, and reloads the index and the similar
-// documents if anything changed (and once on the first round). An error of the embeddings API ends the round; what was stored
-// before it stays.
+// documents if anything changed, if a document became or stopped being current,
+// and once on the first round. An error of the embeddings API ends the round;
+// what was stored before it stays.
 func (r *Runner) RunOnce(ctx context.Context) (res Result, err error) {
 	defer func() {
-		if res.Sources+res.Removed == 0 && r.similarDone {
+		current, lerr := r.Store.CurrentDocumentIDs(ctx)
+		if lerr != nil {
+			if err == nil {
+				err = lerr
+			}
+			return
+		}
+		if res.Sources+res.Removed == 0 && r.similarDone && slices.Equal(current, r.current) {
 			return
 		}
 		rows, lerr := r.Store.LoadEmbeddings(ctx, r.Model)
 		if lerr == nil {
 			r.Index.Load(rows)
-			lerr = r.Store.ReplaceSimilarDocuments(ctx, r.Model, similarPairs(rows, similarPerDocument, similarFloor))
+			set := make(map[int64]bool, len(current))
+			for _, id := range current {
+				set[id] = true
+			}
+			lerr = r.Store.ReplaceSimilarDocuments(ctx, r.Model, similarPairs(rows, similarPerDocument, similarFloor, set))
 		}
 		if lerr != nil {
 			if err == nil {
@@ -82,7 +99,7 @@ func (r *Runner) RunOnce(ctx context.Context) (res Result, err error) {
 			}
 			return
 		}
-		r.similarDone = true
+		r.similarDone, r.current = true, current
 	}()
 
 	texts, err := r.Store.SourceTexts(ctx)

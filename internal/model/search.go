@@ -24,6 +24,11 @@ func ParseSearchType(v string) (SearchType, bool) { return parseEnum(v, SearchTy
 //     nil when the source has none.
 //   - Kind is the issue type, the comment kind or the document kind; it is nil
 //     for a comment without a kind.
+//   - Status is the status of the issue, or of the issue a comment belongs to;
+//     it is nil for a document.
+//   - State is the state of a document and Supersedes and SupersededBy name the
+//     documents it replaces and the documents that replace it; all three are nil
+//     for an issue and a comment.
 //   - At is when the source was last written: the issue's updated_at, the
 //     comment's time, or the document's front matter date ("yyyy-mm-dd HH:MM")
 //     and failing that its created_at.
@@ -35,6 +40,11 @@ type SearchHit struct {
 	CommentID *int64     `json:"comment_id"`
 	Title     *string    `json:"title"`
 	Kind      *string    `json:"kind"`
-	At        string     `json:"at"`
-	Snippet   string     `json:"snippet"`
+	Status    *string    `json:"status"`
+	State     *string    `json:"state"`
+	// Supersedes and SupersededBy are empty lists for a document that has none.
+	Supersedes   []string `json:"supersedes"`
+	SupersededBy []string `json:"superseded_by"`
+	At           string   `json:"at"`
+	Snippet      string   `json:"snippet"`
 }

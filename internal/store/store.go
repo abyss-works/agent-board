@@ -25,7 +25,13 @@ import (
 var migrationFS embed.FS
 
 // SchemaVersion is the user_version the store expects after migrating.
-const SchemaVersion = 13
+const SchemaVersion = 14
+
+// goSteps are the migrations that need more than SQL. The step of version n
+// runs after the SQL file of that version, in the same transaction.
+var goSteps = map[int]func(ctx context.Context, tx *sql.Tx) error{
+	14: backfillDocumentState,
+}
 
 // Sentinel errors returned by the store. HTTP maps them to status codes.
 var (
@@ -117,6 +123,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("apply %s: %w", name, err)
+		}
+		if step := goSteps[n]; step != nil {
+			if err := step(ctx, tx); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("apply %s: %w", name, err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf("pragma user_version = %d", n)); err != nil {
 			tx.Rollback()

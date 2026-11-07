@@ -41,6 +41,9 @@ const DateLayout = "2006-01-02"
 type FieldError struct {
 	Field   string `json:"field"`
 	Message string `json:"message"`
+	// Reason is the machine readable cause, such as unresolved. Most violations
+	// have none.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ValidationError collects every violation found in one object so the
@@ -59,6 +62,10 @@ func (e *ValidationError) Error() string {
 
 func (e *ValidationError) add(field, format string, args ...any) {
 	e.Fields = append(e.Fields, FieldError{Field: field, Message: fmt.Sprintf(format, args...)})
+}
+
+func (e *ValidationError) addReason(field, reason, format string, args ...any) {
+	e.Fields = append(e.Fields, FieldError{Field: field, Reason: reason, Message: fmt.Sprintf(format, args...)})
 }
 
 func (e *ValidationError) orNil() error {

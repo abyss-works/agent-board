@@ -947,8 +947,8 @@ func TestMigrateAddsDocumentToVersion7Database(t *testing.T) {
 	}
 	rows.Close()
 	wantCols := map[string]string{
-		"id": "INTEGER:0:", "project_id": "INTEGER:1:", "name": "TEXT:1:", "location": "TEXT:1:", "kind": "TEXT:1:", "date": "TEXT:0:",
-		"title": "TEXT:0:", "tags": "TEXT:1:'[]'", "sha256": "TEXT:1:", "size": "INTEGER:1:", "content": "TEXT:1:",
+		"id": "INTEGER:0:", "project_id": "INTEGER:1:", "name": "TEXT:1:", "kind": "TEXT:1:", "date": "TEXT:0:",
+		"title": "TEXT:0:", "tags": "TEXT:1:'[]'", "archived": "INTEGER:1:0", "imported": "INTEGER:1:0", "path": "TEXT:0:", "sha256": "TEXT:1:", "size": "INTEGER:1:", "content": "TEXT:1:",
 		"created_at": "TEXT:1:", "created_by": "TEXT:1:", "updated_at": "TEXT:1:", "updated_by": "TEXT:1:",
 	}
 	if !reflect.DeepEqual(cols, wantCols) {
@@ -975,20 +975,25 @@ func TestMigrateAddsDocumentToVersion7Database(t *testing.T) {
 		t.Errorf("document_fts external content index = %d, %v", fts, err)
 	}
 
-	// The constraints: a name is unique in a project, and location and kind are closed sets.
-	insert := func(name, location, kind string) error {
-		_, err := s.db.Exec(`insert into document(project_id, name, location, kind, sha256, size, content, created_at, created_by, updated_at, updated_by)
-			values (1, ?, ?, ?, 'h', 1, 'c', `+at+`, 'owner', `+at+`, 'owner')`, name, location, kind)
+	// The constraints: a name is unique in a project, kind is a closed set and
+	// the kind other needs an imported document.
+	insert := func(name, kind string, imported int) error {
+		_, err := s.db.Exec(`insert into document(project_id, name, kind, imported, sha256, size, content, created_at, created_by, updated_at, updated_by)
+			values (1, ?, ?, ?, 'h', 1, 'c', `+at+`, 'owner', `+at+`, 'owner')`, name, kind, imported)
 		return err
 	}
-	if err := insert("a.md", "history", "decision"); err != nil {
+	if err := insert("a.md", "decision", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := insert("o.md", "other", 1); err != nil {
 		t.Fatal(err)
 	}
 	for label, err := range map[string]error{
-		"the same name again": insert("a.md", "archive", "report"),
-		"an unknown location": insert("b.md", "draft", "decision"),
-		"an unknown kind":     insert("c.md", "history", "plan"),
-		"an empty kind":       insert("d.md", "history", ""),
+		"the same name again":      insert("a.md", "report", 0),
+		"an unknown kind":          insert("c.md", "plan", 0),
+		"an empty kind":            insert("d.md", "", 0),
+		"kind other not imported":  insert("e.md", "other", 0),
+		"imported out of the flag": insert("f.md", "decision", 2),
 	} {
 		if err == nil {
 			t.Errorf("%s was accepted", label)
@@ -1019,7 +1024,7 @@ func TestMigrateAddsDocumentToVersion7Database(t *testing.T) {
 	}
 	text := "---\nkind: decision\ntitle: 이전 데이터베이스의 기록\n---\n본문\n"
 	d, created, err := s.PutDocument(ctx, model.Trace{Actor: "claude", SessionID: "s", ClientHost: "h"}, "AGB", "2026-10-20-1544-decision-after-migration.md",
-		DocumentInput{Location: "history", Content: text})
+		DocumentInput{Content: text})
 	if err != nil || !created || d.Project != "AGB" {
 		t.Fatalf("PutDocument on the migrated database = %+v, %v, %v", d, created, err)
 	}
@@ -1082,19 +1087,19 @@ func TestMigrateRebuildsDocumentInVersion9Database(t *testing.T) {
 	defer s.Close()
 
 	var id int
-	var location string
-	if err := s.db.QueryRow(`select id, location from document where name = '2026-10-20-1544-decision-old.md'`).Scan(&id, &location); err != nil || id != 7 || location != "archive" {
-		t.Errorf("migrated document: id %d, location %q, %v", id, location, err)
+	var archived bool
+	if err := s.db.QueryRow(`select id, archived from document where name = '2026-10-20-1544-decision-old.md'`).Scan(&id, &archived); err != nil || id != 7 || !archived {
+		t.Errorf("migrated document: id %d, archived %v, %v", id, archived, err)
 	}
 	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "우선순위", Limit: 10}); err != nil || total != 1 || len(found) != 1 {
 		t.Errorf("search of a migrated document = %d (%d), %v", len(found), total, err)
 	}
 	d, created, err := s.PutDocument(ctx, model.Trace{Actor: "claude", SessionID: "s", ClientHost: "h"}, "AGB", "archive/2026-06-x/notes.md",
-		DocumentInput{Location: "legacy", Content: "# 이전 체계 조사\n본문"})
+		DocumentInput{Content: "# 이전 체계 조사\n본문", Args: locArgs("archive/2026-06-x/notes.md", "legacy")})
 	if err != nil || !created || d.Kind != model.DocumentOther || d.Location != model.LocationLegacy || d.Title == nil || *d.Title != "이전 체계 조사" {
 		t.Fatalf("PutDocument of a legacy document = %+v, %v, %v", d, created, err)
 	}
-	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "이전 체계", Locations: []model.DocumentLocation{model.LocationLegacy}, Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "이전 체계", Imported: boolPtr(true), Limit: 10}); err != nil || total != 1 || len(found) != 1 {
 		t.Errorf("search of a legacy document = %d (%d), %v", len(found), total, err)
 	}
 	if _, err := s.db.Exec(`insert into document_fts(document_fts, rank) values ('integrity-check', 1)`); err != nil {
@@ -1104,9 +1109,9 @@ func TestMigrateRebuildsDocumentInVersion9Database(t *testing.T) {
 	if err := s.db.QueryRow(`select count(*) from sqlite_master where type = 'trigger' and tbl_name = 'document'`).Scan(&triggers); err != nil || triggers != 3 {
 		t.Errorf("document triggers = %d, %v; want 3", triggers, err)
 	}
-	if _, err := s.db.Exec(`insert into document(project_id, name, location, kind, sha256, size, content, created_at, created_by, updated_at, updated_by)
-		values (1, 'x.md', 'draft', 'other', 'h', 1, 'c', ` + at + `, 'owner', ` + at + `, 'owner')`); err == nil {
-		t.Error("an unknown location was accepted")
+	if _, err := s.db.Exec(`insert into document(project_id, name, kind, sha256, size, content, created_at, created_by, updated_at, updated_by)
+		values (1, 'x.md', 'other', 'h', 1, 'c', ` + at + `, 'owner', ` + at + `, 'owner')`); err == nil {
+		t.Error("the kind other was accepted for a document that is not imported")
 	}
 }
 

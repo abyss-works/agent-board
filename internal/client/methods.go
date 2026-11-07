@@ -437,10 +437,14 @@ func (c *Client) Labels(ctx context.Context, project string) (*Response, error) 
 
 // DocumentFilter searches record documents. Comma separated values are OR.
 type DocumentFilter struct {
-	Query    string
-	Project  string
-	Kind     string
-	Location string
+	Query   string
+	Project string
+	Kind    string
+	// State is a comma separated list of current, superseded, archived or all;
+	// the server answers with the current documents when it is empty. Imported
+	// is true or false.
+	State    string
+	Imported string
 	Page
 }
 
@@ -450,18 +454,88 @@ func (f DocumentFilter) Values() url.Values {
 	set(v, "q", f.Query)
 	set(v, "project", f.Project)
 	set(v, "kind", f.Kind)
-	set(v, "location", f.Location)
+	set(v, "state", f.State)
+	set(v, "imported", f.Imported)
 	f.Page.addTo(v)
 	return v
 }
 
-// PutDocument registers a record document of a project with the folder it lies
-// in and its original content. The server stores the content as it is; the same
-// content again changes nothing or moves the document, and other content under
-// the same name is refused with 409 (reason immutable).
-func (c *Client) PutDocument(ctx context.Context, project, name, location, content string) (*Response, error) {
-	path := "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
-	return c.Request(ctx, http.MethodPut, path, map[string]any{"location": location, "content": content}, nil)
+// DocumentPut is a put request of a record document with its metadata. A field
+// left nil is not sent and the front matter or the fallback of the server
+// decides it; a list that is empty but not nil is sent as an empty list.
+type DocumentPut struct {
+	Content    string
+	Kind       *string
+	Date       *string
+	Title      *string
+	Path       *string
+	Tags       []string
+	Supersedes []string
+	Related    []string
+	Issues     []string
+	Archived   *bool
+	Imported   *bool
+}
+
+func (p DocumentPut) body() map[string]any {
+	b := map[string]any{"content": p.Content}
+	for name, v := range map[string]*string{"kind": p.Kind, "date": p.Date, "title": p.Title, "path": p.Path} {
+		if v != nil {
+			b[name] = *v
+		}
+	}
+	for name, v := range map[string][]string{"tags": p.Tags, "supersedes": p.Supersedes, "related": p.Related, "issues": p.Issues} {
+		if v != nil {
+			b[name] = v
+		}
+	}
+	for name, v := range map[string]*bool{"archived": p.Archived, "imported": p.Imported} {
+		if v != nil {
+			b[name] = *v
+		}
+	}
+	return b
+}
+
+// PutDocumentWith registers a record document with the metadata of p. The
+// answer is 201 for a new document and 200 for the same content and metadata;
+// other content is refused with 409 (reason immutable) and other metadata with
+// 409 (reason metadata_differs). The body of the answer carries warnings.
+func (c *Client) PutDocumentWith(ctx context.Context, project, name string, p DocumentPut) (*Response, error) {
+	return c.Request(ctx, http.MethodPut, documentPath(project, name), p.body(), nil)
+}
+
+func documentPath(project, name string) string {
+	return "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
+}
+
+// ArchiveDocument marks a record document archived, and UnarchiveDocument takes
+// the mark off. Both answer with the document.
+func (c *Client) ArchiveDocument(ctx context.Context, project, name string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, documentPath(project, name)+"/archive", nil, nil)
+}
+
+func (c *Client) UnarchiveDocument(ctx context.Context, project, name string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, documentPath(project, name)+"/archive", nil, nil)
+}
+
+// AddDocumentRelation adds one relation to a record document, and
+// RemoveDocumentRelation takes one away. kind is supersedes, related or about;
+// the target is a document name, or an issue key for about.
+func (c *Client) AddDocumentRelation(ctx context.Context, project, name, kind, target string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, documentPath(project, name)+"/relations", map[string]string{"kind": kind, "target": target}, nil)
+}
+
+func (c *Client) RemoveDocumentRelation(ctx context.Context, project, name, kind, target string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, documentPath(project, name)+"/relations", map[string]string{"kind": kind, "target": target}, nil)
+}
+
+// DocumentActivity lists the changes of the archive mark and the relations of a
+// record document, newest first.
+func (c *Client) DocumentActivity(ctx context.Context, project, name string, p Page) (*Response, error) {
+	v := url.Values{}
+	p.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery(documentPath(project, name)+"/activity", v), nil, nil)
 }
 
 // ListDocuments lists the record documents of a project by name, without their
@@ -485,11 +559,18 @@ func (c *Client) SearchDocuments(ctx context.Context, f DocumentFilter) (*Respon
 
 // SearchFilter is the unified search over issues, comments and record
 // documents. Comma separated values are OR.
+//
+// Status limits issues and their comments by the status of the issue, and
+// State limits documents by their state. Each is a comma separated list, or an
+// alias the server knows (open, closed, all; all); the server uses its own
+// default when it is empty.
 type SearchFilter struct {
 	Query       string
 	Project     string
 	Type        string
 	CommentKind string
+	Status      string
+	State       string
 	Page
 }
 
@@ -500,6 +581,8 @@ func (f SearchFilter) Values() url.Values {
 	set(v, "project", f.Project)
 	set(v, "type", f.Type)
 	set(v, "comment_kind", f.CommentKind)
+	set(v, "status", f.Status)
+	set(v, "state", f.State)
 	f.Page.addTo(v)
 	return v
 }
@@ -510,12 +593,14 @@ func (c *Client) Search(ctx context.Context, f SearchFilter) (*Response, error) 
 }
 
 // Graph returns the decision graph around a node ("issue:<KEY>" or
-// "doc:<PROJECT>/<name>") up to depth steps away.
-func (c *Client) Graph(ctx context.Context, node string, depth int) (*Response, error) {
+// "doc:<PROJECT>/<name>") up to depth steps away. state is current or all; the
+// server uses current when it is empty.
+func (c *Client) Graph(ctx context.Context, node string, depth int, state string) (*Response, error) {
 	v := url.Values{}
 	v.Set("node", node)
 	if depth > 0 {
 		v.Set("depth", strconv.Itoa(depth))
 	}
+	set(v, "state", state)
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/graph", v), nil, nil)
 }

@@ -89,7 +89,7 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 	in := IssueInput{
 		Title: "full", Body: tplBody(model.TypeObservation), Type: model.TypeObservation, Status: model.StatusDoing, Priority: model.P0,
 		Labels: []string{"cli", "api", "cli"}, Parent: str(parent.Key), DependsOn: []string{dep.Key},
-		Refs: []string{"repo:wsk0715/agent-board", "doc:api.md", "repo:wsk0715/agent-board"}, RecheckCondition: str("when R2 is ready"),
+		Refs: []string{"repo:wsk0715/agent-board", "file:api.md", "repo:wsk0715/agent-board"}, RecheckCondition: str("when R2 is ready"),
 		DecisionNeeded: str("whether to wait for R2"),
 	}
 	i := mustIssue(t, s, ctx, trClaude, in)
@@ -99,7 +99,7 @@ func TestCreateIssueFullFieldsAndActivity(t *testing.T) {
 	if !reflect.DeepEqual(i.Labels, []string{"api", "cli"}) {
 		t.Errorf("labels not deduped and sorted: %v", i.Labels)
 	}
-	if !reflect.DeepEqual(i.Refs, []string{"doc:api.md", "repo:wsk0715/agent-board"}) {
+	if !reflect.DeepEqual(i.Refs, []string{"file:api.md", "repo:wsk0715/agent-board"}) {
 		t.Errorf("refs = %v", i.Refs)
 	}
 	if i.Parent == nil || *i.Parent != "AGB-1" || !reflect.DeepEqual(i.DependsOn, []string{"AGB-2"}) || *i.RecheckCondition != "when R2 is ready" ||

@@ -36,6 +36,8 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		Projects:     q.csv("project"),
 		Types:        parseEnumList(q, "type", model.ParseSearchType),
 		CommentKinds: parseEnumList(q, "comment_kind", model.ParseCommentKind),
+		Statuses:     parseSearchStatuses(q),
+		States:       parseStates(q),
 	}
 	for _, p := range f.Projects {
 		if !model.ValidProjectKey(p) {
@@ -153,5 +155,35 @@ func fuse(keyword, semantic []model.SearchHit) []model.SearchHit {
 		}
 		return strings.Compare(a.Key, b.Key)
 	})
+	return out
+}
+
+// parseSearchStatuses reads the status filter of the unified search: the
+// statuses of the issues and, through them, of the comments. open and closed
+// stand for several statuses and all for every status but deleted, which the
+// search never finds and refuses to be asked for. Without a filter, and for all,
+// it returns none, which selects every status.
+func parseSearchStatuses(q *query) []model.IssueStatus {
+	param := q.one("status")
+	if param == "" {
+		return nil
+	}
+	for _, v := range strings.Split(param, ",") {
+		if v == string(model.StatusDeleted) {
+			q.add("status", "deleted는 받지 않습니다. 지운 이슈와 그 댓글은 찾지 않습니다.")
+			return nil
+		}
+	}
+	statuses, err := model.ExpandIssueStatuses(param)
+	if err != nil {
+		q.add("status", "상태 또는 open, closed, all이어야 합니다.")
+		return nil
+	}
+	var out []model.IssueStatus
+	for _, s := range statuses {
+		if s != model.StatusDeleted {
+			out = append(out, s)
+		}
+	}
 	return out
 }

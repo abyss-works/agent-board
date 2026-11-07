@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-// followUpHeadings are the words that mark a level-2 section of a record
-// document as work left open.
-var followUpHeadings = []string{"남은 것", "미확인", "후속"}
-
 // listItem matches a top-level bullet or numbered list item.
 var listItem = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+(.*)$`)
 
@@ -19,10 +15,10 @@ type followUp struct {
 }
 
 // followUps returns the open sections of a record document: level-2 sections
-// whose heading names work left open, with their top-level list items, or the
+// whose heading contains one of headings, with their top-level list items, or the
 // text as one item when the section has no list. Sections that say only 없음
 // are left out, and so are code blocks.
-func followUps(content string) []followUp {
+func followUps(content string, headings []string) []followUp {
 	var out []followUp
 	var cur *followUp
 	var para []string
@@ -57,7 +53,7 @@ func followUps(content string) []followUp {
 		if heading, ok := strings.CutPrefix(line, "## "); ok {
 			flush()
 			heading = strings.TrimSpace(heading)
-			for _, w := range followUpHeadings {
+			for _, w := range headings {
 				if strings.Contains(heading, w) {
 					cur = &followUp{Section: heading}
 					break

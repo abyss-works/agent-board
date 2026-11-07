@@ -175,10 +175,10 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 		var q string
 		switch source {
 		case SourceIssue:
-			q = `select i.id, p.key, i.key, null, i.title, i.type, i.updated_at from issue i join project p on p.id = i.project_id
+			q = `select i.id, p.key, i.key, null, i.title, i.type, i.status, null, i.updated_at from issue i join project p on p.id = i.project_id
 				where i.status <> 'deleted' and i.id in (` + in + `)`
 		case SourceComment:
-			q = `select a.id, p.key, i.key, a.id, a.summary, a.comment_kind, a.at from activity a join issue i on i.id = a.issue_id join project p on p.id = i.project_id
+			q = `select a.id, p.key, i.key, a.id, a.summary, a.comment_kind, i.status, null, a.at from activity a join issue i on i.id = a.issue_id join project p on p.id = i.project_id
 				where a.kind = 'commented' and i.status <> 'deleted' and a.id in (` + in + `)`
 			if len(f.CommentKinds) > 0 {
 				q += " and a.comment_kind in (" + placeholders(len(f.CommentKinds)) + ")"
@@ -187,7 +187,7 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 				}
 			}
 		case SourceDocument:
-			q = `select d.id, p.key, d.name, null, d.title, d.kind, coalesce(d.date, d.created_at) from document d join project p on p.id = d.project_id
+			q = `select d.id, p.key, d.name, null, d.title, d.kind, null, (` + documentState + `), coalesce(d.date, d.created_at) from document d join project p on p.id = d.project_id
 				where d.id in (` + in + `)`
 		}
 		if len(f.Projects) > 0 {
@@ -196,6 +196,15 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 				args = append(args, p)
 			}
 		}
+		var cond string
+		var condArgs []any
+		if source == SourceDocument {
+			cond, condArgs = f.documentStateCond()
+		} else {
+			cond, condArgs = f.issueStatusCond()
+		}
+		q += cond
+		args = append(args, condArgs...)
 		rows, err := s.db.QueryContext(ctx, q, args...)
 		if err != nil {
 			return nil, err
@@ -204,20 +213,15 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 			var id int64
 			h := model.SearchHit{Type: typ}
 			var commentID sql.NullInt64
-			var title, kind sql.NullString
-			if err := rows.Scan(&id, &h.Project, &h.Key, &commentID, &title, &kind, &h.At); err != nil {
+			var title, kind, status, state sql.NullString
+			if err := rows.Scan(&id, &h.Project, &h.Key, &commentID, &title, &kind, &status, &state, &h.At); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			if commentID.Valid {
 				h.CommentID = &commentID.Int64
 			}
-			if title.Valid {
-				h.Title = &title.String
-			}
-			if kind.Valid {
-				h.Kind = &kind.String
-			}
+			h.Title, h.Kind, h.Status, h.State = nullable(title), nullable(kind), nullable(status), nullable(state)
 			found[SourceText{Source: source, ID: id}] = h
 		}
 		err = rows.Err()
@@ -227,13 +231,20 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 		}
 	}
 	hits := []model.SearchHit{}
+	docIDs := map[int]int64{}
 	for _, r := range refs {
 		h, ok := found[SourceText{Source: r.Source, ID: r.ID}]
 		if !ok {
 			continue
 		}
 		h.Snippet = collapse(r.Text, maxSemanticSnippet)
+		if r.Source == SourceDocument {
+			docIDs[len(hits)] = r.ID
+		}
 		hits = append(hits, h)
+	}
+	if err := fillHitDocuments(ctx, s.db, hits, docIDs); err != nil {
+		return nil, err
 	}
 	return hits, nil
 }

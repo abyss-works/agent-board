@@ -3,97 +3,51 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/client"
 )
 
-// knowledgeLine finds the project key in an AGENTS.md line that names agb as
-// the knowledge store, e.g. "- 지식 저장소: agb, 프로젝트 키 `AGB`".
-var knowledgeLine = regexp.MustCompile("지식 저장소:\\s*agb,\\s*프로젝트 키\\s*`([A-Z][A-Z0-9]*)`")
-
-// knowledgeProject returns the root of the repository holding the current
-// folder and the project key its AGENTS.md gives for agb as the knowledge
-// store. ok is false outside such a management repository.
-func knowledgeProject() (root, key string, ok bool) {
+// autoSyncRecords uploads the committed documents of the repository that the
+// server lacks, when the .agb.json at its top level asks for it with
+// auto_sync, and lists their follow-ups on stderr. It runs inside commands
+// agents already call, so a failure is a warning and never fails the command.
+// A repository without a .agb.json is left alone.
+func (a *App) autoSyncRecords(ctx context.Context, c *client.Client) {
 	root, err := git(".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", "", false
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-	if err != nil {
-		return "", "", false
-	}
-	m := knowledgeLine.FindSubmatch(raw)
-	if m == nil {
-		return "", "", false
-	}
-	return root, string(m[1]), true
-}
-
-// committedDocFiles keeps the files git tracks without uncommitted changes.
-// A record document is uploaded once and never changed, so a draft must not
-// reach the server before it is committed.
-func committedDocFiles(root string, files []docFile) ([]docFile, error) {
-	paths := append([]string{"--", "history", "archive"}, legacyFolders...)
-	tracked, err := git(root, append([]string{"-c", "core.quotepath=off", "ls-files"}, paths...)...)
-	if err != nil {
-		return nil, err
-	}
-	dirty, err := git(root, append([]string{"-c", "core.quotepath=off", "diff", "--name-only", "HEAD"}, paths...)...)
-	if err != nil {
-		return nil, err
-	}
-	keep := map[string]bool{}
-	for _, p := range strings.Split(tracked, "\n") {
-		keep[p] = true
-	}
-	for _, p := range strings.Split(dirty, "\n") {
-		delete(keep, p)
-	}
-	var out []docFile
-	for _, f := range files {
-		if keep[f.repoPath()] {
-			out = append(out, f)
-		}
-	}
-	return out, nil
-}
-
-// autoSyncRecords uploads the committed record documents of the management
-// repository that the server lacks and lists their follow-ups on stderr. It
-// runs inside commands agents already call, so a failure is a warning and
-// never fails the command.
-func (a *App) autoSyncRecords(ctx context.Context, c *client.Client) {
-	root, project, ok := knowledgeProject()
-	if !ok {
 		return
 	}
-	res := &docSyncResult{}
-	err := func() error {
-		files, _, err := listDocFiles(root)
+	cfg, err := loadRepoConfig(root)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "agb: 경고: 기록 문서를 자동으로 올리지 못했습니다: %v\n", err)
+		return
+	}
+	if cfg == nil || !cfg.AutoSync {
+		return
+	}
+	res := newDocSyncResult()
+	err = func() error {
+		files, _, err := repoFiles(root, cfg)
 		if err != nil {
 			return err
 		}
-		if files, err = committedDocFiles(root, files); err != nil {
-			return err
-		}
-		server, err := serverDocs(ctx, c, project)
+		server, err := serverDocs(ctx, c, cfg.Project)
 		if err != nil {
 			return err
 		}
-		return syncDocFiles(ctx, c, project, files, server, res)
+		return syncDocFiles(ctx, c, cfg.Project, files, server, cfg.FollowUpHeadings, res)
 	}()
-	if done := append(res.Uploaded, res.Moved...); len(done) > 0 {
-		// The first run in a repository with legacy records uploads them all.
-		names := strings.Join(done, ", ")
-		if len(done) > 10 {
-			names = strings.Join(done[:10], ", ") + fmt.Sprintf(" 외 %d건", len(done)-10)
+	if n := len(res.Uploaded); n > 0 {
+		// The first run in a repository with many documents uploads them all.
+		names := strings.Join(res.Uploaded, ", ")
+		if n > 10 {
+			names = strings.Join(res.Uploaded[:10], ", ") + fmt.Sprintf(" 외 %d건", n-10)
 		}
-		fmt.Fprintf(a.Stderr, "기록 문서 %d건을 올렸습니다(%s): %s\n", len(done), project, names)
+		fmt.Fprintf(a.Stderr, "기록 문서 %d건을 올렸습니다(%s): %s\n", n, cfg.Project, names)
+	}
+	for _, w := range res.Warnings {
+		fmt.Fprintf(a.Stderr, "경고: %s %s: %s\n", w.Name, w.Field, w.Message)
 	}
 	for _, d := range res.FollowUps {
 		fmt.Fprint(a.Stderr, "후속 항목: ")
@@ -103,6 +57,6 @@ func (a *App) autoSyncRecords(ctx context.Context, c *client.Client) {
 		fmt.Fprintf(a.Stderr, "agb: 경고: 기록 문서를 자동으로 올리지 못했습니다: %v\n", err)
 	}
 	if n := len(res.Conflicts) + len(res.Rejected); n > 0 {
-		fmt.Fprintf(a.Stderr, "agb: 경고: 기록 문서 %d건이 서버와 충돌하거나 거절되었습니다. agb doc sync -p %s 로 확인하세요.\n", n, project)
+		fmt.Fprintf(a.Stderr, "agb: 경고: 기록 문서 %d건이 서버와 충돌하거나 거절되었습니다. agb doc sync 로 확인하세요.\n", n)
 	}
 }

@@ -12,7 +12,7 @@ export type TopicStatus = 'active' | 'deleted'
 export type MilestoneStatus = 'open' | 'closed' | 'deleted'
 export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
 export type DocumentKind = 'decision' | 'incident' | 'report' | 'implementation' | 'other'
-export type DocumentLocation = 'history' | 'archive' | 'legacy'
+export type DocumentState = 'current' | 'superseded' | 'archived'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
 
@@ -24,7 +24,7 @@ export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
 export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted']
 export const DOCUMENT_KINDS: DocumentKind[] = ['decision', 'incident', 'report', 'implementation', 'other']
-export const DOCUMENT_LOCATIONS: DocumentLocation[] = ['history', 'archive', 'legacy']
+export const DOCUMENT_STATES: DocumentState[] = ['current', 'superseded', 'archived']
 
 export interface Project {
   key: string
@@ -203,17 +203,25 @@ export interface ActorToken {
   revoked_by: string | null
 }
 
-/** 관리 저장소의 기록 문서. 고치거나 지우지 않는다. */
+/** 기록 문서. 원문은 고치지 않고, 아카이브 표시와 관계만 전용 엔드포인트로 고친다. */
 export interface RecordDocument {
   project: string
-  /** 파일명 `yyyy-mm-dd-HHMM-<kind>-<slug>.md` */
+  /** 일반 문서는 파일명 `yyyy-mm-dd-HHMM-<kind>-<slug>.md`, 가져온 문서는 경로 */
   name: string
-  location: DocumentLocation
   kind: DocumentKind
-  /** 프런트매터의 date, title. 없으면 null이다. */
+  /** 등록 때 정한 date, title. 없으면 null이다. */
   date: string | null
   title: string | null
   tags: string[]
+  /** 서버가 계산한 상태. 아카이브, 대체됨, 유효 순으로 정한다. */
+  state: DocumentState
+  archived: boolean
+  imported: boolean
+  /** 대체하는 문서, 대체한 문서, 관련 문서의 이름. 다른 프로젝트 문서는 `PROJECT/이름`이다. */
+  supersedes: string[]
+  superseded_by: string[]
+  related: string[]
+  issues: string[]
   sha256: string
   size: number
   /** 단건 조회에만 붙는 원문 */
