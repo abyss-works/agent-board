@@ -17,7 +17,8 @@ var initCmd = &command{
 
 저장소 최상위에 .agb.json 을 만들고 그 경로를 출력합니다. 이 파일이 있는 저장소가 agb 를 지식 저장소로
 씁니다. 만든 파일은 규칙(documents)이 비어 있어서 규칙을 채우기 전에는 아무 파일도 올리지 않습니다.
-규칙, new, follow_up_headings 는 직접 적습니다. 서버에 접속하지 않습니다.
+규칙, new, follow_up_headings 는 직접 적습니다. 키, 규칙, 예시는 agb help repo-config 로 봅니다.
+서버에 접속하지 않습니다.
 
 이미 .agb.json 이 있으면 덮어쓰지 않고 실패합니다.
 
