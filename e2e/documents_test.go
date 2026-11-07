@@ -282,13 +282,14 @@ func TestDocuments(t *testing.T) {
 			{"one byte over the limit", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("a", maxDocumentBytes-len(head)+1), "content"},
 			{"bytes, not characters", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("가", (maxDocumentBytes-len(head))/3+1), "content"},
 			{"unknown location", "2026-10-20-1544-decision-x.md", "draft", ok, "location"},
+			{"empty location", "2026-10-20-1544-decision-x.md", "", ok, "location"},
 		} {
 			e := wantError(t, put(c.name, c.location, c.content), 422, "validation_failed")
 			if !e.hasField(c.field) {
 				t.Errorf("%s: details = %+v, want the field %s", c.label, e.Error.Details, c.field)
 			}
 		}
-		e := wantError(t, put("x.md", "", "본문"), 422, "validation_failed")
+		e := wantError(t, owner.do(t, "PUT", documentPath(p.Key, "x.md"), map[string]any{"content": "본문"}), 422, "validation_failed")
 		if got := e.fields(); !reflect.DeepEqual(got, []string{"name", "title"}) {
 			t.Errorf("every violation at once = %v", got)
 		}
