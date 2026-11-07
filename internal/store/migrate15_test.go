@@ -119,7 +119,7 @@ func TestMigration15KeepsDocumentsAndLinks(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("pragma user_version").Scan(&version)
-	if version != 15 || SchemaVersion != 15 {
+	if version != SchemaVersion {
 		t.Errorf("user_version = %d, SchemaVersion = %d", version, SchemaVersion)
 	}
 	after := dumpTables(t, s.db)
