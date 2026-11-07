@@ -92,7 +92,7 @@ agb --actor <자기 ID> project overview <KEY>
   - `config show`: `url`이 운영 주소이고 `actor_tokens`에 자기 ID가 있다.
   - `health`: `"status":"ok"`
   - `whoami`: `id`가 자기 행위자다.
-  - `project list`, `project overview`: 종료 코드 0이고, 목록에 프로젝트 `AGENTS.md`의 "이슈 추적" 칸에 적힌 키가 있다.
+  - `project list`, `project overview`: 종료 코드 0이고, 목록에 작업할 프로젝트의 키(`.agb.json`의 `project` 또는 사용자가 알려 준 키)가 있다.
 
 새 기기는 1절, 2절, 3절, 4절 순서로 한다.
 
