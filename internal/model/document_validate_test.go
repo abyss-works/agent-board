@@ -286,3 +286,10 @@ func TestValidateDocumentDropsNoRelationValues(t *testing.T) {
 		t.Errorf("supersedes = %v, err = %v", meta.Supersedes, err)
 	}
 }
+
+func TestNameWithKindOtherSaysOtherIsForImported(t *testing.T) {
+	_, err := ValidateDocument("2026-11-08-1000-other-x.md", front("title: 제목"), DocumentArgs{})
+	if got := violations(t, err); len(got) != 1 || got[0].field != "name" || !strings.Contains(err.Error(), "other는 imported 문서에만") {
+		t.Errorf("err = %v", err)
+	}
+}

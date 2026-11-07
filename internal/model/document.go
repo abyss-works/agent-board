@@ -544,7 +544,7 @@ func ValidateDocument(name, content string, args DocumentArgs) (DocumentMeta, er
 	case imported && !ValidImportedName(name):
 		e.add("name", "/로 나눈 조각이 비지 않고 .으로 시작하지 않는 .md 파일의 상대 경로여야 합니다. _로 시작하거나 .example.md로 끝나는 서식은 받지 않습니다.")
 	case !imported && !nameOK:
-		e.add("name", "yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이어야 합니다. 종류는 %s이고 slug는 영문 소문자, 숫자, 하이픈입니다. 이 형식이 아닌 문서는 imported로 올립니다.", DocumentKindFormat)
+		e.add("name", "yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이어야 합니다. 종류는 %s이고 slug는 영문 소문자, 숫자, 하이픈입니다. other는 imported 문서에만 쓸 수 있습니다. 이 형식이 아닌 문서는 imported로 올립니다.", DocumentKindFormat)
 	}
 
 	if args.Path != nil {
