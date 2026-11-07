@@ -8,13 +8,13 @@ import (
 )
 
 func TestDocumentEnums(t *testing.T) {
-	if want := []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation}; !reflect.DeepEqual(DocumentKinds, want) {
+	if want := []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation, DocumentOther}; !reflect.DeepEqual(DocumentKinds, want) {
 		t.Fatalf("DocumentKinds = %v, want %v", DocumentKinds, want)
 	}
-	if want := []DocumentLocation{LocationHistory, LocationArchive}; !reflect.DeepEqual(DocumentLocations, want) {
+	if want := []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}; !reflect.DeepEqual(DocumentLocations, want) {
 		t.Fatalf("DocumentLocations = %v, want %v", DocumentLocations, want)
 	}
-	for _, v := range []string{"decision", "incident", "report", "implementation"} {
+	for _, v := range []string{"decision", "incident", "report", "implementation", "other"} {
 		if got, ok := ParseDocumentKind(v); !ok || string(got) != v {
 			t.Errorf("ParseDocumentKind(%q) = %q, %v", v, got, ok)
 		}
@@ -24,7 +24,7 @@ func TestDocumentEnums(t *testing.T) {
 			t.Errorf("ParseDocumentKind(%q) must fail", v)
 		}
 	}
-	for _, v := range []string{"history", "archive"} {
+	for _, v := range []string{"history", "archive", "legacy"} {
 		if got, ok := ParseDocumentLocation(v); !ok || string(got) != v {
 			t.Errorf("ParseDocumentLocation(%q) = %q, %v", v, got, ok)
 		}
@@ -77,10 +77,93 @@ func TestParseDocumentName(t *testing.T) {
 		"history/2026-10-20-1544-decision-x.md",
 		"../2026-10-20-1544-decision-x.md",
 		"2026-10-20-1544-decision-a b.md",
+		"2026-10-20-1544-other-x.md",
 	} {
 		if got, ok := ParseDocumentName(name); ok {
 			t.Errorf("ParseDocumentName(%q) = %q, want a rejection", name, got)
 		}
+	}
+}
+
+func TestParseLegacyName(t *testing.T) {
+	valid := map[string]string{
+		"decisions/2026-10-17-14-30-scope-stack-deploy.md":  "decisions",
+		"reports/2026-10-12-src-structure.md":               "reports",
+		"incidents/save-loss.md":                            "incidents",
+		"archive/2026-06-hermes-sdlc/README.md":             "archive",
+		"archive/2026-10-mgmt-framework/mgmt/ops/deploy.md": "archive",
+		"decisions/결정 기록.md":                                "decisions",
+	}
+	for name, want := range valid {
+		if got, ok := ParseLegacyName(name); !ok || got != want {
+			t.Errorf("ParseLegacyName(%q) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+	for _, name := range []string{
+		"",
+		"decisions/_template.md",
+		"archive/2026-10-mgmt/decisions/decision.example.md",
+		"decisions/x.txt",
+		"decisions/sub/x.md",
+		"archive/x.md",
+		"history/2026-10-20-1544-decision-x.md",
+		"2026-10-20-1544-decision-x.md",
+		"/decisions/x.md",
+		"decisions//x.md",
+		"archive/../decisions/x.md",
+		"archive/.hidden/x.md",
+		"archive/a\\b/x.md",
+		"decisions/a\nb.md",
+		"draft/x.md",
+	} {
+		if got, ok := ParseLegacyName(name); ok {
+			t.Errorf("ParseLegacyName(%q) = %q, want a rejection", name, got)
+		}
+	}
+}
+
+func TestValidateLegacyDocument(t *testing.T) {
+	cases := []struct {
+		name, content string
+		kind          string
+		date, title   string
+	}{
+		{"decisions/2026-10-17-14-30-scope.md", "# 범위 결정\n\n본문", "decision", "2026-10-17 14:30", "범위 결정"},
+		{"decisions/2026-10-17-1430-scope.md", "\xef\xbb\xbf# 범위\n", "decision", "2026-10-17 14:30", "범위"},
+		{"reports/2026-10-12-src-structure.md", "본문만", "report", "2026-10-12", ""},
+		{"incidents/save-loss.md", "---\nkind: report\ndate: 2026-09-01 10:00\ntitle: 저장 손실\n---\n# 다른 제목", "incident", "2026-09-01 10:00", "저장 손실"},
+		{"archive/2026-06-x/notes.md", "---\nkind: report\n---\n# 조사", "report", "", "조사"},
+		{"archive/2026-06-x/notes.md", "---\nkind: plan\n---\n", "other", "", ""},
+		{"archive/2026-06-x/notes.md", "---\nkind: other\n---\n", "other", "", ""},
+		{"archive/2026-06-x/notes.md", "---\ntitle: 닫히지 않음\n# 제목", "other", "", "제목"},
+	}
+	str := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	for _, c := range cases {
+		meta, err := ValidateDocument(c.name, "legacy", c.content)
+		if err != nil {
+			t.Errorf("ValidateDocument(%q) = %v", c.name, err)
+			continue
+		}
+		if meta.Kind != c.kind || str(meta.Date) != c.date || str(meta.Title) != c.title || meta.Tags == nil {
+			t.Errorf("ValidateDocument(%q) = %+v (date %q, title %q), want kind %s, date %q, title %q", c.name, meta, str(meta.Date), str(meta.Title), c.kind, c.date, c.title)
+		}
+	}
+	for _, bad := range []struct{ name, location string }{
+		{"decisions/x.md", "history"},
+		{"2026-10-20-1544-decision-x.md", "legacy"},
+		{"draft/x.md", "legacy"},
+	} {
+		if _, err := ValidateDocument(bad.name, bad.location, "---\nkind: decision\n---\n"); err == nil {
+			t.Errorf("ValidateDocument(%q, %q) must fail", bad.name, bad.location)
+		}
+	}
+	if _, err := ValidateDocument("decisions/x.md", "legacy", strings.Repeat("a", MaxDocumentBytes+1)); err == nil {
+		t.Error("an oversized legacy document must fail")
 	}
 }
 
@@ -339,5 +422,76 @@ func TestDocumentJSON(t *testing.T) {
 	b, _ = json.Marshal(Document{Tags: []string{}})
 	if !strings.Contains(string(b), `"date":null,"title":null,"tags":[]`) {
 		t.Errorf("empty metadata JSON = %s", b)
+	}
+}
+
+func TestValidateDocumentRefusesTemplateRemnants(t *testing.T) {
+	const name = "2026-10-20-1544-decision-priority-model.md"
+	doc := func(front, body string) string { return "---\nkind: decision\n" + front + "---\n" + body }
+	guide := "<!-- 파일명: history/yyyy-mm-dd-HHMM-decision-<slug>.md. 이 주석은 지운다. -->"
+	cases := []struct {
+		label, content string
+		want           []string
+	}{
+		{"filled", doc("date: 2026-10-20 15:44\ntitle: 제목\ntags: [a, b]\nstatus: 채택\n", "본문\n"), nil},
+		{"guidance comment", doc("", "# 제목\n\n"+guide+"\n"), []string{"content"}},
+		{"guidance comment on several lines", doc("", "<!--\n파일명: x\n-->\n"), []string{"content"}},
+		{"comment that says to delete it", doc("", "<!-- 이 주석은 지운다 -->\n"), []string{"content"}},
+		{"another comment is fine", doc("", "<!-- 메모 -->\n"), nil},
+		{"placeholder date", doc("date: <yyyy-mm-dd HH:MM>\n", "본문\n"), []string{"content"}},
+		{"placeholder title", doc("title: <문서 제목>\n", "본문\n"), []string{"content"}},
+		{"quoted placeholder", doc("title: \"<문서 제목>\"\n", "본문\n"), []string{"content"}},
+		{"placeholder tags", doc("tags: [<주제어>, <주제어>]\n", "본문\n"), []string{"content"}},
+		{"placeholder in another key", doc("status: <채택 | 기각 | 보류>\n", "본문\n"), []string{"content"}},
+		{"remnants of both kinds, reported at once", doc("title: <문서 제목>\n", guide+"\n"), []string{"content", "content"}},
+		{"angle text that is not the whole value", doc("title: <T> 제네릭\ntags: [a, <b>c]\n", "본문\n"), nil},
+		{"empty value", doc("supersedes:\n", "본문\n"), nil},
+		{"placeholder in the body is left to the CLI", doc("", "<왜 필요했는지>\n"), nil},
+	}
+	for _, c := range cases {
+		_, err := ValidateDocument(name, "history", c.content)
+		if got := violationFields(t, err); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: violations = %v (%v), want %v", c.label, got, err, c.want)
+		}
+	}
+	// A legacy document keeps its rules.
+	if _, err := ValidateDocument("decisions/x.md", "legacy", doc("title: <문서 제목>\n", guide)); err != nil {
+		t.Errorf("legacy: %v", err)
+	}
+	// The archive is checked like the history.
+	if _, err := ValidateDocument(name, "archive", doc("", guide)); err == nil {
+		t.Error("archive must refuse the guidance comment")
+	}
+}
+
+func TestIsPlaceholder(t *testing.T) {
+	for v, want := range map[string]bool{
+		"<문서 제목>":          true,
+		" <a> ":            true,
+		"\"<a>\"":          true,
+		"[<주제어>, <주제어>]":   true,
+		"[a, <주제어>]":       true,
+		"<a> b":            false,
+		"a <b>":            false,
+		"[a, b]":           false,
+		"":                 false,
+		"<":                false,
+		"<>":               true,
+		"2026-10-20 15:44": false,
+	} {
+		if got := IsPlaceholder(v); got != want {
+			t.Errorf("IsPlaceholder(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestFrontMatterEntries(t *testing.T) {
+	got, ok := FrontMatterEntries("---\nkind: report\n# note\n  nested: x\ntitle:  \"a: b\"  # c\ntags: [x, y]\nempty:\nno colon\n---\n본문: 아님\n")
+	want := []FrontMatterEntry{{"kind", "report"}, {"title", "a: b"}, {"tags", "[x, y]"}, {"empty", ""}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("entries = %v, %v, want %v", got, ok, want)
+	}
+	if _, ok := FrontMatterEntries("본문"); ok {
+		t.Error("content without a block must report false")
 	}
 }

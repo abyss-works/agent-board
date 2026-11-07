@@ -2,6 +2,48 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
+## v0.8.0 (2026-11-07)
+
+### 운영자 확인 사항
+
+- 서버가 시작할 때 스키마 8에서 13까지 마이그레이션을 적용한다. 이전 바이너리는 더 새로운 스키마를 만나면 시작을 거부하므로, 태그만 되돌려서는 롤백할 수 없다. 배포 직전에 운영 데이터베이스의 SQLite 스냅샷을 떠 두고, 롤백은 스냅샷으로 복원한 뒤 이전 태그로 띄운다. 절차는 `deploy/README.md`를 따른다.
+- 선택 환경 변수 `AGB_EMBEDDING_API_KEY`, `AGB_EMBEDDING_URL`, `AGB_EMBEDDING_MODEL`, `AGB_EMBEDDING_QUERY_PREFIX`, `AGB_EMBEDDING_INTERVAL`을 더한다. 모두 생략하면 의미 검색이 꺼지고 키워드 검색만 한다. 키를 지정하면 URL과 모델도 필요하다. Compose 구성(`compose.yaml`, `deploy/compose.prod.yaml`)은 이 값들을 빈 기본값으로 컨테이너에 전달한다.
+- 서버를 먼저 배포한 뒤 CLI를 갱신한다. 새 명령 `agb find`, `agb graph`, `agb recall`과 `agb issue comment --kind`는 이전 서버에서 실패한다.
+
+### 서버와 API
+
+- 마이그레이션: 댓글 종류(9), 기록 문서 표 재생성(10), 댓글 검색 색인(11), 임베딩 저장(12), 비슷한 문서 표(13).
+- `GET /v1/search`: 이슈, 댓글, 기록 문서를 한 번에 찾아 관련도 순으로 돌려준다. 항목마다 종류, 프로젝트, 출처 키, 시각, 일치 부분이 있고 프로젝트, 출처 종류, 댓글 종류로 거른다.
+- 의미 검색: 임베딩 API 키를 지정하면 서버가 이슈, 댓글, 기록 문서를 900자 단위로 나눠 주기적으로 임베딩해 저장하고, 통합 검색이 키워드 순위와 의미 순위를 RRF로 합친다. 의미 검색이 켜져 있으면 10항을 넘는 질문도 받는다. 검색어 임베딩 제한 시간은 10초다.
+- `GET /v1/graph`: 이슈나 기록 문서에서 `depth`(1~2)만큼 닿는 노드와 간선을 돌려준다. 간선은 상위 이슈, 선행 이슈, 참조(`issue:`, `doc:`), 기록 문서 프런트매터의 `issue`, `supersedes`, `related`에서 만든다. 다른 참조는 이슈 노드의 `refs`로 돌려준다.
+- `similar` 간선: 임베딩이 비슷한 기록 문서를 문서마다 최대 3개 골라 점수와 함께 잇는다. 점수 하한은 0.70이고, 명시 연결이 없는 쌍만 더하며, 의미 검색이 꺼지면 보이지 않는다.
+- 댓글 종류 `comment_kind`: 활동 기록에 열을 더한다. 값은 `decision`, `finding`, `lesson`이고 진행 기록과 댓글이 아닌 기록은 null이다. `POST /v1/issues/{key}/comments`가 `comment_kind`를 받고 모르는 값은 422다. `GET /v1/activity`가 `comment_kind` 필터(쉼표 OR)를 받는다.
+- 기록 문서 위치 `legacy`와 종류 `other`: `decisions/`, `reports/`, `incidents/` 바로 아래 문서와 `archive/` 하위 폴더의 문서를 상대 경로 이름으로 받는다. 종류는 폴더나 프런트매터에서 정하고 알 수 없으면 `other`다. 프런트매터는 선택이다. 이전 체계의 `.example.md` 서식은 문서로 받지 않는다.
+- 서식 안내 주석이나 자리표시자 프런트매터가 남은 기록 문서는 422(`validation_failed`, 필드 `content`)로 거절한다.
+
+### CLI
+
+- `agb find`: 통합 검색.
+- `agb recall "<질문>"`: 질문 하나로 관련 결정, 사고, 이슈와 그 연결을 찾는다.
+- `agb graph <키>`: 결정 그래프. `graph`와 `recall`은 `similar` 간선의 점수를 보인다.
+- `agb issue comment --kind`, `agb activity --comment-kind`: 댓글 종류를 지정하고 거른다. 활동 표는 종류를 `[decision]`처럼 앞에 붙인다.
+- `agb doc search --location`: 위치 필터.
+- `agb doc new`: 서식에서 새 기록 문서 파일을 만든다.
+- `agb doc check`: 기록 문서의 서식 흔적을 커밋 전에 검사한다.
+- `agb doc sync`와 자동 등록이 이전 체계 기록과 `archive/` 하위 문서를 위치 `legacy`로 올린다. 256KB를 넘는 파일은 `skipped`로 알리고, `legacy` 문서의 후속 항목은 알리지 않는다. `agb doc put`은 저장소 루트 기준 상대 경로로 `legacy` 문서를 올린다.
+- `agb doc sync`는 커밋했고 바뀌지 않은 파일만 올린다. 나머지는 `skipped`로 알리고, git 저장소가 아니면 올리지 않고 실패한다.
+
+### 웹 클라이언트
+
+- 활동 기록에 댓글 종류를 보인다.
+- 문서 종류 `other`와 위치 `legacy`를 표시한다.
+
+### 에이전트 스킬
+
+- 과거 기록 찾기를 통합 검색, `recall`, `graph`로 안내하고 `similar` 간선을 추정 연결로 읽는 법을 더한다.
+- 댓글 종류와 결정·사고 기록 규칙, 기록 문서 작성 절차(`doc new`, `doc check`)를 더한다.
+- 이전 체계 기록 수집과 `.example.md` 서식 제외 규칙, 세션 종료 때 `doc sync` 대상과 git 저장소 조건을 더한다.
+
 ## v0.7.0 (2026-11-05)
 
 ### 서버와 API

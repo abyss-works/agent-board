@@ -424,7 +424,7 @@ func TestOtherChangesKeepTheAcknowledgement(t *testing.T) {
 
 	// A comment does not touch the issue.
 	commented := acknowledgedIssue(t, s, ctx, IssueInput{})
-	if _, err := s.AddComment(ctx, trClaude, commented.Key, "착수한다.", nil); err != nil {
+	if _, err := s.AddComment(ctx, trClaude, commented.Key, "착수한다.", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.GetIssue(ctx, commented.Key); err != nil || !reflect.DeepEqual(got, commented) {

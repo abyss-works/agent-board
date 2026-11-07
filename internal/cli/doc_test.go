@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -49,6 +50,20 @@ func writeFiles(t *testing.T, root string, files map[string]string) {
 		}
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// commitAll makes root a git repository and commits everything in it.
+func commitAll(t *testing.T, root string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "dev"},
+		{"add", "."},
+		{"-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "docs"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
 }
@@ -270,6 +285,7 @@ func TestDocSyncSortsTheFilesIntoCategories(t *testing.T) {
 		"archive/" + nLegacy:                                "# 이전 체계의 문서\n",
 		"archive/_x.md":                                     "서식",
 	})
+	commitAll(t, root)
 	puts := map[string]canned{
 		"PUT /v1/projects/CLI/documents/" + nUploaded:  {status: 201, body: serverDoc("CLI", nUploaded, "history", "n")},
 		"PUT /v1/projects/CLI/documents/" + nArchNew:   {status: 201, body: serverDoc("CLI", nArchNew, "archive", "n")},
@@ -368,10 +384,64 @@ func TestDocSyncSortsTheFilesIntoCategories(t *testing.T) {
 	}
 }
 
+// A manual sync uploads what the automatic one does: committed files without
+// later edits. Drafts, ignored files and edited files stay local.
+func TestDocSyncUploadsOnlyCommittedFiles(t *testing.T) {
+	const (
+		nCommitted = "2026-10-20-1544-decision-committed-one.md"
+		nEdited    = "2026-10-20-1545-decision-edited-one.md"
+		nDraft     = "2026-10-20-1546-decision-draft-one.md"
+		nIgnored   = "2026-10-20-1547-decision-ignored-one.md"
+	)
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		".gitignore":            "archive/*ignored*\n",
+		"history/" + nCommitted: docText("decision", "커밋"),
+		"history/" + nEdited:    docText("decision", "고치기 전"),
+	})
+	commitAll(t, root)
+	writeFiles(t, root, map[string]string{
+		"history/" + nEdited:  docText("decision", "고친 뒤"),
+		"history/" + nDraft:   docText("decision", "초안"),
+		"archive/" + nIgnored: docText("decision", "무시"),
+	})
+	puts := map[string]canned{"PUT /v1/projects/CLI/documents/" + nCommitted: {status: 201, body: serverDoc("CLI", nCommitted, "history", "n")}}
+	srv := docSyncServer(t, nil, puts)
+	h := newHarness(t, srv, false)
+	if code := h.run("doc", "sync", "-p", "CLI", "--root", root); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if got := srv.puts(); !reflect.DeepEqual(got, []string{nCommitted}) {
+		t.Errorf("puts = %v, want only %s", got, nCommitted)
+	}
+	var got syncOutput
+	if err := json.Unmarshal(h.stdout.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Skipped) != 3 {
+		t.Errorf("skipped = %v, want the edited, draft and ignored files", got.Skipped)
+	}
+}
+
+// Outside a git repository nothing is uploaded: the commit state is unknown.
+func TestDocSyncFailsOutsideAGitRepository(t *testing.T) {
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{"history/" + docReportName: docText("report", "본문")})
+	srv := docSyncServer(t, nil, nil)
+	h := newHarness(t, srv, false)
+	if code := h.run("doc", "sync", "-p", "CLI", "--root", root); code != 1 || !strings.Contains(h.stderr.String(), "git 저장소") {
+		t.Errorf("code=%d stderr=%s", code, h.stderr)
+	}
+	if len(srv.reqs) != 0 {
+		t.Errorf("requests = %v, want none", srv.paths())
+	}
+}
+
 func TestDocSyncWithNothingToFix(t *testing.T) {
 	same := docText("report", "같은 기록")
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{"history/" + docReportName: same, "history/_report.md": "서식"})
+	commitAll(t, root)
 	srv := docSyncServer(t, []string{serverDoc("CLI", docReportName, "history", docSHA(same))}, nil)
 	h := newHarness(t, srv, false)
 	if code := h.run("doc", "sync", "-p", "CLI", "--root", root); code != 0 {
@@ -419,6 +489,7 @@ func TestDocSyncReadsEveryPageOfTheServerList(t *testing.T) {
 		docs = append(docs, serverDoc("CLI", fmt.Sprintf("2026-01-01-0000-report-p%04d.md", i), "history", sha))
 	}
 	writeFiles(t, root, files)
+	commitAll(t, root)
 	srv := docSyncServer(t, docs, nil)
 	h := newHarness(t, srv, false)
 	if code := h.run("doc", "sync", "-p", "CLI", "--root", root); code != 0 {
@@ -446,6 +517,7 @@ func TestDocSyncReadsEveryPageOfTheServerList(t *testing.T) {
 func TestDocSyncStopsOnErrorsThatAreNotAboutAFile(t *testing.T) {
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{"history/" + docReportName: docText("report", "본문")})
+	commitAll(t, root)
 	// An unknown project is a 404 on the list, before anything is sent.
 	srv := newFakeServer(t)
 	h := newHarness(t, srv, true)
@@ -485,6 +557,7 @@ func TestDocSyncUsageErrors(t *testing.T) {
 	}
 	// One of the two folders is enough.
 	writeFiles(t, empty, map[string]string{"archive/" + docReportName: docText("report", "본문")})
+	commitAll(t, empty)
 	srv = docSyncServer(t, nil, map[string]canned{"PUT /v1/projects/CLI/documents/" + docReportName: {status: 201, body: serverDoc("CLI", docReportName, "archive", "n")}})
 	h = newHarness(t, srv, false)
 	if code := h.run("doc", "sync", "-p", "CLI", "--root", empty); code != 0 {
@@ -685,6 +758,8 @@ func TestDocHelp(t *testing.T) {
 		{[]string{"--help"}, "doc "},
 		{[]string{"doc", "--help"}, "sync"},
 		{[]string{"help", "doc"}, "search"},
+		{[]string{"doc", "new", "--help"}, "--slug"},
+		{[]string{"doc", "check", "--help"}, "--root"},
 		{[]string{"doc", "put", "--help"}, "history"},
 		{[]string{"doc", "sync", "--help"}, "--root"},
 		{[]string{"doc", "search", "--help"}, "--kind"},

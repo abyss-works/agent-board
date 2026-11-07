@@ -22,10 +22,13 @@ func TestHelpNamesNeitherTodoNorDecisionType(t *testing.T) {
 		helpOf(c, "agb "+c.name, texts)
 	}
 	// The option --decision-needed and the overview section decisions are not the removed type.
-	// decision is also a kind of record document, which the help of agb doc names.
+	// decision is also a kind of record document, which the help of agb doc names,
+	// and a comment kind, which the help names as "decision, finding, lesson" or "decision(결정)".
 	decisionType := regexp.MustCompile(`\bdecision\b`)
 	for path, text := range texts {
 		text = strings.ReplaceAll(text, "decision-needed", "")
+		text = strings.ReplaceAll(text, "decision, finding, lesson", "")
+		text = strings.ReplaceAll(text, "decision(결정)", "")
 		if strings.Contains(strings.ToLower(text), "todo") {
 			t.Errorf("%s: the help names the removed status todo:\n%s", path, text)
 		}

@@ -14,22 +14,31 @@ const (
 	DocumentIncident       DocumentKind = "incident"
 	DocumentReport         DocumentKind = "report"
 	DocumentImplementation DocumentKind = "implementation"
+	// DocumentOther is a legacy document whose kind neither its folder nor its
+	// front matter tells. A record document name never carries it.
+	DocumentOther DocumentKind = "other"
 )
 
-// DocumentKinds lists every record document kind.
-var DocumentKinds = []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation}
+// recordKinds are the kinds a record document file name may carry.
+var recordKinds = []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation}
 
-// DocumentLocation is the folder of the management repository that holds a
-// record document.
+// DocumentKinds lists every document kind.
+var DocumentKinds = append(append([]DocumentKind{}, recordKinds...), DocumentOther)
+
+// DocumentLocation is where a document lies in the management repository.
 type DocumentLocation string
 
 const (
 	LocationHistory DocumentLocation = "history"
 	LocationArchive DocumentLocation = "archive"
+	// LocationLegacy holds the documents of the earlier record system: the
+	// decisions, reports and incidents folders and the subfolders of archive.
+	// Their name is the path relative to the repository root.
+	LocationLegacy DocumentLocation = "legacy"
 )
 
-// DocumentLocations lists every folder a record document may lie in.
-var DocumentLocations = []DocumentLocation{LocationHistory, LocationArchive}
+// DocumentLocations lists every location.
+var DocumentLocations = []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}
 
 // ParseDocumentKind returns the document kind named v.
 func ParseDocumentKind(v string) (DocumentKind, bool) { return parseEnum(v, DocumentKinds) }
@@ -74,7 +83,78 @@ func ParseDocumentName(name string) (DocumentKind, bool) {
 	if m == nil {
 		return "", false
 	}
-	return ParseDocumentKind(m[1])
+	return parseEnum(m[1], recordKinds)
+}
+
+// legacyFolderKinds maps the folders of the earlier record system to the kind
+// of their documents. The archive subfolders take the kind from the front
+// matter instead.
+var legacyFolderKinds = map[string]DocumentKind{
+	"decisions": DocumentDecision,
+	"reports":   DocumentReport,
+	"incidents": DocumentIncident,
+}
+
+// ParseLegacyName reports whether name is the path of a legacy document:
+// decisions/, reports/ or incidents/ followed by a file, or archive/ followed
+// by at least one subfolder and a file. The file ends in .md and is not a
+// template: its name neither starts with _ nor ends in .example.md. Segments
+// are not empty, ".", ".." or hidden, and hold no backslash or control
+// character. folder is the first segment.
+func ParseLegacyName(name string) (folder string, ok bool) {
+	segs := strings.Split(name, "/")
+	file := segs[len(segs)-1]
+	if !strings.HasSuffix(file, ".md") || strings.HasPrefix(file, "_") || strings.HasSuffix(file, ".example.md") {
+		return "", false
+	}
+	for _, s := range segs {
+		if s == "" || s[0] == '.' || strings.ContainsAny(s, "\\") || strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+			return "", false
+		}
+	}
+	folder = segs[0]
+	if _, ok := legacyFolderKinds[folder]; ok && len(segs) == 2 {
+		return folder, true
+	}
+	if folder == string(LocationArchive) && len(segs) >= 3 {
+		return folder, true
+	}
+	return "", false
+}
+
+// legacyNameDate is the date at the start of a legacy file name: yyyy-mm-dd,
+// optionally followed by the time as HH-MM or HHMM.
+var legacyNameDate = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})(?:-(\d{2})-?(\d{2})-)?`)
+
+// legacyMeta fills what a legacy document lacks. The kind comes from the
+// folder, or for an archive subfolder from a known front matter kind, and is
+// otherwise other. The date falls back to the one in the file name and the
+// title to the first "# " heading.
+func legacyMeta(folder, name, content string, meta DocumentMeta) DocumentMeta {
+	if k, ok := legacyFolderKinds[folder]; ok {
+		meta.Kind = string(k)
+	} else if _, ok := ParseDocumentKind(meta.Kind); !ok || meta.Kind == string(DocumentOther) {
+		meta.Kind = string(DocumentOther)
+	}
+	if meta.Date == nil {
+		file := name[strings.LastIndex(name, "/")+1:]
+		if m := legacyNameDate.FindStringSubmatch(file); m != nil {
+			d := m[1]
+			if m[2] != "" {
+				d += " " + m[2] + ":" + m[3]
+			}
+			meta.Date = &d
+		}
+	}
+	if meta.Title == nil {
+		for _, line := range strings.Split(strings.TrimPrefix(content, "\xef\xbb\xbf"), "\n") {
+			if t, ok := strings.CutPrefix(strings.TrimRight(line, " \t\r"), "# "); ok {
+				meta.Title = nonEmpty(strings.TrimSpace(t))
+				break
+			}
+		}
+	}
+	return meta
 }
 
 // DocumentMeta is what the server reads from the front matter of a record
@@ -121,6 +201,76 @@ func ParseFrontMatter(content string) (meta DocumentMeta, ok bool) {
 		}
 	}
 	return meta, false
+}
+
+// FrontMatterEntry is one top-level "key: value" line of a front matter block.
+// Value is read like a scalar: unquoted, without a trailing comment.
+type FrontMatterEntry struct {
+	Key, Value string
+}
+
+// FrontMatterEntries lists the top-level "key: value" lines of the front matter
+// at the start of content, in order, whatever their keys. Comments, indented
+// lines and lines without a colon are skipped. ok is false when content does
+// not start with a closed block.
+func FrontMatterEntries(content string) (entries []FrontMatterEntry, ok bool) {
+	first, rest, found := strings.Cut(content, "\n")
+	if !found || !isFence(first) {
+		return nil, false
+	}
+	for more := true; more; {
+		var line string
+		line, rest, more = strings.Cut(rest, "\n")
+		if isFence(line) {
+			return entries, true
+		}
+		key, value, hasValue := strings.Cut(line, ":")
+		if !hasValue || key == "" || key[0] == ' ' || key[0] == '\t' || key[0] == '#' {
+			continue
+		}
+		entries = append(entries, FrontMatterEntry{strings.TrimRight(key, " \t"), yamlScalar(value)})
+	}
+	return nil, false
+}
+
+// IsPlaceholder reports whether a front matter value is a template
+// placeholder: text that starts with "<" and ends with ">", or a flow list
+// with such an item.
+func IsPlaceholder(value string) bool {
+	v := yamlScalar(value)
+	if len(v) >= 2 && v[0] == '[' && v[len(v)-1] == ']' {
+		for _, item := range strings.Split(v[1:len(v)-1], ",") {
+			if isPlaceholderScalar(yamlScalar(item)) {
+				return true
+			}
+		}
+		return false
+	}
+	return isPlaceholderScalar(v)
+}
+
+func isPlaceholderScalar(s string) bool {
+	return len(s) >= 2 && s[0] == '<' && s[len(s)-1] == '>'
+}
+
+// htmlComment matches an HTML comment, which may span lines.
+var htmlComment = regexp.MustCompile(`(?s)<!--(.*?)-->`)
+
+// templateGuidanceMarkers are phrases of the guidance comment that a record
+// template carries and the author must delete.
+var templateGuidanceMarkers = []string{"파일명:", "이 주석은 지운다"}
+
+// hasTemplateGuidance reports whether content holds an HTML comment with the
+// guidance of a record template.
+func hasTemplateGuidance(content string) bool {
+	for _, m := range htmlComment.FindAllStringSubmatch(content, -1) {
+		for _, marker := range templateGuidanceMarkers {
+			if strings.Contains(m[1], marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isFence(line string) bool { return strings.TrimRight(line, " \t\r") == "---" }
@@ -196,7 +346,11 @@ func flowList(value string) []string {
 // ValidateDocument checks the file name, the location and the content of a
 // record document and returns what the front matter says. Every violation is
 // reported at once. The front matter kind must equal the kind in the name.
+// A legacy document is checked by validateLegacy instead.
 func ValidateDocument(name, location, content string) (DocumentMeta, error) {
+	if location == string(LocationLegacy) {
+		return validateLegacy(name, content)
+	}
 	var e ValidationError
 	kind, nameOK := ParseDocumentName(name)
 	if !nameOK {
@@ -215,6 +369,41 @@ func ValidateDocument(name, location, content string) (DocumentMeta, error) {
 		if nameOK && m.Kind != string(kind) {
 			e.add("content", "프런트매터의 kind(%q)가 파일명의 종류(%s)와 같아야 합니다.", m.Kind, kind)
 		}
+		var keys []string
+		entries, _ := FrontMatterEntries(content)
+		for _, en := range entries {
+			if IsPlaceholder(en.Value) {
+				keys = append(keys, en.Key)
+			}
+		}
+		if len(keys) > 0 {
+			e.add("content", "프런트매터의 %s 값이 서식의 자리표시자(<...>)입니다. 실제 값으로 채워야 합니다.", strings.Join(keys, ", "))
+		}
+		if hasTemplateGuidance(content) {
+			e.add("content", "서식의 안내 주석(<!-- 파일명: ... -->)이 남아 있습니다. 지우고 올려야 합니다.")
+		}
 	}
 	return meta, e.orNil()
+}
+
+// validateLegacy checks a legacy document: its name is a legacy path and its
+// content fits the size limit. The front matter is optional because the
+// earlier record system did not require it.
+func validateLegacy(name, content string) (DocumentMeta, error) {
+	var e ValidationError
+	folder, ok := ParseLegacyName(name)
+	if !ok {
+		e.add("name", "이전 체계 문서는 decisions/, reports/, incidents/ 바로 아래나 archive/ 하위 폴더에 있는 *.md 의 상대 경로여야 합니다.")
+	}
+	if len(content) > MaxDocumentBytes {
+		e.add("content", "%d바이트를 넘을 수 없습니다.", MaxDocumentBytes)
+	}
+	if err := e.orNil(); err != nil {
+		return DocumentMeta{}, err
+	}
+	meta, ok := ParseFrontMatter(content)
+	if !ok {
+		meta = DocumentMeta{Tags: []string{}}
+	}
+	return legacyMeta(folder, name, content, meta), nil
 }

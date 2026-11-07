@@ -15,20 +15,20 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	a := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "a"})
 	b := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "b", Project: "OTH"})
 
-	c, err := s.AddComment(ctx, trClaude, a.Key, "착수한다.", nil)
+	c, err := s.AddComment(ctx, trClaude, a.Key, "착수한다.", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Kind != model.ActivityCommented || c.Body == nil || *c.Body != "착수한다." || c.Changes != nil || c.Actor != "claude" || c.Issue != a.Key || c.ID == 0 {
 		t.Errorf("comment = %+v", c)
 	}
-	if _, err := s.AddComment(ctx, trClaude, "AGB-9", "x", nil); !errors.Is(err, ErrNotFound) {
+	if _, err := s.AddComment(ctx, trClaude, "AGB-9", "x", nil, nil); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing issue err = %v", err)
 	}
 	// Comments are writes to the issue, so a non-active project rejects them.
 	archived := model.ProjectArchived
 	s.UpdateProject(ctx, trOwner, "OTH", ProjectPatch{Status: &archived})
-	if _, err := s.AddComment(ctx, trClaude, b.Key, "x", nil); !errors.Is(err, ErrProjectNotActive) {
+	if _, err := s.AddComment(ctx, trClaude, b.Key, "x", nil, nil); !errors.Is(err, ErrProjectNotActive) {
 		t.Errorf("archived project comment err = %v", err)
 	}
 	active := model.ProjectActive
@@ -41,7 +41,7 @@ func TestCommentsAndActivityFilters(t *testing.T) {
 	if _, _, err := s.UpdateIssue(ctx, trOwner, b.Key, IssuePatch{Status: &del, StatusReason: str("삭제 시험")}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AddComment(ctx, trOwner, b.Key, "deleted comment", nil); err != nil {
+	if _, err := s.AddComment(ctx, trOwner, b.Key, "deleted comment", nil, nil); err != nil {
 		t.Errorf("comment on deleted issue: %v", err)
 	}
 
@@ -113,14 +113,14 @@ func TestCommentSummaryRoundTrip(t *testing.T) {
 	mustProject(t, s, ctx, "AGB")
 	a := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "a"})
 
-	with, err := s.AddComment(ctx, trClaude, a.Key, "랭킹 함수를 추가했다.", str("서버 랭킹 함수 구현"))
+	with, err := s.AddComment(ctx, trClaude, a.Key, "랭킹 함수를 추가했다.", str("서버 랭킹 함수 구현"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if with.Summary == nil || *with.Summary != "서버 랭킹 함수 구현" || with.Body == nil || *with.Body != "랭킹 함수를 추가했다." {
 		t.Errorf("comment with summary = %+v", with)
 	}
-	without, err := s.AddComment(ctx, trClaude, a.Key, "요약 없는 댓글", nil)
+	without, err := s.AddComment(ctx, trClaude, a.Key, "요약 없는 댓글", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestCommentSummaryValidation(t *testing.T) {
 		"surrounding tab": "\t랭킹\t",
 	}
 	for name, summary := range ok {
-		c, err := s.AddComment(ctx, trClaude, a.Key, "본문", &summary)
+		c, err := s.AddComment(ctx, trClaude, a.Key, "본문", &summary, nil)
 		if err != nil || c.Summary == nil || *c.Summary != summary {
 			t.Errorf("%s: comment = %+v, err %v", name, c, err)
 		}
@@ -190,7 +190,7 @@ func TestCommentSummaryValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, summary := range rejected {
-		_, err := s.AddComment(ctx, trClaude, a.Key, "본문", &summary)
+		_, err := s.AddComment(ctx, trClaude, a.Key, "본문", &summary, nil)
 		var verr *model.ValidationError
 		if !errors.As(err, &verr) || len(verr.Fields) == 0 || verr.Fields[0].Field != "summary" {
 			t.Errorf("%s: err = %v, want a summary validation error", name, err)
@@ -202,5 +202,41 @@ func TestCommentSummaryValidation(t *testing.T) {
 	}
 	if after != before {
 		t.Errorf("rejected comments wrote %d records", after-before)
+	}
+}
+
+func TestCommentKindRoundTripAndFilter(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	a := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "a"})
+	decision, lesson := model.CommentDecision, model.CommentLesson
+	d, err := s.AddComment(ctx, trClaude, a.Key, "Redis는 표시용 캐시로만 쓴다.", nil, &decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.CommentKind == nil || *d.CommentKind != model.CommentDecision {
+		t.Errorf("comment kind = %v", d.CommentKind)
+	}
+	if _, err := s.AddComment(ctx, trClaude, a.Key, "모의 렌더링을 실제 화면 확인으로 보고하지 않는다.", nil, &lesson); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddComment(ctx, trClaude, a.Key, "dev 병합", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	all, _, _ := s.ListActivity(ctx, ActivityFilter{Issues: []string{a.Key}, Limit: 50})
+	var kinds []string
+	for _, x := range all {
+		if x.CommentKind == nil {
+			kinds = append(kinds, "-")
+		} else {
+			kinds = append(kinds, string(*x.CommentKind))
+		}
+	}
+	if strings.Join(kinds, ",") != "-,lesson,decision,-" {
+		t.Errorf("kinds newest first = %v (progress notes and the created record have none)", kinds)
+	}
+	only, total, _ := s.ListActivity(ctx, ActivityFilter{CommentKinds: []model.CommentKind{model.CommentDecision, model.CommentLesson}, Limit: 50})
+	if total != 2 || len(only) != 2 {
+		t.Errorf("filter = %d of %d", len(only), total)
 	}
 }

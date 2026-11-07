@@ -27,7 +27,7 @@
 - 마일스톤: 프로젝트마다 출시나 목표 단위의 마일스톤을 두고, 이슈에 마일스톤 하나를 붙인다. 목표일을 정할 수 있고 닫거나 삭제할 수 있다. 진행은 취소·삭제한 이슈를 뺀 이슈 중 완료한 수로 조회할 때 계산한다.
 - 사유와 요약: 상태를 바꿀 때 사유를 남기고(취소와 삭제는 필수), 댓글에는 한 줄 요약을 붙인다.
 - 사용자 확인 표시: 에이전트가 만든 이슈는 미확인으로 시작한다. 사용자가 웹 클라이언트에서 확인하거나, 사용자가 대화에서 확인하면 에이전트가 표시한다. 확인 여부는 작업 흐름에 영향을 주지 않는다.
-- 기록 문서: 관리 저장소의 기록 문서를 프로젝트마다 원문 그대로 보존하고, 여러 프로젝트에 걸쳐 FTS5로 검색한다. 한번 올린 문서는 고치거나 지울 수 없고 위치(`history`, `archive`)만 바꿀 수 있다.
+- 기록 문서: 관리 저장소의 기록 문서를 프로젝트마다 원문 그대로 보존하고, 여러 프로젝트에 걸쳐 FTS5로 검색한다. 이슈, 댓글, 기록 문서를 한 번에 찾는 통합 검색(`GET /v1/search`, `agb find`)이 있다. 이전 체계의 기록과 `archive/` 하위 폴더의 문서는 위치 `legacy`로 함께 보존한다. 서버는 서식의 안내 주석이나 자리표시자(`<...>`) 프런트매터가 남은 문서를 거절한다. 한번 올린 문서는 고치거나 지울 수 없고 위치(`history`, `archive`)만 바꿀 수 있다.
 - 백업: 데이터베이스 스냅샷을 S3 호환 오브젝트 저장소(Cloudflare R2)에 주기적으로 올린다.
 - 웹 클라이언트: 보드에서 카드를 끌어 상태를 바꾸고, 3초마다 화면을 다시 불러와 바뀐 항목을 잠깐 강조한다.
 
@@ -114,8 +114,15 @@ AGB_WEB_DIR=web/dist agb serve
 | `AGB_BACKUP_PREFIX` | 객체 이름 접두어 | `agb` |
 | `AGB_BACKUP_INTERVAL` | 백업 주기. Go duration 형식 | `1h` |
 | `AGB_BACKUP_RETENTION` | 스냅샷 보관 기간. Go duration 형식 | `672h`(4주) |
+| `AGB_EMBEDDING_API_KEY` | 임베딩 API 키. 지정하면 통합 검색이 키워드 검색에 의미 검색을 합친다. 비어 있으면 키워드 검색만 한다. | 비어 있음 |
+| `AGB_EMBEDDING_URL` | OpenAI 호환 임베딩 엔드포인트의 전체 URL(예: `https://openrouter.ai/api/v1/embeddings`). 키를 지정하면 필수 | 없음 |
+| `AGB_EMBEDDING_MODEL` | 임베딩 모델 이름(예: `qwen/qwen3-embedding-8b`). 키를 지정하면 필수 | 없음 |
+| `AGB_EMBEDDING_QUERY_PREFIX` | 검색어에만 앞에 붙이는 문자열. 값에 적은 `\n` 두 글자는 줄바꿈으로 읽는다. | 비어 있음 |
+| `AGB_EMBEDDING_INTERVAL` | 새로 쓰거나 고친 기록을 임베딩하는 주기. Go duration 형식 | `1m` |
 
 백업을 켜면 서버가 시작한 직후와 이후 `AGB_BACKUP_INTERVAL`마다 데이터베이스의 일관된 스냅샷을 gzip으로 압축해 올린다. 마지막 업로드 이후 바뀐 것이 없으면 그 주기의 업로드를 건너뛰고, 보관 기간이 지난 스냅샷은 지운다. 복원 절차는 [deploy/README.md](deploy/README.md)에 있다.
+
+임베딩 API 키를 지정하면 서버가 시작한 직후와 이후 `AGB_EMBEDDING_INTERVAL`마다 이슈, 댓글, 기록 문서를 900자 단위로 나눠 임베딩하고 데이터베이스에 저장한다. 내용이 바뀐 출처만 다시 임베딩하고, 지운 이슈와 그 댓글은 저장분도 지운다. `GET /v1/search`는 키워드 순위와 의미 순위를 RRF로 합쳐 답한다. 검색어를 임베딩하지 못하면 키워드 검색 결과만 돌려준다. 모델을 바꾸면 모든 출처를 다시 임베딩한다.
 
 ## CLI 사용
 
@@ -146,6 +153,10 @@ agb project overview DEMO
 agb issue list -p DEMO --status doing
 agb queue -p DEMO --limit 1
 agb search 정렬 -p DEMO
+# 이슈, 댓글, 기록 문서를 한 번에 찾는다. recall은 찾은 항목에 연결된 결정과 이슈를 함께 보인다.
+agb find 정렬
+agb recall "정렬 기준을 정한 결정"
+agb graph DEMO-1
 agb milestone list -p DEMO
 
 # 이슈를 등록한다. 에이전트의 요청은 종류별 템플릿의 ## 제목이 모두 있어야 한다.
@@ -168,6 +179,10 @@ EOF
 # 팀 트래커의 키는 형식 있는 참조로 붙이고, 그 참조로 이슈를 찾는다.
 agb issue update DEMO-1 --add-ref jira:TEAM-261
 agb issue list --ref jira:TEAM-261
+
+# 서식(history/_<종류>.md)에서 새 기록 문서를 만들고, 커밋하기 전에 서식의 흔적이 남았는지 검사한다.
+agb doc new decision --slug pick-queue --title "큐를 고른다"
+agb doc check
 
 # 관리 저장소의 기록 문서를 서버와 맞추고, 서버의 목록을 본다.
 agb doc sync -p DEMO

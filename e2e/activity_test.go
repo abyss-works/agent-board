@@ -46,6 +46,24 @@ func TestComments(t *testing.T) {
 		wantError(t, owner.do(t, "POST", "/v1/issues/"+iss.Key+"/comments", map[string]any{"body": "x", "title": "y"}), 400, "bad_request")
 		wantError(t, owner.do(t, "POST", "/v1/issues/"+iss.Key+"/comments", map[string]any{}), 422, "validation_failed")
 	})
+	t.Run("comment kind", func(t *testing.T) {
+		r := writer.do(t, "POST", "/v1/issues/"+iss.Key+"/comments", map[string]any{"body": "캐시는 표시용으로만 쓴다.", "comment_kind": "decision"})
+		var raw map[string]any
+		if err := json.Unmarshal(expect(t, r, 201).body, &raw); err != nil || raw["comment_kind"] != "decision" {
+			t.Errorf("comment_kind = %v (%v)", raw["comment_kind"], err)
+		}
+		e := wantError(t, writer.do(t, "POST", "/v1/issues/"+iss.Key+"/comments", map[string]any{"body": "x", "comment_kind": "progress"}), 422, "validation_failed")
+		if !e.hasField("comment_kind") {
+			t.Errorf("details = %+v", e.Error.Details)
+		}
+		l := decodeAs[struct {
+			Items []map[string]any `json:"items"`
+		}](t, owner.do(t, "GET", "/v1/activity?issue="+iss.Key+"&comment_kind=decision", nil), 200)
+		if len(l.Items) != 1 || l.Items[0]["comment_kind"] != "decision" {
+			t.Errorf("filtered = %v", l.Items)
+		}
+		wantError(t, owner.do(t, "GET", "/v1/activity?comment_kind=progress", nil), 400, "bad_request")
+	})
 	t.Run("GET on comments is 405", func(t *testing.T) {
 		r := owner.do(t, "GET", "/v1/issues/"+iss.Key+"/comments", nil)
 		wantError(t, r, 405, "method_not_allowed")

@@ -158,7 +158,7 @@ func TestMigrateAddsSummaryToVersion1Database(t *testing.T) {
 		columns = append(columns, name)
 	}
 	rows.Close()
-	want := "id issue_id kind actor_id session_id client_host at changes body summary"
+	want := "id issue_id kind actor_id session_id client_host at changes body summary comment_kind"
 	if got := strings.Join(columns, " "); got != want {
 		t.Errorf("activity columns = %q, want %q", got, want)
 	}
@@ -174,7 +174,7 @@ func TestMigrateAddsSummaryToVersion1Database(t *testing.T) {
 		t.Errorf("commented record = %+v", items[1])
 	}
 
-	c, err := s.AddComment(ctx, model.Trace{Actor: "claude", SessionID: "s2", ClientHost: "desk"}, "AGB-1", "새 본문", str("새 요약"))
+	c, err := s.AddComment(ctx, model.Trace{Actor: "claude", SessionID: "s2", ClientHost: "desk"}, "AGB-1", "새 본문", str("새 요약"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1035,4 +1035,230 @@ func countRows(t *testing.T, s *Store, table string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// TestMigrateRebuildsDocumentInVersion9Database upgrades a database with
+// documents written under schema version 9. Migration 0010 rebuilds document to
+// accept the location legacy and the kind other; the documents keep their ids,
+// and the search index and its triggers keep working.
+func TestMigrateRebuildsDocumentInVersion9Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-11-06T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 9`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 1, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into document(id, project_id, name, location, kind, title, sha256, size, content, created_at, created_by, updated_at, updated_by)
+		 values (7, 1, '2026-10-20-1544-decision-old.md', 'archive', 'decision', '옛 결정', 'h', 1, '우선순위 큐 본문', `+at+`, 'claude', `+at+`, 'claude')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 9 database: %v", err)
+	}
+	defer s.Close()
+
+	var id int
+	var location string
+	if err := s.db.QueryRow(`select id, location from document where name = '2026-10-20-1544-decision-old.md'`).Scan(&id, &location); err != nil || id != 7 || location != "archive" {
+		t.Errorf("migrated document: id %d, location %q, %v", id, location, err)
+	}
+	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "우선순위", Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+		t.Errorf("search of a migrated document = %d (%d), %v", len(found), total, err)
+	}
+	d, created, err := s.PutDocument(ctx, model.Trace{Actor: "claude", SessionID: "s", ClientHost: "h"}, "AGB", "archive/2026-06-x/notes.md",
+		DocumentInput{Location: "legacy", Content: "# 이전 체계 조사\n본문"})
+	if err != nil || !created || d.Kind != model.DocumentOther || d.Location != model.LocationLegacy || d.Title == nil || *d.Title != "이전 체계 조사" {
+		t.Fatalf("PutDocument of a legacy document = %+v, %v, %v", d, created, err)
+	}
+	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "이전 체계", Locations: []model.DocumentLocation{model.LocationLegacy}, Limit: 10}); err != nil || total != 1 || len(found) != 1 {
+		t.Errorf("search of a legacy document = %d (%d), %v", len(found), total, err)
+	}
+	if _, err := s.db.Exec(`insert into document_fts(document_fts, rank) values ('integrity-check', 1)`); err != nil {
+		t.Errorf("document_fts after the migration: %v", err)
+	}
+	var triggers int
+	if err := s.db.QueryRow(`select count(*) from sqlite_master where type = 'trigger' and tbl_name = 'document'`).Scan(&triggers); err != nil || triggers != 3 {
+		t.Errorf("document triggers = %d, %v; want 3", triggers, err)
+	}
+	if _, err := s.db.Exec(`insert into document(project_id, name, location, kind, sha256, size, content, created_at, created_by, updated_at, updated_by)
+		values (1, 'x.md', 'draft', 'other', 'h', 1, 'c', ` + at + `, 'owner', ` + at + `, 'owner')`); err == nil {
+		t.Error("an unknown location was accepted")
+	}
+}
+
+// TestMigrateIndexesCommentsOfVersion10Database upgrades a database with
+// comments written under schema version 10. Migration 0011 indexes the
+// comments that exist, and the trigger indexes the comments added after it.
+func TestMigrateIndexesCommentsOfVersion10Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-11-06T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind", "0010_legacy_document"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 10`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`), ('claude', 'agent', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into issue(id, project_id, number, key, title, body, type, status, priority, version,
+		                   created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '이슈', '', 'feature', 'backlog', 'P2', 1, `+at+`, `+at+`, `+at+`, 'owner', 'owner', 'owner')`,
+		`insert into activity(issue_id, kind, actor_id, session_id, client_host, at, changes, body, summary, comment_kind)
+		 values (1, 'created', 'owner', 's', 'h', `+at+`, '{}', null, null, null),
+		        (1, 'commented', 'claude', 's', 'h', `+at+`, null, '잠금 원인은 긴 트랜잭션이다', '잠금 원인', 'finding')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 10 database: %v", err)
+	}
+	defer s.Close()
+	if hits, total, err := s.Search(ctx, SearchFilter{Query: "트랜잭션", Limit: 10}); err != nil || total != 1 || hits[0].Type != model.SearchComment || *hits[0].Kind != "finding" {
+		t.Errorf("search of a comment from before the migration = %d %+v, %v", total, hits, err)
+	}
+	if _, err := s.AddComment(ctx, trClaude, "AGB-1", "트랜잭션을 짧게 나눴다", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, total, err := s.Search(ctx, SearchFilter{Query: "트랜잭션", Limit: 10}); err != nil || total != 2 {
+		t.Errorf("search after a new comment = %d, %v", total, err)
+	}
+	if _, err := s.db.Exec(`insert into comment_fts(comment_fts, rank) values ('integrity-check', 1)`); err != nil {
+		t.Errorf("comment_fts after the migration: %v", err)
+	}
+}
+
+// TestMigrateAddsEmbeddingToVersion11Database upgrades a database written
+// under schema version 11. Migration 0012 adds the empty embedding table and the
+// data that exists stays as it is.
+func TestMigrateAddsEmbeddingToVersion11Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "'2026-11-06T05:00:00.000Z'"
+	var seed []string
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind", "0010_legacy_document", "0011_comment_fts"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(seed, string(body))
+	}
+	seed = append(seed,
+		`pragma user_version = 11`,
+		`insert into actor(id, kind, created_at) values ('owner', 'user', `+at+`)`,
+		`insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 values (1, 'AGB', 'agent-board', 'active', 2, `+at+`, `+at+`, 'owner', 'owner')`,
+		`insert into issue(id, project_id, number, key, title, body, type, status, priority, version,
+		                   created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
+		 values (1, 1, 1, 'AGB-1', '이슈', '', 'feature', 'backlog', 'P2', 1, `+at+`, `+at+`, `+at+`, 'owner', 'owner', 'owner')`,
+	)
+	for _, stmt := range seed {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("seed %.40q: %v", stmt, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 11 database: %v", err)
+	}
+	defer s.Close()
+	var version, rows, issues int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil || version != SchemaVersion || SchemaVersion < 12 {
+		t.Errorf("user_version = %d, SchemaVersion = %d, %v", version, SchemaVersion, err)
+	}
+	if err := s.db.QueryRow(`select count(*) from embedding`).Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("embedding rows = %d, %v", rows, err)
+	}
+	if err := s.ReplaceEmbeddings(ctx, SourceIssue, 1, []EmbeddingRow{{Chunk: 0, Model: "m", SHA256: "h", Text: "t", Vector: []float32{1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`insert into embedding(source, source_id, chunk, model, text_sha256, text, vector, created_at) values ('wiki', 1, 0, 'm', 'h', 't', x'00', ` + at + `)`); err == nil {
+		t.Error("an unknown source was accepted")
+	}
+	if err := s.db.QueryRow(`select count(*) from issue`).Scan(&issues); err != nil || issues != 1 {
+		t.Errorf("issues after the migration = %d, %v", issues, err)
+	}
+}
+
+// TestMigrateAddsSimilarDocumentToVersion12Database upgrades a database written
+// under schema version 12. Migration 0013 adds the empty similar_document table.
+func TestMigrateAddsSimilarDocumentToVersion12Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agb.db")
+	legacy, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"0001_init", "0002_activity_summary", "0003_topic_ack_reason", "0004_milestone", "0005_token",
+		"0006_issue_lifecycle", "0007_priority_reclass", "0008_document", "0009_comment_kind", "0010_legacy_document", "0011_comment_fts", "0012_embedding"} {
+		body, err := migrationFS.ReadFile("migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := legacy.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if _, err := legacy.Exec(`pragma user_version = 12`); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a version 12 database: %v", err)
+	}
+	defer s.Close()
+	if n := countRows(t, s, "similar_document"); n != 0 {
+		t.Errorf("similar_document rows = %d", n)
+	}
 }

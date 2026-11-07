@@ -5,7 +5,7 @@ import { IssueLink } from '@/components/issue/issue-link'
 import { ActorChip, IssueKey } from '@/components/issue/meta'
 import { Markdown } from '@/components/markdown'
 import { describeChanges, summarizeActivity } from '@/lib/activity'
-import { KIND_LABEL } from '@/lib/labels'
+import { COMMENT_KIND_LABEL, KIND_LABEL } from '@/lib/labels'
 import { formatKst, formatKstTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -75,6 +75,9 @@ export function ActivityItem({ activity: a, flash, showIssue = true, compact, to
             <Icon className="size-3" />
             {KIND_LABEL[a.kind]}
           </span>
+          {a.comment_kind ? (
+            <span className="rounded border border-border px-1.5 text-[0.625rem] text-foreground/80">{COMMENT_KIND_LABEL[a.comment_kind]}</span>
+          ) : null}
           {showIssue ? (
             <IssueLink issueKey={a.issue} className="hover:underline">
               <IssueKey issueKey={a.issue} className="text-foreground/80" />
