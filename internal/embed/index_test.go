@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/store"
 )
@@ -46,3 +47,72 @@ func TestSearcherEmbedsTheQueryWithThePrefix(t *testing.T) {
 type failing struct{}
 
 func (failing) Embed(context.Context, []string) ([][]float32, error) { return nil, errors.New("x") }
+
+// scripted answers each call with the next entry of errs; nil succeeds with a
+// vector matching the index.
+type scripted struct {
+	errs  []error
+	calls int
+}
+
+func (s *scripted) Embed(ctx context.Context, _ []string) ([][]float32, error) {
+	i := s.calls
+	s.calls++
+	if i < len(s.errs) && s.errs[i] != nil {
+		return nil, s.errs[i]
+	}
+	return [][]float32{{1, 0, 0}}, nil
+}
+
+func oneSourceIndex() *Index {
+	var x Index
+	x.Load([]store.EmbeddingRow{{Source: "issue", SourceID: 1, Text: "t", Vector: []float32{1, 0, 0}}})
+	return &x
+}
+
+func TestSearcherRetriesTheQueryOnceAfterAFailure(t *testing.T) {
+	e := &scripted{errs: []error{errors.New("deadline")}}
+	got, err := (&Searcher{Embedder: e, Index: oneSourceIndex()}).Search(context.Background(), "q", 5)
+	if err != nil || len(got) != 1 || e.calls != 2 {
+		t.Errorf("got %+v, %v, calls %d", got, err, e.calls)
+	}
+}
+
+func TestSearcherReportsTheErrorAfterTwoFailures(t *testing.T) {
+	e := &scripted{errs: []error{errors.New("a"), errors.New("b")}}
+	_, err := (&Searcher{Embedder: e, Index: oneSourceIndex()}).Search(context.Background(), "q", 5)
+	if err == nil || err.Error() != "b" || e.calls != 2 {
+		t.Errorf("err %v, calls %d", err, e.calls)
+	}
+}
+
+func TestSearcherDoesNotRetryWhenTheRequestIsDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	e := &scripted{errs: []error{context.Canceled}}
+	_, err := (&Searcher{Embedder: e, Index: oneSourceIndex()}).Search(ctx, "q", 5)
+	if err == nil || e.calls != 1 {
+		t.Errorf("err %v, calls %d", err, e.calls)
+	}
+}
+
+// hanging blocks until its context ends on the first call and succeeds after.
+type hanging struct{ calls int }
+
+func (h *hanging) Embed(ctx context.Context, _ []string) ([][]float32, error) {
+	h.calls++
+	if h.calls == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return [][]float32{{1, 0, 0}}, nil
+}
+
+func TestSearcherGivesEachAttemptItsOwnTimeout(t *testing.T) {
+	h := &hanging{}
+	s := &Searcher{Embedder: h, Index: oneSourceIndex(), Timeout: 20 * time.Millisecond}
+	got, err := s.Search(context.Background(), "q", 5)
+	if err != nil || len(got) != 1 || h.calls != 2 {
+		t.Errorf("got %+v, %v, calls %d", got, err, h.calls)
+	}
+}

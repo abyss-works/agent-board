@@ -12,9 +12,10 @@ import (
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
-// queryTimeout bounds the embedding of a search query. The API usually answers
-// in under a second but sometimes takes several; a tighter bound drops the
-// search by meaning for those queries.
+// queryTimeout bounds each attempt to embed a search query. The API usually
+// answers in under a second but sometimes takes several; a tighter bound drops
+// the search by meaning for those queries. Search retries a failed attempt
+// once, so a single slow call does not lose the search by meaning.
 const queryTimeout = 10 * time.Second
 
 // Index holds every stored chunk in memory and finds the sources nearest to a
@@ -105,15 +106,25 @@ type Searcher struct {
 	Embedder Embedder
 	Prefix   string // prepended to the query text before it is embedded
 	Index    *Index
+	Timeout  time.Duration // bound of one embedding attempt; zero means queryTimeout
 }
 
-// Search embeds the query and returns the n nearest sources.
+// Search embeds the query and returns the n nearest sources. A failed
+// embedding is retried once unless ctx is already done.
 func (s *Searcher) Search(ctx context.Context, query string, n int) ([]store.SourceText, error) {
-	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
-	defer cancel()
-	vecs, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
+	vecs, err := s.embed(ctx, query)
+	if err != nil && ctx.Err() == nil {
+		vecs, err = s.embed(ctx, query)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return s.Index.Search(vecs[0], n), nil
+}
+
+func (s *Searcher) embed(ctx context.Context, query string) ([][]float32, error) {
+	timeout := cmp.Or(s.Timeout, queryTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return s.Embedder.Embed(ctx, []string{s.Prefix + query})
 }
