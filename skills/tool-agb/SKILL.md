@@ -86,7 +86,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
   |---|---|
   | 이슈 목록의 키, 상태, 제목 | `agb issue list -p <KEY> --fields key,status,title --text` |
   | 이슈 본문 원문 | `agb issue get <KEY> --fields body --text` |
-  | 댓글의 작성자, 시각, 본문 | `agb issue activity <KEY> --fields actor,at,body --text` |
+  | 이슈 활동 행(종류, 작성자, 시각, 본문). 댓글은 `kind`가 `commented`인 행 | `agb issue activity <KEY> --fields kind,actor,at,body --text` |
   | 기록 문서 동기화 요약 | `agb doc sync --fields uploaded,conflicts,rejected --text` |
   | 기록 문서 검사의 문제 | `agb doc check --fields files.name,files.problems --text` |
 - 종료 코드: 0 성공, 1 API·네트워크 오류, 2 사용법 오류. 1이면 stderr의 `error.code`와 `details`를 읽고 고친다.

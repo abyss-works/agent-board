@@ -221,16 +221,22 @@ const Usage = `사용법: agb <명령> [옵션]
 
 --fields 와 --text (JSON 을 스크립트로 가공하지 않고 옵션으로 고릅니다):
   --fields a,b      JSON 객체에서 이 키만 남깁니다. 없는 키는 건너뜁니다. 목록 응답(items)은 항목마다 남기고 total 등은 그대로 둡니다.
-                    a.b 는 중첩 객체 a 의 b 입니다. 배열을 만나면 원소마다 적용합니다 (files.name -> {"files":[{"name":..}]}).
-  --text            JSON 대신 텍스트로 출력합니다. --fields 가 필요합니다 (없으면 사용법 오류).
+                    a.b 는 중첩 객체 a 의 b 입니다. 배열을 만나면 원소마다 적용합니다. files.name 은 {"files":[{"name":..}]} 형태로 남깁니다.
+                    목록 응답의 경로는 항목 기준이라 items. 를 붙이지 않습니다. 필드 이름이 하나도 없으면(예: --fields ,) 사용법 오류입니다.
+  --text            JSON 대신 텍스트로 출력합니다. --fields 가 필요합니다 (없으면 사용법 오류). --table 과 함께 주면 --text 가 이깁니다.
                     줄 하나가 행 하나, 필드는 탭으로 구분, 머리글은 없습니다.
                     행: 목록 응답은 items 의 항목, 그 밖에는 모든 경로가 같은 배열 a 로 시작하면(a.x,a.y) a 의 원소, 아니면 응답 전체 한 줄.
+                    키를 여러 개 준 명령(issue get K1 K2)은 응답마다 한 행씩 한 표로 이어 붙입니다.
+                    목록 응답의 행은 items 의 항목이라 total 같은 최상위 키는 텍스트에서 읽을 수 없습니다. JSON 으로 --fields total 을 씁니다.
                     값: 문자열은 그대로, 숫자·true·false 는 JSON 글자 그대로, null 과 없는 필드는 빈 칸(열이 밀리지 않음),
-                    배열·객체는 한 줄 JSON. 한 줄에 필드가 둘 이상이면 문자열의 역슬래시, 탭, 줄바꿈을 \\, \t, \n 으로 바꿉니다.
-                    행이 하나이고 필드도 하나면 바꾸지 않고 그대로 출력합니다. 값이 배열이면 원소마다 한 줄입니다.
+                    배열·객체는 한 줄 JSON. 경로가 배열을 지나면 그 칸은 원소별 값의 배열이고, 경로가 없는 원소는 null 로 자리를 지킵니다.
+                    같은 배열 아래 배열이 겹치면 텍스트에서는 한 겹으로 펴서 담습니다.
+                    행이 하나이고 필드도 하나일 때만 값을 그대로 출력합니다. 문자열은 바꾸지 않고, 배열이면 원소마다 한 줄입니다.
+                    원문 출력에서 null 은 빈 줄이고, 없는 필드는 아무것도 출력하지 않습니다.
+                    그 밖에는(행이 둘 이상이거나 필드가 둘 이상) 문자열의 역슬래시, 탭, 줄바꿈, 캐리지 리턴을 \\, \t, \n, \r 로 바꿉니다.
   예: agb issue list -p AGB --fields key,status,title --text      키, 상태, 제목을 한 줄씩
       agb issue get AGB-1 --fields body --text                    본문 원문
-      agb issue activity AGB-1 --fields actor,at,body --text      댓글 작성자, 시각, 본문
+      agb issue activity AGB-1 --fields kind,actor,at,body --text  활동 행. 댓글은 kind 가 commented 인 행
       agb doc sync --fields uploaded,conflicts,rejected --text    올린 것, 충돌, 거절
       agb doc check --fields files.name,files.problems --text     문제 있는 파일과 문제 (종료 코드는 그대로)
   doc sync, doc check, recall 도 두 옵션을 따르고, 옵션이 없으면 출력은 전과 같습니다.
@@ -541,14 +547,18 @@ func (a *App) emitValue(g *globals, v any, render func(w io.Writer)) error {
 
 // emitMany writes several responses: a JSON array of the bodies in JSON
 // mode, otherwise each rendered in turn with a blank line between. With
-// --text the lines of each response follow one another.
+// --text the responses are the rows of one table.
 func (a *App) emitMany(g *globals, resps []*client.Response, render func(w io.Writer, resp *client.Response) error) error {
 	if g.text {
-		for _, r := range resps {
-			if err := a.emitFields(g, r.Body); err != nil {
-				return err
-			}
+		bodies := make([][]byte, len(resps))
+		for n, r := range resps {
+			bodies[n] = r.Body
 		}
+		text, err := textLinesOf(bodies, g.fields)
+		if err != nil {
+			return err
+		}
+		io.WriteString(a.Stdout, text)
 		return nil
 	}
 	if g.fields != "" || a.jsonOutput(g) {

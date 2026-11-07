@@ -83,11 +83,17 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	return pos, nil
 }
 
-// checkTextFlag rejects --text without --fields before the command does any
-// work.
+// checkTextFlag rejects --text without --fields, and a --fields that names
+// nothing, before the command does any work.
 func checkTextFlag(fs *flag.FlagSet) error {
 	text, fields := fs.Lookup("text"), fs.Lookup("fields")
-	if text == nil || fields == nil || text.Value.String() != "true" || fields.Value.String() != "" {
+	if text == nil || fields == nil {
+		return nil
+	}
+	if v := fields.Value.String(); v != "" && len(parsePaths(v)) == 0 {
+		return usageErrorf("--fields 에 필드 이름이 없습니다. 예: --fields key,title")
+	}
+	if text.Value.String() != "true" || fields.Value.String() != "" {
 		return nil
 	}
 	return usageErrorf("--text 는 --fields 와 함께 씁니다. 예: --fields key,title --text")

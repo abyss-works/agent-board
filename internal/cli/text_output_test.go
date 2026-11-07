@@ -191,3 +191,54 @@ func TestTextLinesAndSelectFieldsEdges(t *testing.T) {
 		t.Errorf("nested json: %s", got)
 	}
 }
+
+func TestTextManyKeysAreRowsOfOneTable(t *testing.T) {
+	srv := newFakeServer(t)
+	one := strings.Replace(issueJSON, `"body":"## 배경\n\n본문"`, `"body":"가\n나"`, 1)
+	two := strings.Replace(strings.Replace(issueJSON, `"CLI-1"`, `"CLI-2"`, 1), `"body":"## 배경\n\n본문"`, `"body":"다"`, 1)
+	srv.on("GET", "/v1/issues/CLI-1", canned{body: one})
+	srv.on("GET", "/v1/issues/CLI-2", canned{body: two})
+	h := newHarness(t, srv, false)
+	if got := textRun(t, h, 0, "issue", "get", "CLI-1", "CLI-2", "--fields", "body", "--text"); got != "가\\n나\n다\n" {
+		t.Errorf("many=%q", got)
+	}
+	if got := textRun(t, h, 0, "issue", "get", "CLI-1", "CLI-2", "--fields", "key,body", "--text"); got != "CLI-1\t가\\n나\nCLI-2\t다\n" {
+		t.Errorf("many=%q", got)
+	}
+}
+
+func TestTextSingleFieldOfManyRowsIsEscaped(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/issues", canned{body: `{"items":[{"title":"a\tb"},{"title":"c\nd"}],"total":2}`})
+	h := newHarness(t, srv, false)
+	if got := textRun(t, h, 0, "issue", "list", "--fields", "title", "--text"); got != "a\\tb\nc\\nd\n" {
+		t.Errorf("rows=%q", got)
+	}
+}
+
+func TestTextWinsOverTable(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/issues", canned{body: listJSON})
+	h := newHarness(t, srv, true)
+	if got := textRun(t, h, 0, "issue", "list", "--table", "--fields", "key,title", "--text"); got != "CLI-1\t첫 이슈\n" {
+		t.Errorf("out=%q", got)
+	}
+}
+
+func TestEmptyFieldListIsAUsageError(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("PATCH", "/v1/issues/CLI-1", canned{body: issueJSON})
+	h := newHarness(t, srv, false)
+	textRun(t, h, 2, "issue", "update", "CLI-1", "--title", "x", "--fields", ",")
+	if len(srv.reqs) != 0 || !strings.Contains(h.stderr.String(), "--fields") {
+		t.Errorf("reqs=%v stderr=%s", srv.reqs, h.stderr)
+	}
+}
+
+func TestTextKeepsPositionsOfArraysFromTheSameParent(t *testing.T) {
+	body := []byte(`{"n":1,"files":[{"name":"a","x":1},{"name":"b"}]}`)
+	got, err := textLines(body, "files.name,files.x,n")
+	if err != nil || got != "[\"a\",\"b\"]\t[1,null]\t1\n" {
+		t.Errorf("got %q err %v", got, err)
+	}
+}

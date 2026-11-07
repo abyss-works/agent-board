@@ -157,45 +157,52 @@ func selectFields(body []byte, spec string) ([]byte, error) {
 // stays on one line. With one field and one row, the value is printed as it
 // is: a string unescaped, an array one element per line.
 func textLines(body []byte, spec string) (string, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil {
-		return "", fmt.Errorf("--fields 는 JSON 객체 응답에만 씁니다: %w", err)
-	}
-	paths := parsePaths(spec)
-	var rows []json.RawMessage
-	single := false
-	if items, ok := arrayOf(obj["items"]); ok {
-		rows = items
-	} else if head, ok := commonHead(paths); ok {
-		if els, ok := arrayOf(obj[head]); ok {
-			rows = els
-			stripped := make([][]string, len(paths))
-			for i, p := range paths {
-				stripped[i] = p[1:]
-			}
-			paths = stripped
-		}
-	}
-	if rows == nil {
-		rows, single = []json.RawMessage{body}, true
-	}
+	return textLinesOf([][]byte{body}, spec)
+}
+
+// textLinesOf is textLines for several responses, which are the rows of one
+// table: the value of a single field is then escaped like any other.
+func textLinesOf(bodies [][]byte, spec string) (string, error) {
 	var b strings.Builder
-	if single && len(paths) == 1 {
-		for _, line := range rawLines(body, paths[0]) {
-			b.WriteString(line)
-			if !strings.HasSuffix(line, "\n") {
-				b.WriteByte('\n')
+	for _, body := range bodies {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(body, &obj); err != nil {
+			return "", fmt.Errorf("--fields 는 JSON 객체 응답에만 씁니다: %w", err)
+		}
+		paths := parsePaths(spec)
+		var rows []json.RawMessage
+		if items, ok := arrayOf(obj["items"]); ok {
+			rows = items
+		} else if head, ok := commonHead(paths); ok {
+			if els, ok := arrayOf(obj[head]); ok {
+				rows = els
+				stripped := make([][]string, len(paths))
+				for i, p := range paths {
+					stripped[i] = p[1:]
+				}
+				paths = stripped
 			}
 		}
-		return b.String(), nil
-	}
-	for _, row := range rows {
-		cells := make([]string, len(paths))
-		for i, p := range paths {
-			cells[i] = cellText(row, p)
+		if rows == nil && len(bodies) == 1 && len(paths) == 1 {
+			for _, line := range rawLines(body, paths[0]) {
+				b.WriteString(line)
+				if !strings.HasSuffix(line, "\n") {
+					b.WriteByte('\n')
+				}
+			}
+			return b.String(), nil
 		}
-		b.WriteString(strings.Join(cells, "\t"))
-		b.WriteByte('\n')
+		if rows == nil {
+			rows = []json.RawMessage{body}
+		}
+		for _, row := range rows {
+			cells := make([]string, len(paths))
+			for i, p := range paths {
+				cells[i] = cellText(row, p)
+			}
+			b.WriteString(strings.Join(cells, "\t"))
+			b.WriteByte('\n')
+		}
 	}
 	return b.String(), nil
 }
@@ -249,6 +256,9 @@ func resolve(raw json.RawMessage, path []string) (vals []json.RawMessage, viaArr
 		arr, _ := arrayOf(raw)
 		for _, el := range arr {
 			vs, _ := resolve(el, path)
+			if len(vs) == 0 {
+				vs = []json.RawMessage{json.RawMessage("null")}
+			}
 			vals = append(vals, vs...)
 		}
 		return vals, true
