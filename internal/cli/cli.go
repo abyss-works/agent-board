@@ -79,6 +79,7 @@ type command struct {
 	summary string
 	usage   string
 	aliases []string // other names that run the command, for names agents often guess
+	note    string   // lines added to the help of a group, for pages of help it points to
 	run     func(a *App, ctx context.Context, g *globals, args []string) error
 	subs    []*command
 }
@@ -157,6 +158,7 @@ func (c *command) help(path string) string {
 		fmt.Fprintf(&b, "  %-12s %s\n", s.name, s.summary)
 	}
 	fmt.Fprintf(&b, "\n%s <명령> --help 로 명령별 사용법을 봅니다.\n", path)
+	b.WriteString(c.note)
 	return b.String()
 }
 
@@ -200,6 +202,11 @@ const Usage = `사용법: agb <명령> [옵션]
   graph <노드>      이슈·기록 문서에 연결된 이슈와 문서
   recall <질문>     질문 하나로 관련 결정·사고·이슈와 그 연결
 
+주제 (agb help <주제>):
+  repo-config       저장소 설정 .agb.json 의 키, 규칙, 예시
+  doc-format        기록 문서의 형식, 메타데이터, 상태, 참조 표기, 오류와 대처
+  migrate-v0.8      v0.8 에서 v0.9 로 옮겨 오는 절차
+
 공통 옵션 (명령 앞뒤 어디에나):
   --json            JSON 출력 (서버 응답 그대로). 기본: 파이프·파일일 때
   --fields <a,b>    JSON 출력에서 이 필드만 남김. 목록은 항목마다 남김. JSON 출력을 강제
@@ -215,7 +222,7 @@ const Usage = `사용법: agb <명령> [옵션]
 공용 토큰은 사용자 행위자(owner)만 씁니다. 에이전트는 agb login --actor <ID> 로 받은 토큰을 씁니다.
 종료 코드: 0 성공, 1 API·네트워크 오류, 2 사용법 오류
 
-agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니다.
+agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb help <주제> 로 주제별 명세를 봅니다.
 `
 
 var root = &command{name: "agb", subs: []*command{
@@ -254,8 +261,15 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	return a.exit(g, err)
 }
 
-// helpFor prints the usage of the command named by path.
+// helpFor prints the usage of the command named by path, or the page of the
+// topic it names.
 func (a *App) helpFor(path []string) int {
+	if len(path) == 1 && root.find(path[0]) == nil {
+		if text := helpTopicText(path[0]); text != "" {
+			io.WriteString(a.Stdout, text)
+			return 0
+		}
+	}
 	cmd, name := root, "agb"
 	for _, p := range path {
 		next := cmd.find(p)
