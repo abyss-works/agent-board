@@ -81,3 +81,52 @@ func TestGraph(t *testing.T) {
 		}
 	}
 }
+
+// Similar edges come from the stored pairs, once per pair of documents, and
+// not where a written link joins the two already.
+func TestGraphSimilarEdges(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	const (
+		a = "2026-10-20-1544-decision-a.md"
+		b = "2026-10-21-1544-decision-b.md"
+		c = "2026-10-22-1544-decision-c.md"
+	)
+	putDoc(t, s, trClaude, "AGB", a, "history", docText("decision", "가"))
+	putDoc(t, s, trClaude, "AGB", b, "history", docText("decision", "나", "related: ["+a+"]"))
+	putDoc(t, s, trClaude, "AGB", c, "history", docText("decision", "다"))
+	id := func(name string) int64 {
+		var v int64
+		if err := s.db.QueryRow(`select id from document where name = ?`, name).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	pairs := []SimilarPair{
+		{Document: id(a), Similar: id(b), Score: 0.9}, // a written related link exists
+		{Document: id(a), Similar: id(c), Score: 0.8},
+		{Document: id(c), Similar: id(a), Score: 0.8}, // the same pair the other way
+	}
+	if err := s.ReplaceSimilarDocuments(ctx, "m", pairs); err != nil {
+		t.Fatal(err)
+	}
+	g, err := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var similar []model.GraphEdge
+	for _, e := range g.Edges {
+		if e.Type == model.EdgeSimilar {
+			similar = append(similar, e)
+		}
+	}
+	if len(similar) != 1 || similar[0].Score == nil || *similar[0].Score != 0.8 {
+		t.Errorf("similar edges = %+v", similar)
+	}
+	if err := s.ReplaceSimilarDocuments(ctx, "m", nil); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1); len(g.Edges) != 1 {
+		t.Errorf("after clearing, edges = %+v", g.Edges)
+	}
+}

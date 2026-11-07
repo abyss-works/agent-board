@@ -25,7 +25,7 @@ import (
 var migrationFS embed.FS
 
 // SchemaVersion is the user_version the store expects after migrating.
-const SchemaVersion = 12
+const SchemaVersion = 13
 
 // Sentinel errors returned by the store. HTTP maps them to status codes.
 var (

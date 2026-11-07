@@ -15,7 +15,9 @@ var graphCmd = &command{
 	usage: `사용법: agb graph <노드> [--depth <1|2>]
 
 이슈나 기록 문서에 연결된 이슈와 문서를 보입니다. 연결은 상위 이슈(parent), 선행 이슈(depends_on), 참조(ref),
-기록 문서 프런트매터의 issue(about), supersedes, related 에서 만듭니다. 방향과 관계없이 depth 만큼 따라갑니다.
+기록 문서 프런트매터의 issue(about), supersedes, related 에서 만듭니다. 서버가 의미 검색을 켜 두었으면 내용이 비슷한
+문서끼리 similar 로도 잇습니다. similar 는 누가 적은 연결이 아니라 임베딩으로 추정한 것이라 점수가 붙습니다.
+방향과 관계없이 depth 만큼 따라갑니다.
 
 노드:
   AGB-10                  이슈 키 (issue:AGB-10 과 같음)
@@ -99,8 +101,17 @@ func (a *App) renderGraph(w io.Writer, resp *client.Response) error {
 			dir, other = e.From+" →", e.To
 		}
 		n := nodes[other]
-		tb.add(dir, string(e.Type), other, n.Kind, deref(n.Status, "-"), deref(n.Title, "-"))
+		tb.add(dir, edgeLabel(e.Type, e.Score), other, n.Kind, deref(n.Status, "-"), deref(n.Title, "-"))
 	}
 	tb.write(w, a.TermWidth)
 	return nil
+}
+
+// edgeLabel names an edge; a similar edge carries its score, since it is
+// inferred and not written by anyone.
+func edgeLabel(t model.GraphEdgeType, score *float64) string {
+	if score == nil {
+		return string(t)
+	}
+	return fmt.Sprintf("%s(%.2f)", t, *score)
 }

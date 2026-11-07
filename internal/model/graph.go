@@ -15,6 +15,9 @@ const (
 	EdgeAbout      GraphEdgeType = "about"      // document → issue its front matter names
 	EdgeSupersedes GraphEdgeType = "supersedes" // document → document it replaces
 	EdgeRelated    GraphEdgeType = "related"    // document → document its front matter relates
+	// EdgeSimilar links documents close in meaning by their embeddings. It is
+	// inferred, not written by anyone, and carries a score.
+	EdgeSimilar GraphEdgeType = "similar"
 )
 
 // GraphNode is an issue or a record document. ID is "issue:<KEY>" or
@@ -36,6 +39,8 @@ type GraphEdge struct {
 	From string        `json:"from"`
 	To   string        `json:"to"`
 	Type GraphEdgeType `json:"type"`
+	// Score is the cosine similarity of a similar edge; other edges have none.
+	Score *float64 `json:"score,omitempty"`
 }
 
 // Graph is the part of the decision graph around a node. The first node is

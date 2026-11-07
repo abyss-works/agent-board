@@ -216,6 +216,39 @@ func (s *Store) buildGraph(ctx context.Context) (*graph, error) {
 			}
 		}
 	}
+	// Inferred links come last and only between documents that no written
+	// link joins already.
+	linked := map[[2]string]bool{}
+	for _, e := range g.edges {
+		linked[[2]string{e.From, e.To}] = true
+		linked[[2]string{e.To, e.From}] = true
+	}
+	rows, err = s.db.QueryContext(ctx, `select pa.key, a.name, pb.key, b.name, sd.score from similar_document sd
+		join document a on a.id = sd.document_id join project pa on pa.id = a.project_id
+		join document b on b.id = sd.similar_id join project pb on pb.id = b.project_id
+		order by sd.score desc`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var pa, na, pb, nb string
+		var score float64
+		if err := rows.Scan(&pa, &na, &pb, &nb, &score); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		from, to := model.DocumentNodeID(pa, na), model.DocumentNodeID(pb, nb)
+		if linked[[2]string{from, to}] {
+			continue
+		}
+		linked[[2]string{from, to}] = true
+		linked[[2]string{to, from}] = true
+		g.edges = append(g.edges, model.GraphEdge{From: from, To: to, Type: model.EdgeSimilar, Score: &score})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	sort.SliceStable(g.edges, func(a, b int) bool {
 		x, y := g.edges[a], g.edges[b]
 		if x.From != y.From {

@@ -18,7 +18,8 @@ var recallCmd = &command{
 
 작업 전에 과거 선례를 찾는 명령입니다. 이슈·댓글·기록 문서를 통합 검색(agb find)한 뒤, 상위 결과마다 결정
 그래프(agb graph)에서 바로 연결된 이슈와 문서를 붙여 보입니다. 연결은 상위·선행 이슈, 참조, 기록 문서의
-issue·supersedes·related 입니다. 댓글이 찾아지면 그 댓글이 달린 이슈의 연결을 봅니다.
+issue·supersedes·related, 그리고
+의미 검색을 켠 서버에서는 내용이 비슷한 문서(similar, 점수 표시)입니다. 댓글이 찾아지면 그 댓글이 달린 이슈의 연결을 봅니다.
 
 서버가 의미 검색을 켜 두었으면 질문 문장을 그대로 줍니다. 키워드 검색만 하는 서버에서는 모든 단어를 AND 로
 찾으므로 핵심어 두세 개를 줍니다.
@@ -81,7 +82,7 @@ issue·supersedes·related 입니다. 댓글이 찾아지면 그 댓글이 달�
 				if e.To == node {
 					dir, other = "in", e.From
 				}
-				item.Links = append(item.Links, recallLink{Edge: e.Type, Direction: dir, Node: nodes[other]})
+				item.Links = append(item.Links, recallLink{Edge: e.Type, Score: e.Score, Direction: dir, Node: nodes[other]})
 			}
 			out.Items = append(out.Items, item)
 		}
@@ -112,6 +113,7 @@ type recallItem struct {
 // Node and "in" when Node links to the hit.
 type recallLink struct {
 	Edge      model.GraphEdgeType `json:"edge"`
+	Score     *float64            `json:"score,omitempty"`
 	Direction string              `json:"direction"`
 	Node      model.GraphNode     `json:"node"`
 }
@@ -151,7 +153,7 @@ func (a *App) renderRecall(w io.Writer, r recallResult) {
 			if l.Node.Status != nil {
 				status = " (" + *l.Node.Status + ")"
 			}
-			fmt.Fprintf(w, "   %s %s %s %s%s  %s\n", arrow, l.Edge, l.Node.ID, l.Node.Kind, status, deref(l.Node.Title, "-"))
+			fmt.Fprintf(w, "   %s %s %s %s%s  %s\n", arrow, edgeLabel(l.Edge, l.Score), l.Node.ID, l.Node.Kind, status, deref(l.Node.Title, "-"))
 		}
 	}
 	if r.Total > len(r.Items) {
