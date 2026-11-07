@@ -42,8 +42,13 @@ func TestDocumentMethodsBuildRequests(t *testing.T) {
 		{"get", func() (*Response, error) { return c.GetDocument(ctx, "AGB", name) }, "GET", "/v1/projects/AGB/documents/" + name, "", ""},
 		{"search", func() (*Response, error) { return c.SearchDocuments(ctx, DocumentFilter{}) }, "GET", "/v1/documents", "", ""},
 		{"search with every filter", func() (*Response, error) {
-			return c.SearchDocuments(ctx, DocumentFilter{Query: "우선순위 큐", Project: "AGB,AGT", Kind: "decision,report", Location: "history", Page: Page{Limit: 10, Offset: 20}})
-		}, "GET", "/v1/documents", "kind=decision%2Creport&limit=10&location=history&offset=20&project=AGB%2CAGT&q=%EC%9A%B0%EC%84%A0%EC%88%9C%EC%9C%84+%ED%81%90", ""},
+			return c.SearchDocuments(ctx, DocumentFilter{Query: "우선순위 큐", Project: "AGB,AGT", Kind: "decision,report", State: "current,archived", Imported: "false", Page: Page{Limit: 10, Offset: 20}})
+		}, "GET", "/v1/documents", "imported=false&kind=decision%2Creport&limit=10&offset=20&project=AGB%2CAGT&q=%EC%9A%B0%EC%84%A0%EC%88%9C%EC%9C%84+%ED%81%90&state=current%2Carchived", ""},
+		{"unified search with status and state", func() (*Response, error) {
+			return c.Search(ctx, SearchFilter{Query: "잠금", Status: "open", State: "all"})
+		}, "GET", "/v1/search", "q=%EC%9E%A0%EA%B8%88&state=all&status=open", ""},
+		{"graph", func() (*Response, error) { return c.Graph(ctx, "issue:AGB-7", 2, "") }, "GET", "/v1/graph", "depth=2&node=issue%3AAGB-7", ""},
+		{"graph with every state", func() (*Response, error) { return c.Graph(ctx, "issue:AGB-7", 0, "all") }, "GET", "/v1/graph", "node=issue%3AAGB-7&state=all", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {

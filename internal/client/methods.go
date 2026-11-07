@@ -437,10 +437,9 @@ func (c *Client) Labels(ctx context.Context, project string) (*Response, error) 
 
 // DocumentFilter searches record documents. Comma separated values are OR.
 type DocumentFilter struct {
-	Query    string
-	Project  string
-	Kind     string
-	Location string
+	Query   string
+	Project string
+	Kind    string
 	// State is a comma separated list of current, superseded, archived or all;
 	// the server answers with the current documents when it is empty. Imported
 	// is true or false.
@@ -455,7 +454,6 @@ func (f DocumentFilter) Values() url.Values {
 	set(v, "q", f.Query)
 	set(v, "project", f.Project)
 	set(v, "kind", f.Kind)
-	set(v, "location", f.Location)
 	set(v, "state", f.State)
 	set(v, "imported", f.Imported)
 	f.Page.addTo(v)
@@ -571,11 +569,18 @@ func (c *Client) SearchDocuments(ctx context.Context, f DocumentFilter) (*Respon
 
 // SearchFilter is the unified search over issues, comments and record
 // documents. Comma separated values are OR.
+//
+// Status limits issues and their comments by the status of the issue, and
+// State limits documents by their state. Each is a comma separated list, or an
+// alias the server knows (open, closed, all; all); the server uses its own
+// default when it is empty.
 type SearchFilter struct {
 	Query       string
 	Project     string
 	Type        string
 	CommentKind string
+	Status      string
+	State       string
 	Page
 }
 
@@ -586,6 +591,8 @@ func (f SearchFilter) Values() url.Values {
 	set(v, "project", f.Project)
 	set(v, "type", f.Type)
 	set(v, "comment_kind", f.CommentKind)
+	set(v, "status", f.Status)
+	set(v, "state", f.State)
 	f.Page.addTo(v)
 	return v
 }
@@ -596,12 +603,14 @@ func (c *Client) Search(ctx context.Context, f SearchFilter) (*Response, error) 
 }
 
 // Graph returns the decision graph around a node ("issue:<KEY>" or
-// "doc:<PROJECT>/<name>") up to depth steps away.
-func (c *Client) Graph(ctx context.Context, node string, depth int) (*Response, error) {
+// "doc:<PROJECT>/<name>") up to depth steps away. state is current or all; the
+// server uses current when it is empty.
+func (c *Client) Graph(ctx context.Context, node string, depth int, state string) (*Response, error) {
 	v := url.Values{}
 	v.Set("node", node)
 	if depth > 0 {
 		v.Set("depth", strconv.Itoa(depth))
 	}
+	set(v, "state", state)
 	return c.Request(ctx, http.MethodGet, withQuery("/v1/graph", v), nil, nil)
 }

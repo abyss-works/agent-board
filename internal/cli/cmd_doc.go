@@ -54,11 +54,19 @@ func (a *App) renderDocument(w io.Writer, resp *client.Response) error {
 	fields(w, [][2]string{
 		{"project", d.Project},
 		{"name", d.Name},
-		{"location", string(d.Location)},
+		{"state", string(d.State)},
 		{"kind", string(d.Kind)},
 		{"date", deref(d.Date, "-")},
 		{"title", deref(d.Title, "-")},
 		{"tags", joinOr(d.Tags, "-")},
+		{"archived", yesNo(d.Archived)},
+		{"imported", yesNo(d.Imported)},
+		{"path", deref(d.Path, "-")},
+		{"supersedes", joinOr(d.Supersedes, "-")},
+		{"superseded_by", joinOr(d.SupersededBy, "-")},
+		{"related", joinOr(d.Related, "-")},
+		{"issues", joinOr(d.Issues, "-")},
+		{"unresolved", unresolvedText(d.UnresolvedRefs)},
 		{"sha256", d.SHA256},
 		{"size", strconv.Itoa(d.Size)},
 		{"created", formatTime(d.CreatedAt, a.Location) + " (" + d.CreatedBy + ")"},
@@ -586,13 +594,16 @@ func (a *App) renderDocumentSearch(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "검색 결과가 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"PROJECT", "NAME", "KIND", "DATE", "TITLE", "SNIPPET"}}
+	tb := &table{header: []string{"PROJECT", "NAME", "STATE", "KIND", "DATE", "TITLE", "SNIPPET"}}
+	var rel []supersession
 	for _, d := range l.Items {
 		// A snippet cuts the original, so it carries its line breaks.
 		snippet := strings.Join(strings.Fields(deref(d.Snippet, "")), " ")
-		tb.add(d.Project, d.Name, string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"), snippet)
+		tb.add(d.Project, d.Name, string(d.State), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"), snippet)
+		rel = append(rel, docSupersession(d))
 	}
 	tb.write(w, a.TermWidth)
+	printSupersession(w, rel)
 	footer(w, len(l.Items), l.Total, l.Offset)
 	return nil
 }
@@ -605,10 +616,14 @@ var docSearchCmd = &command{
 여러 단어는 모두 포함(AND)이고, 전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾습니다. 관련도 순이고
 결과에 snippet 이 붙습니다. 원문은 agb doc get <KEY> <파일명> --content 로 읽습니다.
 
+기본은 유효한(current) 문서만 찾습니다. 대체됨·아카이브 문서는 --state 로 넓힙니다. 결과의 STATE 열은
+문서의 상태이고, 다른 문서를 대체하거나 대체되었으면 표 아래에 이름을 보입니다.
+
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
-  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
+  --state <S>             current(기본, 유효), superseded(대체됨), archived(아카이브), all. 쉼표 OR
+  --imported <true|false> 가져온 문서만(true), 일반 문서만(false). 없으면 둘 다
   --limit <N>             최대 200. 기본 50
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
@@ -617,7 +632,8 @@ var docSearchCmd = &command{
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
-		fs.StringVar(&f.Location, "location", "", "")
+		fs.StringVar(&f.State, "state", "", "")
+		fs.StringVar(&f.Imported, "imported", "", "")
 		fs.IntVar(&f.Limit, "limit", 0, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
@@ -648,11 +664,14 @@ func (a *App) renderDocumentList(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "기록 문서가 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"PROJECT", "NAME", "LOCATION", "KIND", "DATE", "TITLE"}}
+	tb := &table{header: []string{"PROJECT", "NAME", "STATE", "KIND", "DATE", "TITLE"}}
+	var rel []supersession
 	for _, d := range l.Items {
-		tb.add(d.Project, d.Name, string(d.Location), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"))
+		tb.add(d.Project, d.Name, string(d.State), string(d.Kind), deref(d.Date, "-"), deref(d.Title, "-"))
+		rel = append(rel, docSupersession(d))
 	}
 	tb.write(w, a.TermWidth)
+	printSupersession(w, rel)
 	footer(w, len(l.Items), l.Total, l.Offset)
 	return nil
 }
@@ -662,11 +681,13 @@ var docListCmd = &command{
 	usage: `사용법: agb doc list [옵션]
 
 서버에 등록된 기록 문서를 날짜 최신 순으로 보입니다. 프로젝트를 주지 않으면 모든 프로젝트를 봅니다.
+기본은 유효한(current) 문서만 보입니다. 대체됨·아카이브 문서는 --state 로 넓힙니다.
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
-  --location <L>          history, archive, legacy(이전 체계 기록과 archive/ 하위 폴더)
+  --state <S>             current(기본, 유효), superseded(대체됨), archived(아카이브), all. 쉼표 OR
+  --imported <true|false> 가져온 문서만(true), 일반 문서만(false). 없으면 둘 다
   --limit <N>             최대 200. 기본 50
   --offset <N>
 `,
@@ -676,7 +697,8 @@ var docListCmd = &command{
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
 		fs.StringVar(&f.Kind, "kind", "", "")
-		fs.StringVar(&f.Location, "location", "", "")
+		fs.StringVar(&f.State, "state", "", "")
+		fs.StringVar(&f.Imported, "imported", "", "")
 		fs.IntVar(&f.Limit, "limit", 0, "")
 		fs.IntVar(&f.Offset, "offset", 0, "")
 		pos, err := parseArgs(fs, args)
