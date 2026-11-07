@@ -483,11 +483,29 @@ func writeFollowUps(w io.Writer, name string, sections []followUp) {
 	}
 }
 
+// uncommittedDocFiles names the files of all that are not in committed, as
+// skipped entries.
+func uncommittedDocFiles(all, committed []docFile) []string {
+	kept := map[string]bool{}
+	for _, f := range committed {
+		kept[f.repoPath()] = true
+	}
+	var out []string
+	for _, f := range all {
+		if !kept[f.repoPath()] {
+			out = append(out, f.repoPath()+" (커밋하지 않았거나 커밋 뒤 바뀜)")
+		}
+	}
+	return out
+}
+
 var docSyncCmd = &command{
 	name: "sync", summary: "관리 저장소의 기록 문서를 서버와 맞춤",
 	usage: `사용법: agb doc sync --project <KEY> [--root <관리 저장소 경로>]
 
-관리 저장소의 history/ 와 archive/ 에 직접 놓인 *.md 파일을 서버와 맞춥니다. 이름이 _ 로 시작하는 파일(서식)은
+관리 저장소의 history/ 와 archive/ 에 직접 놓인 *.md 파일을 서버와 맞춥니다. 커밋했고 그 뒤 바뀌지 않은
+파일만 올리며, 나머지는 skipped 로 알립니다. --root 가 git 저장소가 아니면 아무것도 올리지 않고 실패합니다.
+이름이 _ 로 시작하는 파일(서식)은
 보지 않습니다. 이름이 기록 문서 형식(yyyy-mm-dd-HHMM-<종류>-<slug>.md)이 아닌 파일은 올리지 않고 skipped 로
 알립니다.
 
@@ -531,6 +549,12 @@ var docSyncCmd = &command{
 		if err != nil {
 			return err
 		}
+		committed, err := committedDocFiles(root, files)
+		if err != nil {
+			return fmt.Errorf("커밋 여부를 확인하지 못해 올리지 않았습니다. --root 는 git 저장소여야 합니다: %w", err)
+		}
+		skipped = append(skipped, uncommittedDocFiles(files, committed)...)
+		files = committed
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
