@@ -148,6 +148,7 @@ var issueGetCmd = &command{
 	usage: `사용법: agb issue get <KEY>...
 
 키를 여러 개 주면 차례로 조회합니다. JSON 출력은 이슈의 배열입니다.
+본문만 원문으로 읽으려면 --fields body --text 입니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		keys, err := parseArgs(leafFlags("issue get", g), args)

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -31,6 +30,7 @@ issue·supersedes·related, 그리고
 문서를 대체했거나 대체되었으면 supersedes:, superseded_by: 로 그 이름이 나옵니다. 그 아래에 연결이 한 줄씩
 나옵니다. ← 는 그 결과를 가리키는 연결, → 는 그 결과가 가리키는 연결이고, similar 는 점수가 붙은 추정입니다.
 파이프에는 query, total, items[].hit, items[].links[](edge, direction, node)를 담은 JSON 으로 출력합니다.
+--fields, --text 는 items 의 항목마다 적용합니다. 예: --fields hit.project,hit.key,hit.title --text
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
@@ -98,13 +98,7 @@ issue·supersedes·related, 그리고
 			}
 			out.Items = append(out.Items, item)
 		}
-		if a.jsonOutput(g) {
-			enc := json.NewEncoder(a.Stdout)
-			enc.SetEscapeHTML(false)
-			return enc.Encode(out)
-		}
-		a.renderRecall(a.Stdout, out)
-		return nil
+		return a.emitValue(g, out, func(w io.Writer) { a.renderRecall(w, out) })
 	},
 }
 

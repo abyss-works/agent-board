@@ -2,9 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -252,6 +252,7 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 
 결과를 파이프에는 JSON(checked, files, notes)으로, 터미널에는 파일 이름과 문제 목록으로 출력합니다.
 문제가 있으면 출력한 뒤 종료 코드 1로 끝납니다.
+--fields, --text 를 따릅니다. 문제 있는 파일을 한 줄씩 보려면 --fields files.name,files.problems --text 입니다.
 
 옵션:
   --root <경로>           저장소 경로. 기본 현재 폴더의 git 최상위 폴더
@@ -311,7 +312,9 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 		case refs != nil && refs.err != nil:
 			res.Notes = append(res.Notes, fmt.Sprintf("서버 조회가 실패해 참조 검사를 멈췄습니다: %v", refs.err))
 		}
-		a.printDocCheck(g, res)
+		if err := a.printDocCheck(g, res); err != nil {
+			return err
+		}
 		if len(res.Files) > 0 {
 			return fmt.Errorf("기록 문서 %d개에 문제가 있습니다.", len(res.Files))
 		}
@@ -346,13 +349,11 @@ func (a *App) newRefChecker(ctx context.Context, g *globals, root string, cfg *r
 
 // printDocCheck writes the result of a check: JSON in a pipe, otherwise the
 // files with their problems and a summary.
-func (a *App) printDocCheck(g *globals, r *docCheckResult) {
-	if a.jsonOutput(g) {
-		enc := json.NewEncoder(a.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.Encode(r)
-		return
-	}
+func (a *App) printDocCheck(g *globals, r *docCheckResult) error {
+	return a.emitValue(g, r, func(io.Writer) { a.renderDocCheck(r) })
+}
+
+func (a *App) renderDocCheck(r *docCheckResult) {
 	for _, f := range r.Files {
 		fmt.Fprintln(a.Stdout, f.Name)
 		for _, p := range f.Problems {
