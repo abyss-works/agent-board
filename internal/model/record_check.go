@@ -99,9 +99,11 @@ var (
 
 // isBodyPlaceholder reports whether the text between angle brackets is a
 // template placeholder: it holds whitespace or a non-ASCII character, and does
-// not start or end with whitespace, which would make it a comparison.
+// not start or end with whitespace, which would make it a comparison, and
+// holds no ASCII digit. A template describes what to write and names no
+// number, while a statute notation such as "<신설 2021.11.30>" carries a date.
 func isBodyPlaceholder(inside string) bool {
-	if strings.TrimSpace(inside) != inside {
+	if strings.TrimSpace(inside) != inside || strings.ContainsAny(inside, "0123456789") {
 		return false
 	}
 	return strings.IndexFunc(inside, func(r rune) bool { return r > unicode.MaxASCII || unicode.IsSpace(r) }) >= 0
