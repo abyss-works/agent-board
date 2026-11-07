@@ -108,3 +108,32 @@ func TestIssueRefsOnUpdate(t *testing.T) {
 		t.Errorf("refs = %+v", got)
 	}
 }
+
+func TestIssueDocRefsResolveDocumentsOfOtherProjects(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	mustProject(t, s, ctx, "OTH")
+	putDoc(t, s, trOwner, "OTH", docLock, "history", docText("incident", "다른 프로젝트"))
+	putDoc(t, s, trOwner, "AGB", "OTH/"+docPriority, "legacy", "# 같은 프로젝트의 경로 이름\n")
+	putDoc(t, s, trOwner, "AGB", docPriority, "history", docText("decision", "본문"))
+	putDoc(t, s, trOwner, "OTH", docPriority, "history", docText("decision", "다른 프로젝트의 같은 이름"))
+
+	// PROJECT/name reaches a document of another project; a bare name stays in the
+	// project of the issue; a name that exists in the project wins over the split at the first slash.
+	issue := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "참조",
+		Refs: []string{"doc:OTH/" + docLock, "doc:" + docPriority, "doc:OTH/" + docPriority}})
+	want := []refRow{
+		{"doc:" + docPriority, "", docPriority},
+		{"doc:OTH/" + docPriority, "", "OTH/" + docPriority},
+		{"doc:OTH/" + docLock, "", docLock},
+	}
+	if got := refRows(t, s, issue.Key); !reflect.DeepEqual(got, want) {
+		t.Errorf("refs = %+v\nwant %+v", got, want)
+	}
+
+	// A name that matches no document of the project and no PROJECT/name is refused.
+	_, err := s.CreateIssue(ctx, trOwner, IssueInput{Project: "AGB", Title: "참조", Refs: []string{"doc:NONE/" + docLock, "doc:OTH/missing.md"}})
+	if got, want := violationsOf(err), []string{"refs[0]:unresolved", "refs[1]:unresolved"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("violations = %v (%v), want %v", got, err, want)
+	}
+}

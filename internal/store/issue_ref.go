@@ -37,10 +37,11 @@ func storedRefTargets(ctx context.Context, q querier, issueID int64) (map[string
 }
 
 // resolveRefs finds the target of each issue: and doc: reference: an issue by
-// key, whatever its status, or a record document of the project by name. A
-// reference in keep is not resolved again and keeps the target it has. A
-// reference that is new and resolves to nothing is a violation (reason
-// unresolved), reported for all of them at once.
+// key, whatever its status, or a record document by name: a document of the
+// project of the issue, else PROJECT/name for a document of another project,
+// as a relation of a document names it. A reference in keep is not resolved
+// again and keeps the target it has. A reference that is new and resolves to
+// nothing is a violation (reason unresolved), reported for all of them at once.
 func resolveRefs(ctx context.Context, q querier, projectID int64, refs []string, keep map[string]refTarget) (map[string]refTarget, error) {
 	out := make(map[string]refTarget, len(refs))
 	var errs []model.FieldError
@@ -57,8 +58,9 @@ func resolveRefs(ctx context.Context, q querier, projectID int64, refs []string,
 			err = q.QueryRowContext(ctx, `select id from issue where key = ?`, value).Scan(&t.issue.Int64)
 			t.issue.Valid = err == nil
 		case "doc":
-			err = q.QueryRowContext(ctx, `select id from document where project_id = ? and name = ?`, projectID, value).Scan(&t.doc.Int64)
-			t.doc.Valid = err == nil
+			var found bool
+			t.doc.Int64, _, found, err = resolveDocument(ctx, q, projectID, "", value)
+			t.doc.Valid = found
 		default:
 			continue
 		}
@@ -68,7 +70,7 @@ func resolveRefs(ctx context.Context, q querier, projectID int64, refs []string,
 		if !t.issue.Valid && !t.doc.Valid {
 			what := "이슈 " + value
 			if kind == "doc" {
-				what = "같은 프로젝트의 기록 문서 " + value
+				what = "기록 문서 " + value
 			}
 			errs = append(errs, model.FieldError{Field: fmt.Sprintf("refs[%d]", i), Reason: "unresolved", Message: what + "가 없습니다. 이슈와 문서를 먼저 만들어야 참조를 걸 수 있습니다."})
 			continue
