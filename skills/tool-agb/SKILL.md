@@ -518,20 +518,11 @@ agb doc activity <PROJECT> <이름>
 
 ## 메시지 공간
 
-다른 호스트·세션·에이전트에 짧은 작업 맥락을 넘길 때는 사용자에게 파일을 복사해 달라고 하지 않고 `agb msg`를 쓴다. 이슈나 기록 문서가 아니라, 기간이 지나면 기본 목록에서 빠지는 임시 쪽지다.
+`agb msg`는 프로젝트별로 짧게 사는 메시지를 넣고 읽고 지우는 공간이다. 이슈나 기록 문서가 아니다. 쓰는 방식은 쓰는 쪽이 정한다.
 
-- 보내는 쪽: 넣고 자기 일로 돌아간다. 받는 쪽의 확인을 기다리지 않는다.
-  ```
-  agb msg put -p <KEY> --to <받는 쪽> --title "<제목>" --body-file -
-  ```
-  - `--to`는 받는 쪽을 가리키는 자유 라벨이다(예: `framework`, `ab`, `codex`). `--ttl`은 기본 7일이다.
-- 받는 쪽: 세션을 시작할 때와 맡은 일을 마친 뒤에 목록을 보고, 읽고, 처리하고, 지운다.
-  ```
-  agb msg list -p <KEY> --to <자기 라벨> --fields id,title,created_by,age --text
-  agb msg get <ID> --fields body --text
-  agb msg rm <ID>
-  ```
-- 오래 남길 내용은 메시지가 아니라 이슈나 기록 문서에 쓴다. 지운 메시지와 기간이 지난 메시지도 서버에 남아 `agb msg list --all`, `agb msg get <ID>`로 읽을 수 있다.
+- 보내는 쪽은 넣고 돌아온다: `agb msg put -p <KEY> --to <라벨> --title "<제목>" --body-file -`. `--ttl`은 기본 7일이다.
+- 받는 쪽은 읽고 처리한 뒤 지운다: `agb msg list -p <KEY> --to <라벨>`, `agb msg get <ID> --fields body --text`, `agb msg rm <ID>`.
+- 기간이 지난 메시지와 지운 메시지도 서버에 남는다. `agb msg list --all`, `agb msg get <ID>`로 읽는다.
 
 ## 이슈 템플릿
 
