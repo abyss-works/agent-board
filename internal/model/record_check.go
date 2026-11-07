@@ -48,7 +48,7 @@ func CheckRecord(name, content string, template *string) []string {
 			items []string
 		}{{"supersedes", meta.Supersedes}, {"related", meta.Related}} {
 			for _, item := range rel.items {
-				if isPlaceholderScalar(strings.TrimSpace(item)) || IsDocumentName(item) {
+				if isPlaceholderScalar(strings.TrimSpace(item)) || isNoRelation(item) || IsDocumentName(item) {
 					continue
 				}
 				hint := ""

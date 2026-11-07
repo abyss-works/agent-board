@@ -430,7 +430,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    - 종류는 `decision`, `incident`, `report`, `implementation`이다. 저장소 안에서 부르거나 `--root <저장소 경로>`를 준다.
    - `.agb.json`의 `new.template`(`{kind}`가 종류로 바뀐다)으로 `new.output` 폴더에 `yyyy-mm-dd-HHMM-<종류>-<slug>.md`를 만들고 경로를 출력한다. 프런트매터의 `date`, `title`과 `new.values`에 적은 키, 첫 제목은 채워지고 서식의 HTML 주석은 지워진다.
 2. 남은 자리표시자(`<...>`)를 모두 채운다. 서식의 모든 `##` 절을 같은 순서로 두고, 절을 더하는 것은 된다.
-   - 이전 기록을 통째로 대체하는 결정이면 `supersedes`에 그 문서 이름을 쓴다. 일부만 대체하거나 보완하면 `related`에 쓴다. 대체하는 기록이 없으면 `supersedes:` 줄을 비우거나 지운다. `none` 같은 글은 문서 이름이 아니라 거절된다.
+   - 이전 기록을 통째로 대체하는 결정이면 `supersedes`에 그 문서 이름을 쓴다. 일부만 대체하거나 보완하면 `related`에 쓴다. 대체하는 기록이 없으면 `supersedes:` 줄을 비우거나 지우거나 `none`이라고 쓴다. 그 밖의 문서 이름이 아닌 글은 거절된다.
 3. 검사한다.
    ```
    agb doc check
