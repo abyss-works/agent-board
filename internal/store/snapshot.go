@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -27,7 +28,8 @@ func (s *Store) Snapshot(ctx context.Context, dst string) error {
 // the number of documents), a change of the archive mark or the relations of
 // a document appends a document activity record, a token write
 // raises the highest token id or the number of revoked tokens, and migrations
-// bump user_version. Recording the last use of a token changes none of these.
+// bump user_version. A write of embeddings or similar documents changes a
+// digest over the keys, hashes and scores of their rows. Recording the last use of a token changes none of these.
 func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 	var maxActivity, maxDocActivity, maxToken sql.NullInt64
 	var maxProject, maxTopic, maxMilestone, maxDocument sql.NullString
@@ -44,7 +46,15 @@ func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 	if err := s.db.QueryRowContext(ctx, `pragma user_version`).Scan(&version); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:ds%s:dc%d:da%d:k%d:kr%d",
+	var embeddingRows, similarRows sql.NullString
+	if err := s.db.QueryRowContext(ctx, `select
+		(select group_concat(source || ':' || source_id || ':' || chunk || ':' || model || ':' || text_sha256, ',') from (select * from embedding order by source, source_id, chunk)),
+		(select group_concat(document_id || ':' || similar_id || ':' || score || ':' || model, ',') from (select * from similar_document order by document_id, similar_id))`).
+		Scan(&embeddingRows, &similarRows); err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(embeddingRows.String + "\n" + similarRows.String))
+	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:ds%s:dc%d:da%d:k%d:kr%d:e%x",
 		version, maxActivity.Int64, maxProject.String, projects, actors, maxTopic.String, topics, maxMilestone.String, milestones,
-		maxDocument.String, documents, maxDocActivity.Int64, maxToken.Int64, revokedTokens), nil
+		maxDocument.String, documents, maxDocActivity.Int64, maxToken.Int64, revokedTokens, digest[:8]), nil
 }

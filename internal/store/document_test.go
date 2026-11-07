@@ -525,3 +525,53 @@ func TestDocumentWritesChangeTheFingerprint(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+func TestEmbeddingWritesChangeTheFingerprint(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	putDoc(t, s, trOwner, "AGB", docPriority, "history", docText("decision", "본문", "title: 제목"))
+	putDoc(t, s, trOwner, "AGB", docLinear, "history", docText("report", "본문", "title: 제목"))
+	var d1, d2 struct{ ID int64 }
+	for name, d := range map[string]*struct{ ID int64 }{docPriority: &d1, docLinear: &d2} {
+		if err := s.db.QueryRow(`select id from document where name = ?`, name).Scan(&d.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base, _ := s.FingerprintNow(ctx)
+
+	rows := []EmbeddingRow{{Chunk: 0, Model: "m", SHA256: "a", Text: "t", Vector: []float32{1}}}
+	if err := s.ReplaceEmbeddings(ctx, SourceDocument, d1.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	afterEmbed, _ := s.FingerprintNow(ctx)
+	if afterEmbed == base {
+		t.Error("fingerprint unchanged after an embedding was stored")
+	}
+	rows[0].SHA256 = "b"
+	if err := s.ReplaceEmbeddings(ctx, SourceDocument, d1.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	if afterReplace, _ := s.FingerprintNow(ctx); afterReplace == afterEmbed {
+		t.Error("fingerprint unchanged after an embedding was replaced")
+	}
+	afterReplace, _ := s.FingerprintNow(ctx)
+	if err := s.ReplaceSimilarDocuments(ctx, "m", []SimilarPair{{Document: d1.ID, Similar: d2.ID, Score: 0.9}}); err != nil {
+		t.Fatal(err)
+	}
+	afterSimilar, _ := s.FingerprintNow(ctx)
+	if afterSimilar == afterReplace {
+		t.Error("fingerprint unchanged after similar documents were stored")
+	}
+	if err := s.ReplaceSimilarDocuments(ctx, "m", []SimilarPair{{Document: d1.ID, Similar: d2.ID, Score: 0.8}}); err != nil {
+		t.Fatal(err)
+	}
+	if afterScore, _ := s.FingerprintNow(ctx); afterScore == afterSimilar {
+		t.Error("fingerprint unchanged after a similarity score changed")
+	}
+	if err := s.ReplaceEmbeddings(ctx, SourceDocument, d1.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if afterRemove, _ := s.FingerprintNow(ctx); afterRemove == afterSimilar {
+		t.Error("fingerprint unchanged after an embedding was removed")
+	}
+}
