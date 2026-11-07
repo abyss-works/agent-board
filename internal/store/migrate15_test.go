@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -47,23 +48,69 @@ func seed14(t *testing.T, db *sql.DB) {
 		values (1, 'AGB', 'AGB', 'active', 10, 'x', 'x', 'claude', 'claude')`)
 	mustExec(t, db, `insert into issue(id, project_id, number, key, title, body, type, status, priority, version, created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
 		values (1, 1, 1, 'AGB-1', 't', '', 'feature', 'doing', 'P2', 1, 'x', 'x', 'x', 'claude', 'claude', 'claude')`)
-	ins := func(id int, name, kind string, imported int) {
-		mustExec(t, db, `insert into document(id, project_id, name, kind, title, tags, imported, sha256, size, content, created_at, created_by, updated_at, updated_by)
-			values (?, 1, ?, ?, ?, '["t"]', ?, 'h', 1, ?, 'x', 'claude', 'x', 'claude')`, id, name, kind, "제목 "+name, imported, "본문 "+name)
+	ins := func(id int, name, kind string, archived, imported int, path any) {
+		mustExec(t, db, `insert into document(id, project_id, name, kind, date, title, tags, archived, imported, path, sha256, size, content, created_at, created_by, updated_at, updated_by)
+			values (?, 1, ?, ?, '2026-10-01 10:00', ?, '["t","u"]', ?, ?, ?, ?, ?, ?, ?, 'claude', ?, 'claude')`,
+			id, name, kind, "제목 "+name, archived, imported, path, "sha"+name, 10+id, "본문 "+name, "c"+name, "u"+name)
 	}
-	ins(1, mA, "decision", 0)
-	ins(2, mB, "decision", 0)
-	ins(3, "archive/legacy.md", "other", 1)
+	ins(1, mA, "decision", 0, 0, nil)
+	ins(2, mB, "decision", 1, 0, nil)
+	ins(3, "archive/legacy.md", "other", 1, 1, "archive/legacy.md")
 	mustExec(t, db, `insert into document_relation(document_id, kind, target_document_id) values (2, 'supersedes', 1)`)
 	mustExec(t, db, `insert into document_relation(document_id, kind, target_issue_id) values (2, 'about', 1)`)
-	mustExec(t, db, `insert into document_activity(document_id, actor_id, session_id, client_host, at, changes) values (2, 'claude', 's', 'h', 'x', '{}')`)
+	mustExec(t, db, `insert into document_relation(document_id, kind, target_text) values (3, 'related', 'missing.md')`)
+	mustExec(t, db, `insert into document_activity(document_id, actor_id, session_id, client_host, at, changes) values (2, 'claude', 's', 'h', '2026-10-02T00:00:00.000Z', '{"archived":{"from":false,"to":true}}')`)
 	mustExec(t, db, `insert into issue_ref(issue_id, ref, target_document_id) values (1, 'doc:`+mA+`', 1)`)
+	mustExec(t, db, `insert into issue_ref(issue_id, ref, target_issue_id) values (1, 'issue:AGB-1', 1)`)
+	mustExec(t, db, `insert into issue_ref(issue_id, ref) values (1, 'commit:abc')`)
 	mustExec(t, db, `insert into similar_document(document_id, similar_id, score, model) values (1, 2, 0.9, 'm')`)
 	mustExec(t, db, `insert into embedding(source, source_id, chunk, model, text_sha256, text, vector, created_at) values ('document', 2, 0, 'm', 's', 't', x'00', 'x')`)
 }
 
+// dumpTables returns every row of the tables that survive migration 15, all
+// columns, as sorted text.
+func dumpTables(t *testing.T, db *sql.DB) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for _, table := range []string{"document", "document_relation", "document_activity", "issue_ref", "embedding"} {
+		rows, err := db.Query(`select * from ` + table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cols, _ := rows.Columns()
+		for rows.Next() {
+			vals := make([]sql.NullString, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				t.Fatal(err)
+			}
+			parts := make([]string, len(cols))
+			for i, v := range vals {
+				parts[i] = cols[i] + "=NULL"
+				if v.Valid {
+					parts[i] = cols[i] + "=" + v.String
+				}
+			}
+			out[table] = append(out[table], strings.Join(parts, "|"))
+		}
+		rows.Close()
+		sort.Strings(out[table])
+		if len(out[table]) == 0 {
+			t.Fatalf("seed has no %s rows", table)
+		}
+	}
+	return out
+}
+
 func TestMigration15KeepsDocumentsAndLinks(t *testing.T) {
-	path := openAt14(t, func(db *sql.DB) { seed14(t, db) })
+	var before map[string][]string
+	path := openAt14(t, func(db *sql.DB) {
+		seed14(t, db)
+		before = dumpTables(t, db)
+	})
 	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -75,21 +122,14 @@ func TestMigration15KeepsDocumentsAndLinks(t *testing.T) {
 	if version != 15 || SchemaVersion != 15 {
 		t.Errorf("user_version = %d, SchemaVersion = %d", version, SchemaVersion)
 	}
-	got := queryStrings(t, s, `select id, name, kind, archived, imported, coalesce(path, 'NULL'), tags, title from document`)
-	want := []string{
-		"1|" + mA + "|decision|0|0|NULL|[\"t\"]|제목 " + mA,
-		"2|" + mB + "|decision|0|0|NULL|[\"t\"]|제목 " + mB,
-		"3|archive/legacy.md|other|0|1|NULL|[\"t\"]|제목 archive/legacy.md",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("documents =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	after := dumpTables(t, s.db)
+	for table, want := range before {
+		if !reflect.DeepEqual(after[table], want) {
+			t.Errorf("%s = %q, want %q", table, after[table], want)
+		}
 	}
 	for q, want := range map[string]string{
-		`select count(*) from document_relation`:                            "2",
-		`select count(*) from document_activity`:                            "1",
-		`select target_document_id from issue_ref where issue_id = 1`:       "1",
 		`select count(*) from similar_document`:                             "0",
-		`select count(*) from embedding where source = 'document'`:          "1",
 		`select count(*) from document_fts where document_fts match '"제목"'`: "3",
 	} {
 		if n := queryStrings(t, s, q); n[0] != want {
