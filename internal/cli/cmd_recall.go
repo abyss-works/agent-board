@@ -27,6 +27,11 @@ issue·supersedes·related, 그리고
 서버가 의미 검색을 켜 두었으면 질문 문장을 그대로 줍니다. 키워드 검색만 하는 서버에서는 모든 단어를 AND 로
 찾으므로 핵심어 두세 개를 줍니다.
 
+출력: 결과마다 한 줄에 [type] 프로젝트 키 종류 (상태) 제목이 나오고, 일치 부분이 [ ] 로 표시됩니다. 문서가 다른
+문서를 대체했거나 대체되었으면 supersedes:, superseded_by: 로 그 이름이 나옵니다. 그 아래에 연결이 한 줄씩
+나옵니다. ← 는 그 결과를 가리키는 연결, → 는 그 결과가 가리키는 연결이고, similar 는 점수가 붙은 추정입니다.
+파이프에는 query, total, items[].hit, items[].links[](edge, direction, node)를 담은 JSON 으로 출력합니다.
+
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
   --type <T>              issue, comment, document. 쉼표 OR
