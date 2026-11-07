@@ -150,7 +150,7 @@ func TestMigration14RewritesDocuments(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("pragma user_version").Scan(&version)
-	if version != 14 || SchemaVersion != 14 {
+	if version != SchemaVersion {
 		t.Errorf("user_version = %d, SchemaVersion = %d", version, SchemaVersion)
 	}
 	// Ids, names and content stay; the flags follow the old location.

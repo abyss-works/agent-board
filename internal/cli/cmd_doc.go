@@ -131,7 +131,7 @@ var docSearchCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
-  --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
+  --kind <K>              문서 종류. 쉼표 OR. 종류의 형식은 agb help doc-format
   --state <S>             current(기본, 유효), superseded(대체됨), archived(아카이브), all. 쉼표 OR
   --imported <true|false> 가져온 문서만(true), 일반 문서만(false). 없으면 둘 다
   --limit <N>             최대 200. 기본 50
@@ -195,7 +195,7 @@ var docListCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키. 쉼표로 여러 개(OR). 없으면 모든 프로젝트
-  --kind <K>              decision, incident, report, implementation, other. 쉼표 OR
+  --kind <K>              문서 종류. 쉼표 OR. 종류의 형식은 agb help doc-format
   --state <S>             current(기본, 유효), superseded(대체됨), archived(아카이브), all. 쉼표 OR
   --imported <true|false> 가져온 문서만(true), 일반 문서만(false). 없으면 둘 다
   --limit <N>             최대 200. 기본 50

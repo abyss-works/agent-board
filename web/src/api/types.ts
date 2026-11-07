@@ -11,7 +11,8 @@ export type CommentKind = 'decision' | 'finding' | 'lesson'
 export type TopicStatus = 'active' | 'deleted'
 export type MilestoneStatus = 'open' | 'closed' | 'deleted'
 export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
-export type DocumentKind = 'decision' | 'incident' | 'report' | 'implementation' | 'other'
+/** 기록 문서의 종류. 저장소가 정하는 문자열이다. 알려진 종류는 DOCUMENT_KINDS에 있다. */
+export type DocumentKind = string
 export type DocumentState = 'current' | 'superseded' | 'archived'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
@@ -23,6 +24,7 @@ export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
 export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted']
+/** 이름과 순서를 아는 종류. 이 밖의 종류도 올 수 있다. */
 export const DOCUMENT_KINDS: DocumentKind[] = ['decision', 'incident', 'report', 'implementation', 'other']
 export const DOCUMENT_STATES: DocumentState[] = ['current', 'superseded', 'archived']
 

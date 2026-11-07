@@ -56,7 +56,7 @@ follow_up_headings 에 적은 제목의 ## 절이 있는 새 문서는 그 항�
 
 옵션:
   --project, -p <KEY>     프로젝트 키. 없으면 .agb.json 의 project
-  --kind <종류>           decision, incident, report, implementation, other(가져온 문서만)
+  --kind <종류>           문서 종류. other 는 가져온 문서만. 형식은 agb help doc-format
   --date <날짜>           yyyy-mm-dd 또는 "yyyy-mm-dd HH:MM"
   --title <제목>
   --tag <태그>            반복 가능. 원문 프런트매터의 tags 를 통째로 대신합니다

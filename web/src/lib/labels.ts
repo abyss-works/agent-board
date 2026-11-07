@@ -42,12 +42,17 @@ export const DEVICE_STATUS_LABEL: Record<DeviceAuthorizationStatus, string> = {
   denied: '거부됨',
 }
 
-export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
+export const DOCUMENT_KIND_LABEL: Record<string, string> = {
   decision: '결정',
   incident: '사고',
   report: '보고',
   implementation: '구현',
   other: '기타',
+}
+
+/** 종류의 이름. 이름 표에 없는 종류는 서버가 준 문자열 그대로 보인다. */
+export function documentKindLabel(kind: DocumentKind): string {
+  return Object.hasOwn(DOCUMENT_KIND_LABEL, kind) ? DOCUMENT_KIND_LABEL[kind] : kind
 }
 
 export const DOCUMENT_STATE_LABEL: Record<DocumentState, string> = {

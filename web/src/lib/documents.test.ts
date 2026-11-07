@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { documentPath, frontMatterIssueKeys, splitFrontMatter } from './documents'
+import { documentKindOptions, documentPath, frontMatterIssueKeys, splitFrontMatter } from './documents'
 
 describe('splitFrontMatter', () => {
   it('프런트매터와 본문을 나눈다', () => {
@@ -28,4 +28,14 @@ describe('frontMatterIssueKeys', () => {
 
 it('documentPath는 이름을 인코딩한다', () => {
   expect(documentPath('AGB', '2026-10-21-1130-decision-a.md')).toBe('/documents/AGB/2026-10-21-1130-decision-a.md')
+})
+
+describe('documentKindOptions', () => {
+  it('알려진 종류를 순서대로 두고 불러온 목록에 나온 다른 종류를 이름순으로 뒤에 붙인다', () => {
+    expect(documentKindOptions(['report', 'lesson', 'plan', 'lesson'])).toEqual(['decision', 'incident', 'report', 'implementation', 'other', 'lesson', 'plan'])
+  })
+
+  it('목록이 비어 있으면 알려진 종류만 보인다', () => {
+    expect(documentKindOptions([])).toEqual(['decision', 'incident', 'report', 'implementation', 'other'])
+  })
 })
