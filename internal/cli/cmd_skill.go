@@ -21,8 +21,8 @@ const skillName = "tool-agb"
 // part of the skill, so content comparison skips it.
 const versionFile = ".version"
 
-var skillCmd = &command{name: "skill", summary: "내장 에이전트 스킬 출력과 설치", subs: []*command{
-	skillShowCmd, skillInstallCmd,
+var skillCmd = &command{name: "skill", summary: "내장 에이전트 스킬 출력, 설치, 점검", subs: []*command{
+	skillShowCmd, skillInstallCmd, skillCheckCmd,
 }}
 
 var skillShowCmd = &command{

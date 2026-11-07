@@ -172,7 +172,7 @@ const Usage = `사용법: agb <명령> [옵션]
   config            설정 파일 경로, 표시, 수정 (url, actor, session_id, client_host, 토큰)
   login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
   logout            이 행위자의 토큰 폐기와 로컬 삭제
-  skill             내장 에이전트 스킬 출력과 설치 (~/.agents/skills/tool-agb)
+  skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
 
 상태:
   health            서버 상태 (인증 없음)
@@ -246,7 +246,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	cmd := root.find(rest[0])
 	if cmd == nil {
-		fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n%s\n%s", rest[0], root.suggest("agb", rest[0]), Usage)
+		fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n설치된 CLI가 스킬이나 문서보다 오래됐을 수 있습니다. `agb skill check`로 확인하고, 갱신 방법은 references/setup.md 1절을 따르세요.\n%s\n%s", rest[0], root.suggest("agb", rest[0]), Usage)
 		return 2
 	}
 	err := a.dispatch(ctx, g, cmd, "agb "+cmd.name, rest[1:])
@@ -307,6 +307,8 @@ func (a *App) exit(g *globals, err error) int {
 	var ue *usageError
 	var apiErr *client.Error
 	switch {
+	case errors.Is(err, errCheckMismatch):
+		return 1
 	case errors.As(err, &ue):
 		fmt.Fprintf(a.Stderr, "agb: %s\n", ue.msg)
 		if ue.help != "" {

@@ -168,6 +168,25 @@ func TestHealthNeedsNoHeaders(t *testing.T) {
 	}
 }
 
+func TestHealthRelease(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		e := newEnvWith(t, testActors, func(o *Options) { o.Release = "v1.2.3" })
+		var body map[string]any
+		decodeJSON(t, e.plain("GET", "/v1/health"), &body)
+		if body["release"] != "v1.2.3" || body["version"] != "test" {
+			t.Errorf("body = %v", body)
+		}
+	})
+	t.Run("unknown is omitted", func(t *testing.T) {
+		e := newEnv(t)
+		var body map[string]any
+		decodeJSON(t, e.plain("GET", "/v1/health"), &body)
+		if _, ok := body["release"]; ok {
+			t.Errorf("release present without a value: %v", body)
+		}
+	})
+}
+
 func TestAuthRejected(t *testing.T) {
 	e := newEnv(t)
 	cases := map[string]string{
