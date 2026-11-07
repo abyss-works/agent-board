@@ -86,6 +86,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	apiOpts := api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web}
 	if searcher != nil {
 		apiOpts.Semantic = searcher
+		apiOpts.SimilarModel = cfg.Embedding.Model
 	}
 	h := api.New(apiOpts)
 	return &Server{

@@ -31,6 +31,7 @@ EndpointSlice의 주소와 포트는 환경 파일의 `AGB_BIND`, `AGB_PORT`와 
 - `AGB_TOKEN`: 공용 토큰. 32자 이상이어야 한다.
 - `AGB_ACTORS`: 행위자 목록. `id:kind`를 쉼표로 잇는다. 예: `owner:user,claude:agent`
 - `AGB_BACKUP_BUCKET`, `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY`: S3 호환 오브젝트 저장소(Cloudflare R2) 백업 설정이다. 모두 생략하면 백업이 꺼진다. 버킷을 지정하면 나머지 셋도 필요하다. 엔드포인트는 `https://<계정 ID>.r2.cloudflarestorage.com` 형식이고, 키는 그 버킷 하나에 객체 읽기·쓰기 권한만 준 R2 API 토큰의 S3 자격 증명이다. 백업이 켜지면 서버 시작 직후와 이후 1시간마다(바뀐 것이 있을 때) 스냅샷을 올린다.
+- `AGB_EMBEDDING_API_KEY`, `AGB_EMBEDDING_URL`, `AGB_EMBEDDING_MODEL`, `AGB_EMBEDDING_QUERY_PREFIX`, `AGB_EMBEDDING_INTERVAL`: 의미 검색 설정이다. 모두 생략하면 의미 검색이 꺼지고 키워드 검색만 한다. 키를 지정하면 URL과 모델도 필요하다. 각 키의 뜻은 저장소 루트 `README.md`의 환경 변수 표를 따른다.
 
 ### 러너
 
@@ -77,6 +78,8 @@ AGB_IMAGE_TAG=git-<이전 sha7> docker compose -f deploy/compose.prod.yaml --env
 ```
 
 데이터는 볼륨 `agb_agb-data`에 있으므로 이미지를 바꿔도 남는다.
+
+스키마 마이그레이션이 든 릴리즈는 이 방법으로 되돌릴 수 없다. 마이그레이션은 데이터베이스의 스키마 버전을 올리고, 이전 바이너리는 더 새로운 스키마를 만나면 `schema version N, expected M` 오류로 시작을 거부한다. 이런 릴리즈는 배포 직전에 운영 데이터베이스의 SQLite 스냅샷을 떠 둔다. 롤백은 컨테이너를 멈추고, 스냅샷으로 `agb.db`를 되돌리고(`agb.db-wal`, `agb.db-shm`을 지운다. 절차는 아래 "백업에서 복원"의 3단계와 같다), 이전 태그로 띄우는 순서다.
 
 ## 백업에서 복원
 

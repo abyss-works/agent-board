@@ -442,6 +442,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    ```
    agb doc sync -p <KEY> --root <관리 저장소 경로>
    ```
+   - 커밋했고 그 뒤 바뀌지 않은 파일만 대상이다. 커밋하지 않았거나 무시된(gitignore) 파일, 커밋 뒤 고친 파일은 `skipped`로 나온다. `--root`가 git 저장소가 아니면 아무것도 올리지 않고 종료 코드 1로 끝난다.
    - 서버에 없는 문서를 올리고(`uploaded`), 위치만 달라진 문서를 옮긴다(`moved`).
    - Expected: `uploaded`, `moved`, `unchanged`, `conflicts`, `skipped`, `rejected`를 담은 JSON. `conflicts`와 `rejected`가 비어 있으면 종료 코드 0이다.
    - `skipped`는 이름이 `yyyy-mm-dd-HHMM-<종류>-<slug>.md` 형식이 아니라 올리지 않은 파일이다.

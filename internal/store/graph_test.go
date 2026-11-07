@@ -37,7 +37,7 @@ func TestGraph(t *testing.T) {
 		t.Fatalf("parent key = %s", parent.Key)
 	}
 
-	g, err := s.Graph(ctx, model.IssueNodeID(child.Key), 1)
+	g, err := s.Graph(ctx, model.IssueNodeID(child.Key), 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestGraph(t *testing.T) {
 		t.Errorf("depth 1 nodes = %+v", g.Nodes)
 	}
 
-	g, err = s.Graph(ctx, model.DocumentNodeID("AGB", dNew), 1)
+	g, err = s.Graph(ctx, model.DocumentNodeID("AGB", dNew), 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,11 +72,11 @@ func TestGraph(t *testing.T) {
 			t.Errorf("document graph lacks %+v; edges %+v", e, g.Edges)
 		}
 	}
-	if g2, err := s.Graph(ctx, model.DocumentNodeID("AGB", dOld), 2); err != nil || len(g2.Nodes) < 5 {
+	if g2, err := s.Graph(ctx, model.DocumentNodeID("AGB", dOld), 2, ""); err != nil || len(g2.Nodes) < 5 {
 		t.Errorf("depth 2 from the old decision = %+v, %v", g2, err)
 	}
 	for _, id := range []string{model.IssueNodeID(gone.Key), model.IssueNodeID("AGB-99"), model.DocumentNodeID("AGB", "x.md")} {
-		if _, err := s.Graph(ctx, id, 1); !errors.Is(err, ErrNotFound) {
+		if _, err := s.Graph(ctx, id, 1, ""); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Graph(%s) = %v, want not found", id, err)
 		}
 	}
@@ -110,7 +110,7 @@ func TestGraphSimilarEdges(t *testing.T) {
 	if err := s.ReplaceSimilarDocuments(ctx, "m", pairs); err != nil {
 		t.Fatal(err)
 	}
-	g, err := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1)
+	g, err := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1, "m")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,10 +123,22 @@ func TestGraphSimilarEdges(t *testing.T) {
 	if len(similar) != 1 || similar[0].Score == nil || *similar[0].Score != 0.8 {
 		t.Errorf("similar edges = %+v", similar)
 	}
+	// Pairs found with another model, or with search by meaning off, are stale.
+	for _, m := range []string{"", "other"} {
+		g, err := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range g.Edges {
+			if e.Type == model.EdgeSimilar {
+				t.Errorf("model %q: stale similar edge %+v", m, e)
+			}
+		}
+	}
 	if err := s.ReplaceSimilarDocuments(ctx, "m", nil); err != nil {
 		t.Fatal(err)
 	}
-	if g, _ := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1); len(g.Edges) != 1 {
+	if g, _ := s.Graph(ctx, model.DocumentNodeID("AGB", a), 1, "m"); len(g.Edges) != 1 {
 		t.Errorf("after clearing, edges = %+v", g.Edges)
 	}
 }

@@ -46,6 +46,7 @@ func TestDocSyncAndPutReportFollowUps(t *testing.T) {
 	same := open + "\n"
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{"history/" + nNew: open, "history/" + nSame: same})
+	commitAll(t, root)
 	srv := docSyncServer(t, []string{serverDoc("CLI", nSame, "history", docSHA(same))}, map[string]canned{
 		"PUT /v1/projects/CLI/documents/" + nNew: {status: 201, body: serverDoc("CLI", nNew, "history", docSHA(open))},
 	})

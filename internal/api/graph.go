@@ -22,7 +22,7 @@ func (h *handler) graph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	g, err := h.store.Graph(r.Context(), node, depth)
+	g, err := h.store.Graph(r.Context(), node, depth, h.opts.SimilarModel)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return

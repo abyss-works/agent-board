@@ -18,8 +18,8 @@ import (
 // ponytail: the whole graph is built from the issue and document tables on
 // every call. Fine for hundreds of issues and documents; keep derived edge
 // columns or an edge table when documents reach the thousands.
-func (s *Store) Graph(ctx context.Context, node string, depth int) (*model.Graph, error) {
-	g, err := s.buildGraph(ctx)
+func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel string) (*model.Graph, error) {
+	g, err := s.buildGraph(ctx, similarModel)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ type graph struct {
 	edges []model.GraphEdge
 }
 
-func (s *Store) buildGraph(ctx context.Context) (*graph, error) {
+func (s *Store) buildGraph(ctx context.Context, similarModel string) (*graph, error) {
 	g := &graph{nodes: map[string]model.GraphNode{}}
 	rows, err := s.db.QueryContext(ctx, `select i.key, p.key, i.title, i.type, i.status from issue i join project p on p.id = i.project_id where i.status <> 'deleted'`)
 	if err != nil {
@@ -217,7 +217,9 @@ func (s *Store) buildGraph(ctx context.Context) (*graph, error) {
 		}
 	}
 	// Inferred links come last and only between documents that no written
-	// link joins already.
+	// link joins already. Only pairs found with the model in use count; an
+	// empty model (search by meaning off) matches none, so stored pairs left
+	// from an earlier model or key stay hidden.
 	linked := map[[2]string]bool{}
 	for _, e := range g.edges {
 		linked[[2]string{e.From, e.To}] = true
@@ -226,7 +228,7 @@ func (s *Store) buildGraph(ctx context.Context) (*graph, error) {
 	rows, err = s.db.QueryContext(ctx, `select pa.key, a.name, pb.key, b.name, sd.score from similar_document sd
 		join document a on a.id = sd.document_id join project pa on pa.id = a.project_id
 		join document b on b.id = sd.similar_id join project pb on pb.id = b.project_id
-		order by sd.score desc`)
+		where sd.model = ? order by sd.score desc`, similarModel)
 	if err != nil {
 		return nil, err
 	}

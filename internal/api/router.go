@@ -37,6 +37,9 @@ type Options struct {
 	// Semantic finds sources by meaning for the unified search. When nil the
 	// search matches keywords only.
 	Semantic Semantic
+	// SimilarModel is the embedding model whose similar-document pairs the
+	// graph shows. Empty when search by meaning is off: no similar edges.
+	SimilarModel string
 }
 
 type handler struct {

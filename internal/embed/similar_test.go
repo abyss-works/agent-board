@@ -63,7 +63,7 @@ func TestRunOnceComputesSimilarDocuments(t *testing.T) {
 	if _, err := r2.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	g, err := st.Graph(ctx, model.DocumentNodeID("AGB", "2026-11-01-0900-report-a.md"), 1)
+	g, err := st.Graph(ctx, model.DocumentNodeID("AGB", "2026-11-01-0900-report-a.md"), 1, "m")
 	if err != nil {
 		t.Fatal(err)
 	}
