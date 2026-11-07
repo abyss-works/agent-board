@@ -21,7 +21,9 @@ var msgCmd = &command{name: "msg", summary: "프로젝트별 메시지 공간 (�
 
 // msgList is the response of the message list endpoint.
 type msgList struct {
-	Items []model.Message `json:"items"`
+	Items  []model.Message `json:"items"`
+	Total  int             `json:"total"`
+	Offset int             `json:"offset"`
 }
 
 // msgProject is the project of a message command: --project, else the one in
@@ -80,6 +82,7 @@ func (a *App) renderMsgList(showState bool) func(w io.Writer, resp *client.Respo
 			tb.add(append(row, deref(m.To, "-"), m.Age, m.CreatedBy, m.Title)...)
 		}
 		tb.write(w, a.TermWidth)
+		footer(w, len(l.Items), l.Total, l.Offset)
 		return nil
 	}
 }
@@ -112,7 +115,7 @@ func (a *App) renderMsg(w io.Writer, resp *client.Response) error {
 
 var msgPutCmd = &command{
 	name: "put", summary: "메시지 넣기",
-	usage: `사용법: agb msg put --project <KEY> --title <제목> [옵션]
+	usage: `사용법: agb msg put [--project <KEY>] --title <제목> [옵션]
 
 프로젝트의 메시지 공간에 메시지를 넣고 바로 돌아옵니다. 받는 쪽 확인을 기다리지 않습니다.
 보낸 행위자, 세션, 기기가 메시지에 함께 남습니다.
@@ -185,15 +188,20 @@ AGE 는 넣은 지 얼마나 지났는지입니다. 예: agb msg list -p AGB --f
   --project, -p <KEY>     프로젝트 키. 생략하면 저장소의 .agb.json 의 프로젝트
   --to <라벨>             받는 쪽 라벨이 같은 메시지만
   --all                   기간이 지난 메시지와 지운 메시지도 보임 (STATE 열: active, expired, deleted)
+  --limit <N>             최대 200. 기본 50
+  --offset <N>
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("msg list", g)
 		var project, to string
 		var all bool
+		var limit, offset int
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
 		fs.StringVar(&to, "to", "", "")
 		fs.BoolVar(&all, "all", false, "")
+		fs.IntVar(&limit, "limit", 0, "")
+		fs.IntVar(&offset, "offset", 0, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -208,7 +216,7 @@ AGE 는 넣은 지 얼마나 지났는지입니다. 예: agb msg list -p AGB --f
 		if err != nil {
 			return err
 		}
-		resp, err := c.ListMessages(ctx, project, to, all)
+		resp, err := c.ListMessages(ctx, project, to, all, client.Page{Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}

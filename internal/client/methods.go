@@ -343,10 +343,12 @@ func (c *Client) PutMessage(ctx context.Context, project string, in map[string]a
 }
 
 // ListMessages lists the messages of a project, newest first. An empty to
-// matches every addressee; all adds the expired and deleted messages.
-func (c *Client) ListMessages(ctx context.Context, project, to string, all bool) (*Response, error) {
+// matches every addressee; all adds the expired and deleted messages. A zero
+// page field is left to the server default.
+func (c *Client) ListMessages(ctx context.Context, project, to string, all bool, page Page) (*Response, error) {
 	v := url.Values{}
 	set(v, "to", to)
+	page.addTo(v)
 	if all {
 		v.Set("all", "true")
 	}

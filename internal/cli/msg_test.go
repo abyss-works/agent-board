@@ -256,3 +256,20 @@ func TestMsgHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestMsgListPagingAndFooter(t *testing.T) {
+	h, srv := newMsgHarness(t, true)
+	if code := h.run("msg", "list", "-p", "CLI", "--limit", "2", "--offset", "4"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if q := srv.last().Query; q.Get("limit") != "2" || q.Get("offset") != "4" {
+		t.Errorf("query = %v", q)
+	}
+	srv.on("GET", "/v1/projects/PAG/messages", canned{body: strings.Replace(msgListJSON, `"total":2`, `"total":9`, 1)})
+	if code := h.run("msg", "list", "-p", "PAG"); code != 0 || !strings.Contains(h.stdout.String(), "9건 중 2건 표시 (offset 0)") {
+		t.Errorf("truncated list: code=%d out=%s", code, h.stdout)
+	}
+	if code := h.run("msg", "list", "-p", "CLI"); code != 0 || strings.Contains(h.stdout.String(), "건 중") {
+		t.Errorf("complete list must have no footer:\n%s", h.stdout)
+	}
+}
