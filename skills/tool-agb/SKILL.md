@@ -80,6 +80,15 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 ## 출력과 종료 코드
 
 - 출력이 파이프나 파일이면 서버 응답 JSON이 그대로 나온다. 에이전트는 JSON으로 읽는다. 사람에게 보여 줄 때만 `--table`을 붙인다.
+- agb의 JSON을 스크립트(python, jq, sed 등)로 가공하지 않는다. 필요한 값은 `--fields`로 고르고, 줄 단위로 읽을 때는 `--text`를 더한다. 옵션의 규칙은 `agb --help`가 정본이다.
+
+  | 필요한 것 | 명령 |
+  |---|---|
+  | 이슈 목록의 키, 상태, 제목 | `agb issue list -p <KEY> --fields key,status,title --text` |
+  | 이슈 본문 원문 | `agb issue get <KEY> --fields body --text` |
+  | 댓글의 작성자, 시각, 본문 | `agb issue activity <KEY> --fields actor,at,body --text` |
+  | 기록 문서 동기화 요약 | `agb doc sync --fields uploaded,conflicts,rejected --text` |
+  | 기록 문서 검사의 문제 | `agb doc check --fields files.name,files.problems --text` |
 - 종료 코드: 0 성공, 1 API·네트워크 오류, 2 사용법 오류. 1이면 stderr의 `error.code`와 `details`를 읽고 고친다.
 - 인증 오류(401, 403 `actor_mismatch`, "토큰이 없습니다")는 고치려 하지 말고 "접속과 로그인"을 따른다.
 - 긴 본문과 댓글은 `--body-file -`(표준 입력)이나 `--body-file <경로>`로 넘긴다. 셸 인용 때문에 내용이 바뀌지 않는다.
@@ -275,7 +284,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
   EOF
   ```
   - 작업한 저장소마다 `--repo <폴더>`를 준다(`agb issue comment --help`).
-- 여러 이슈를 볼 때는 키를 함께 준다(`agb issue get <KEY> <KEY>...`). 필드 몇 개만 필요하면 `--fields key,status,title`처럼 고른다. JSON을 스크립트로 가공하지 않는다.
+- 여러 이슈를 볼 때는 키를 함께 준다(`agb issue get <KEY> <KEY>...`). 필드 몇 개만 필요하면 `--fields key,status,title --text`처럼 고른다. JSON을 스크립트로 가공하지 않는다("출력과 종료 코드").
 - 명령 이름을 틀리면 CLI가 "가까운 명령"을 알려 준다. 그대로 다시 부른다.
 - 라벨, 선행 이슈, 참조를 하나씩 더하거나 뺄 때는 `--add-*`, `--remove-*`를 쓴다. 현재 값을 읽고 `If-Match`로 보내므로 다른 세션의 변경을 덮어쓰지 않는다. 412로 실패하면 `agb issue get <ISSUE>`로 다시 읽고 고친다.
 
@@ -625,4 +634,4 @@ agb doc activity <PROJECT> <이름>
 
 - Git Bash의 heredoc은 UTF-8로 넘어간다.
 - PowerShell 5.1에서 파이프로 본문을 넘기면 셸 인코딩 때문에 한글이 깨질 수 있다. 본문을 UTF-8 파일로 저장하고 `--body-file <경로>`로 넘긴다.
-- JSON 출력을 다른 프로그램으로 읽을 때는 UTF-8로 디코딩한다.
+- JSON 출력을 다른 프로그램으로 읽을 때는 UTF-8로 디코딩한다. agb의 JSON을 가공하는 스크립트를 쓰지 말고 `--fields`, `--text`로 고른다.
