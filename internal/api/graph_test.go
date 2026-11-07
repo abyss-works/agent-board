@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -36,6 +37,60 @@ func TestGraphEndpoint(t *testing.T) {
 	} {
 		if rec := e.do(t, "GET", c.target, "", nil); rec.Code != c.code {
 			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestGraphEndpointFoldsByState(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	issue := e.createIssue(t, `{"project":"AGB","title":"근거 이슈"}`)
+	e.putFields(t, "AGB", stOld, map[string]any{"content": apiDocText("decision", "옛"), "issues": []string{issue.Key}}, nil)
+	e.putFields(t, "AGB", stNew, map[string]any{"content": apiDocText("decision", "새"), "issues": []string{issue.Key}, "supersedes": []string{stOld}}, nil)
+	e.putFields(t, "AGB", stRep, map[string]any{"content": apiDocText("report", "보관"), "issues": []string{issue.Key}, "archived": true}, nil)
+
+	node := "/v1/graph?node=" + url.QueryEscape("issue:"+issue.Key)
+	rec := e.do(t, "GET", node, "", nil)
+	var g model.Graph
+	decodeJSON(t, rec, &g)
+	if rec.Code != 200 || len(g.Nodes) != 2 || g.Nodes[1].ID != "doc:AGB/"+stNew || len(g.Edges) != 1 {
+		t.Fatalf("folded: %d %s", rec.Code, rec.Body.String())
+	}
+	if f := g.Nodes[0].Folded; f == nil || f.Superseded != 1 || f.Archived != 1 {
+		t.Errorf("issue folded = %+v", f)
+	}
+	for _, want := range []string{`"status":"backlog","state":null,"refs":[],"folded":{"superseded":1,"archived":1}`, `"status":null,"state":"current","refs":[],"folded":{"superseded":1,"archived":0}`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("JSON lacks %s: %s", want, rec.Body.String())
+		}
+	}
+	for _, target := range []string{node + "&state=current", node} {
+		if rec := e.do(t, "GET", target, "", nil); rec.Code != 200 {
+			t.Errorf("%s: %d", target, rec.Code)
+		}
+	}
+	rec = e.do(t, "GET", node+"&state=all", "", nil)
+	decodeJSON(t, rec, &g)
+	if rec.Code != 200 || len(g.Nodes) != 4 || len(g.Edges) != 4 {
+		t.Fatalf("all: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, n := range g.Nodes {
+		if n.Folded != nil {
+			t.Errorf("state=all must not fold: %+v", n)
+		}
+	}
+	// The node asked for is shown in any state.
+	rec = e.do(t, "GET", "/v1/graph?node="+url.QueryEscape("doc:AGB/"+stOld), "", nil)
+	decodeJSON(t, rec, &g)
+	if rec.Code != 200 || g.Nodes[0].ID != "doc:AGB/"+stOld || *g.Nodes[0].State != "superseded" {
+		t.Errorf("superseded node: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, target := range []string{node + "&state=superseded", node + "&state=", node + "&state=all&state=current"} {
+		if target == node+"&state=" {
+			continue
+		}
+		if rec := e.do(t, "GET", target, "", nil); rec.Code != 400 {
+			t.Errorf("%s: %d %s", target, rec.Code, rec.Body.String())
 		}
 	}
 }

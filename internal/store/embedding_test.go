@@ -156,3 +156,53 @@ func issueRowID(t *testing.T, s *Store, key string) int64 {
 	}
 	return id
 }
+
+// The status and state filters, and the fields of a hit, are the same for the
+// hits found by meaning as for those found by keywords.
+func TestSemanticHitsApplyStatusAndState(t *testing.T) {
+	s, ctx := seeded(t)
+	issues := seedSearchStates(t, s)
+	var refs []SourceText
+	for _, status := range []model.IssueStatus{model.StatusBacklog, model.StatusDone} {
+		refs = append(refs, SourceText{Source: "issue", ID: issueRowID(t, s, issues[status].Key), Text: "x"})
+	}
+	for _, name := range []string{relOld, relNew, relRep} {
+		var id int64
+		if err := s.db.QueryRow(`select id from document where name = ?`, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, SourceText{Source: "document", ID: id, Text: "문서"})
+	}
+	hits, err := s.SemanticHits(ctx, refs, SearchFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 5 || hits[0].Status == nil || *hits[0].Status != "backlog" || hits[0].State != nil || hits[0].Supersedes != nil {
+		t.Fatalf("hits = %+v", hits)
+	}
+	old, cur := hits[2], hits[3]
+	if old.Status != nil || old.State == nil || *old.State != "superseded" || old.Supersedes == nil || !slices.Equal(old.SupersededBy, []string{relNew}) ||
+		*cur.State != "current" || !slices.Equal(cur.Supersedes, []string{relOld}) {
+		t.Errorf("document hits = %+v, %+v", old, cur)
+	}
+	for _, c := range []struct {
+		f    SearchFilter
+		want []string
+	}{
+		{SearchFilter{Statuses: []model.IssueStatus{model.StatusDone}}, []string{"issue:" + issues[model.StatusDone].Key, "document:" + relOld, "document:" + relNew, "document:" + relRep}},
+		{SearchFilter{States: []model.DocumentState{model.StateCurrent}}, []string{"issue:" + issues[model.StatusBacklog].Key, "issue:" + issues[model.StatusDone].Key, "document:" + relNew}},
+		{SearchFilter{States: []model.DocumentState{model.StateArchived}, Statuses: []model.IssueStatus{model.StatusBacklog}}, []string{"issue:" + issues[model.StatusBacklog].Key, "document:" + relRep}},
+	} {
+		hits, err := s.SemanticHits(ctx, refs, c.f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		for _, h := range hits {
+			keys = append(keys, string(h.Type)+":"+h.Key)
+		}
+		if !slices.Equal(keys, c.want) {
+			t.Errorf("%+v: hits = %v, want %v", c.f, keys, c.want)
+		}
+	}
+}

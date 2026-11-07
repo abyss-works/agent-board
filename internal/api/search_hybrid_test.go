@@ -152,6 +152,30 @@ func TestHybridSearchAppliesTheFiltersToSemanticHits(t *testing.T) {
 	}
 }
 
+// The status and state filters, and the default of the state, apply to the hits
+// found by meaning like to the others.
+func TestHybridSearchAppliesStatusAndState(t *testing.T) {
+	e, _ := hybridEnv(t)
+	if rec := e.do(t, "POST", documentPath("AGB", apiDocLock)+"/archive", "", nil); rec.Code != 200 {
+		t.Fatalf("archive: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := e.searchHits(t, "/v1/search?q=락"); l.Total != 3 {
+		t.Errorf("default hides the archived document: %v", hitKeys(l))
+	}
+	if l := e.searchHits(t, "/v1/search?q=락&type=document&state=archived"); l.Total != 1 || l.Items[0].Key != apiDocLock || *l.Items[0].State != "archived" {
+		t.Errorf("state archived = %v", hitKeys(l))
+	}
+	if l := e.searchHits(t, "/v1/search?q=락&state=all"); l.Total != 4 {
+		t.Errorf("state all = %v", hitKeys(l))
+	}
+	if l := e.searchHits(t, "/v1/search?q=락&status=done"); l.Total != 1 || l.Items[0].Type != model.SearchDocument || l.Items[0].Key != apiDocPriority {
+		t.Errorf("status done keeps the documents only: %v", hitKeys(l))
+	}
+	if l := e.searchHits(t, "/v1/search?q=락&status=open&type=issue"); l.Total != 2 || l.Items[0].Status == nil || *l.Items[0].Status != "backlog" {
+		t.Errorf("status open = %v", hitKeys(l))
+	}
+}
+
 // TestHybridSearchPagesAfterFusion applies limit and offset to the fused list
 // and counts the fused items.
 func TestHybridSearchPagesAfterFusion(t *testing.T) {

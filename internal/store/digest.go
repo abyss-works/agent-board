@@ -19,14 +19,16 @@ type DigestEvent struct {
 	At       model.Time        `json:"at"`
 }
 
-// DigestDocument is a record document registered in the digest window.
+// DigestDocument is a record document registered in the digest window that is
+// current now. Supersedes names the documents it replaces.
 type DigestDocument struct {
-	Name      string     `json:"name"`
-	Kind      string     `json:"kind"`
-	Title     *string    `json:"title"`
-	Date      *string    `json:"date"`
-	CreatedBy string     `json:"created_by"`
-	CreatedAt model.Time `json:"created_at"`
+	Name       string     `json:"name"`
+	Kind       string     `json:"kind"`
+	Title      *string    `json:"title"`
+	Date       *string    `json:"date"`
+	Supersedes []string   `json:"supersedes"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  model.Time `json:"created_at"`
 }
 
 // DigestProject is what changed in one project.
@@ -134,21 +136,24 @@ func digestEvents(ctx context.Context, db *sql.DB, cond string, args []any, limi
 }
 
 func digestDocuments(ctx context.Context, db *sql.DB, args []any, limit int) (Section[DigestDocument], error) {
-	const from = ` from document d join project p on p.id = d.project_id where p.key = ? and d.created_at >= ? and d.created_at < ?`
+	const from = ` from document d join project p on p.id = d.project_id where p.key = ? and d.created_at >= ? and d.created_at < ?
+		and (` + documentState + `) = 'current'`
 	sec := Section[DigestDocument]{Items: []DigestDocument{}}
 	if err := db.QueryRowContext(ctx, `select count(*)`+from, args...).Scan(&sec.Total); err != nil {
 		return sec, err
 	}
-	rows, err := db.QueryContext(ctx, `select d.name, d.kind, d.title, d.date, d.created_by, d.created_at`+from+` order by d.created_at, d.id limit ?`, append(args, limit)...)
+	rows, err := db.QueryContext(ctx, `select d.id, d.name, d.kind, d.title, d.date, d.created_by, d.created_at`+from+` order by d.created_at, d.id limit ?`, append(args, limit)...)
 	if err != nil {
 		return sec, err
 	}
 	defer rows.Close()
+	var ids []int64
 	for rows.Next() {
 		var doc DigestDocument
+		var id int64
 		var title, date sql.NullString
 		var at string
-		if err := rows.Scan(&doc.Name, &doc.Kind, &title, &date, &doc.CreatedBy, &at); err != nil {
+		if err := rows.Scan(&id, &doc.Name, &doc.Kind, &title, &date, &doc.CreatedBy, &at); err != nil {
 			return sec, err
 		}
 		doc.Title, doc.Date = nullable(title), nullable(date)
@@ -156,8 +161,20 @@ func digestDocuments(ctx context.Context, db *sql.DB, args []any, limit int) (Se
 			return sec, err
 		}
 		sec.Items = append(sec.Items, doc)
+		ids = append(ids, id)
 	}
-	return sec, rows.Err()
+	if err := rows.Err(); err != nil {
+		return sec, err
+	}
+	rows.Close()
+	rels, err := loadRelations(ctx, db, ids)
+	if err != nil {
+		return sec, err
+	}
+	for i, id := range ids {
+		sec.Items[i].Supersedes = rels[id].supersedes
+	}
+	return sec, nil
 }
 
 func nullable(v sql.NullString) *string {
