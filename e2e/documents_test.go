@@ -19,21 +19,38 @@ import (
 // result, the list item (neither has Content), the single document (Content)
 // and the search item (Snippet).
 type document struct {
-	Project   string   `json:"project"`
-	Name      string   `json:"name"`
-	Location  string   `json:"location"`
-	Kind      string   `json:"kind"`
-	Date      *string  `json:"date"`
-	Title     *string  `json:"title"`
-	Tags      []string `json:"tags"`
-	SHA256    string   `json:"sha256"`
-	Size      int      `json:"size"`
-	Content   *string  `json:"content"`
-	CreatedAt string   `json:"created_at"`
-	CreatedBy string   `json:"created_by"`
-	UpdatedAt string   `json:"updated_at"`
-	UpdatedBy string   `json:"updated_by"`
-	Snippet   *string  `json:"snippet"`
+	Project  string   `json:"project"`
+	Name     string   `json:"name"`
+	Location string   `json:"location"`
+	Kind     string   `json:"kind"`
+	Date     *string  `json:"date"`
+	Title    *string  `json:"title"`
+	Tags     []string `json:"tags"`
+	State    string   `json:"state"`
+	Archived bool     `json:"archived"`
+	Imported bool     `json:"imported"`
+	Path     *string  `json:"path"`
+
+	Supersedes     []string `json:"supersedes"`
+	SupersededBy   []string `json:"superseded_by"`
+	Related        []string `json:"related"`
+	Issues         []string `json:"issues"`
+	UnresolvedRefs []struct {
+		Kind   string `json:"kind"`
+		Target string `json:"target"`
+	} `json:"unresolved_refs"`
+	Warnings []struct {
+		Field  string `json:"field"`
+		Reason string `json:"reason"`
+	} `json:"warnings"`
+	SHA256    string  `json:"sha256"`
+	Size      int     `json:"size"`
+	Content   *string `json:"content"`
+	CreatedAt string  `json:"created_at"`
+	CreatedBy string  `json:"created_by"`
+	UpdatedAt string  `json:"updated_at"`
+	UpdatedBy string  `json:"updated_by"`
+	Snippet   *string `json:"snippet"`
 }
 
 type documentConflict struct {
@@ -54,9 +71,12 @@ func contentSHA(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// documentText builds a record document. Empty date, title and tags are left
-// out of the front matter.
+// documentText builds a record document. An empty date and empty tags are left
+// out of the front matter, and an empty title is "제목", which a record needs.
 func documentText(kind, date, title, tags, body string) string {
+	if title == "" {
+		title = "제목"
+	}
 	var b strings.Builder
 	b.WriteString("---\nkind: " + kind + "\n")
 	for _, kv := range [][2]string{{"date", date}, {"title", title}, {"tags", tags}} {
@@ -130,10 +150,10 @@ func TestDocuments(t *testing.T) {
 		"우선순위 큐는 등급으로 정렬한다.\r\n\t"+word+" "+word+" "+word+" <b>굵게</b> & 끝"), "\n")
 	report := documentText("report", "2026-10-19 17:00", "agb와 Linear 비교", "[product, linear]", "Linear는 여러 사람이 쓰는 도구다. 우선순위 비교 "+word)
 	release := documentText("implementation", "2026-10-19 16:57", "v0.2.0 릴리즈", "[release]", "배포 절차 "+word)
-	bare := documentText("decision", "", "", "", "메타데이터가 없는 기록 "+word)
+	bare := documentText("decision", "", "메타 없는 결정", "", "메타데이터가 없는 기록 "+word)
 	lock := documentText("incident", "2026-10-21 09:00", "데이터베이스 잠금 사고", "[sqlite, lock]", "쓰기 트랜잭션이 잠겼다. "+word)
 
-	t.Run("register, repeat, move", func(t *testing.T) {
+	t.Run("register, repeat, location only", func(t *testing.T) {
 		r := putDocument(t, as("claude"), p.Key, nDecision, "history", decision)
 		d := decodeAs[document](t, r, 201)
 		if r.header.Get("Location") != documentPath(p.Key, nDecision) {
@@ -148,7 +168,13 @@ func TestDocuments(t *testing.T) {
 		}
 		wantTime(t, "created_at", d.CreatedAt)
 		wantTime(t, "updated_at", d.UpdatedAt)
-		wantKeys := []string{"created_at", "created_by", "date", "kind", "location", "name", "project", "sha256", "size", "tags", "title", "updated_at", "updated_by"}
+		if d.State != "current" || d.Archived || d.Imported || d.Path != nil || d.Supersedes == nil || d.SupersededBy == nil || d.Related == nil || d.Issues == nil || d.UnresolvedRefs == nil || d.Warnings == nil {
+			t.Errorf("state and relations = %+v", d)
+		}
+		documentKeys := []string{"archived", "created_at", "created_by", "date", "imported", "issues", "kind", "location", "name", "path", "project", "related", "sha256", "size",
+			"state", "superseded_by", "supersedes", "tags", "title", "unresolved_refs", "updated_at", "updated_by"}
+		wantKeys := append(append([]string{}, documentKeys...), "warnings")
+		sort.Strings(wantKeys)
 		if got := jsonKeys(t, r.body); !reflect.DeepEqual(got, wantKeys) {
 			t.Errorf("put result fields = %v, want %v", got, wantKeys)
 		}
@@ -160,15 +186,13 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("repeat = %s Location=%q, want %s", again.body, again.header.Get("Location"), r.body)
 		}
 
-		// The same content in the archive moves the document.
+		// A client of v0.8.x that sends the same content with another location changes nothing.
 		tick()
-		moved := decodeAs[document](t, putDocument(t, owner, p.Key, nDecision, "archive", decision), 200)
-		if moved.Location != "archive" || moved.UpdatedBy != "owner" || moved.CreatedBy != "claude" || moved.CreatedAt != d.CreatedAt || moved.UpdatedAt <= d.UpdatedAt || moved.SHA256 != d.SHA256 {
-			t.Errorf("moved = %+v", moved)
-		}
-		back := decodeAs[document](t, putDocument(t, owner, p.Key, nDecision, "history", decision), 200)
-		if back.Location != "history" {
-			t.Errorf("moved back = %+v", back)
+		for _, location := range []string{"archive", "legacy", "history"} {
+			moved := decodeAs[document](t, putDocument(t, owner, p.Key, nDecision, location, decision), 200)
+			if moved.Location != "history" || moved.UpdatedBy != "claude" || moved.CreatedBy != "claude" || moved.UpdatedAt != d.UpdatedAt || moved.SHA256 != d.SHA256 {
+				t.Errorf("location %s: %+v", location, moved)
+			}
 		}
 
 		// The original, byte for byte, in its folder.
@@ -177,7 +201,7 @@ func TestDocuments(t *testing.T) {
 		if full.Content == nil || *full.Content != decision || full.SHA256 != d.SHA256 || full.Location != "history" {
 			t.Errorf("single document = %s", one)
 		}
-		wantFull := append(append([]string{}, wantKeys...), "content")
+		wantFull := append(append([]string{}, documentKeys...), "content")
 		sort.Strings(wantFull)
 		if got := jsonKeys(t, one.body); !reflect.DeepEqual(got, wantFull) {
 			t.Errorf("single document fields = %v, want %v", got, wantFull)
@@ -248,24 +272,24 @@ func TestDocuments(t *testing.T) {
 			{"upper case slug", "2026-10-20-1544-decision-Priority.md", "history", ok, "name"},
 			{"slug with an underscore", "2026-10-20-1544-decision-a_b.md", "history", ok, "name"},
 			{"not markdown", "2026-10-20-1544-decision-x.txt", "history", ok, "name"},
-			{"kind of the front matter differs", "2026-10-20-1544-report-x.md", "history", ok, "content"},
-			{"no front matter", "2026-10-20-1544-decision-x.md", "history", "# 제목\n본문\n", "content"},
-			{"unclosed front matter", "2026-10-20-1544-decision-x.md", "history", "---\nkind: decision\n본문\n", "content"},
-			{"front matter after a blank line", "2026-10-20-1544-decision-x.md", "history", "\n" + ok, "content"},
-			{"front matter without kind", "2026-10-20-1544-decision-x.md", "history", "---\ntitle: 제목\n---\n본문\n", "content"},
-			{"empty content", "2026-10-20-1544-decision-x.md", "history", "", "content"},
+			{"kind of the front matter differs", "2026-10-20-1544-report-x.md", "history", ok, "kind"},
+			{"no front matter, so no title", "2026-10-20-1544-decision-x.md", "history", "# 제목\n본문\n", "title"},
+			{"unclosed front matter", "2026-10-20-1544-decision-x.md", "history", "---\nkind: decision\n본문\n", "title"},
+			{"front matter after a blank line", "2026-10-20-1544-decision-x.md", "history", "\n" + ok, "title"},
+			{"a placeholder title", "2026-10-20-1544-decision-x.md", "history", documentText("decision", "", "<문서 제목>", "", "본문"), "title"},
+			{"a bad date", "2026-10-20-1544-decision-x.md", "history", documentText("decision", "어제", "", "", "본문"), "date"},
+			{"empty content", "2026-10-20-1544-decision-x.md", "history", "", "title"},
 			{"one byte over the limit", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("a", maxDocumentBytes-len(head)+1), "content"},
 			{"bytes, not characters", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("가", (maxDocumentBytes-len(head))/3+1), "content"},
 			{"unknown location", "2026-10-20-1544-decision-x.md", "draft", ok, "location"},
-			{"empty location", "2026-10-20-1544-decision-x.md", "", ok, "location"},
 		} {
 			e := wantError(t, put(c.name, c.location, c.content), 422, "validation_failed")
 			if !e.hasField(c.field) {
 				t.Errorf("%s: details = %+v, want the field %s", c.label, e.Error.Details, c.field)
 			}
 		}
-		e := wantError(t, put("x.md", "tmp", "본문"), 422, "validation_failed")
-		if got := e.fields(); !reflect.DeepEqual(got, []string{"content", "location", "name"}) {
+		e := wantError(t, put("x.md", "", "본문"), 422, "validation_failed")
+		if got := e.fields(); !reflect.DeepEqual(got, []string{"name", "title"}) {
 			t.Errorf("every violation at once = %v", got)
 		}
 		wantError(t, owner.do(t, "PUT", documentPath(p.Key, "2026-10-20-1544-decision-x.md"), map[string]any{"location": nil, "content": nil}), 422, "validation_failed")
@@ -279,7 +303,7 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("korean at the limit: status %d, size %d", status, d.Size)
 		}
 
-		// The body of the request is a JSON object with the two fields.
+		// The body of the request is a JSON object with the fields of a put.
 		path := documentPath(p.Key, "2026-10-20-1544-decision-x.md")
 		for _, body := range []map[string]any{
 			{"location": "history", "content": ok, "sha256": "abc"},
@@ -331,7 +355,7 @@ func TestDocuments(t *testing.T) {
 			if it.Name == nRelease && (it.Location != "archive" || it.Kind != "implementation") {
 				t.Errorf("release = %+v", it)
 			}
-			if it.Name == nBare && (it.Date != nil || it.Title != nil || it.Tags == nil || len(it.Tags) != 0) {
+			if it.Name == nBare && (it.Date == nil || *it.Date != "2026-10-18 10:00" || it.Title == nil || it.Tags == nil || len(it.Tags) != 0) {
 				t.Errorf("document without metadata = %+v", it)
 			}
 		}
@@ -374,12 +398,12 @@ func TestDocuments(t *testing.T) {
 		}
 		names := func(query string) string { return documentNames(get(query).Items) }
 		join := func(n ...string) string { return strings.Join(n, ",") }
-		scope := "project=" + projects + "&"
+		scope := "project=" + projects + "&state=all&"
 
-		// Without a query: newest first by the date of the front matter; no date last.
-		// The two documents at the size limit have no date either and sort after the dated ones.
+		// Without a query: newest first by date, then by name. The two documents at the
+		// size limit take the date of their name, which is the date of the decision.
 		withoutQuery := get(scope + "limit=200")
-		if !strings.HasPrefix(documentNames(withoutQuery.Items), join(nLock, nDecision, nDecision, nReport, nRelease)) || withoutQuery.Total != 8 {
+		if !strings.HasPrefix(documentNames(withoutQuery.Items), join(nLock, nDecision, nDecision, nKorean, nAtLimit, nReport, nRelease)) || withoutQuery.Total != 8 {
 			t.Errorf("newest first = %s (total %d)", documentNames(withoutQuery.Items), withoutQuery.Total)
 		}
 		if withoutQuery.Items[0].Project != q.Key || withoutQuery.Items[1].Project != p.Key && withoutQuery.Items[2].Project != p.Key {
@@ -389,7 +413,7 @@ func TestDocuments(t *testing.T) {
 		if strings.Contains(string(raw.body), `"content"`) || strings.Contains(string(raw.body), `"snippet"`) {
 			t.Errorf("results without a query carry no content or snippet")
 		}
-		if got := get("project=" + p.Key + "&limit=200"); got.Limit != 200 || got.Total != 6 {
+		if got := get("project=" + p.Key + "&state=all&limit=200"); got.Limit != 200 || got.Total != 6 {
 			t.Errorf("one project = %+v", got)
 		}
 
@@ -418,24 +442,30 @@ func TestDocuments(t *testing.T) {
 			"q=" + url.QueryEscape(`"우선순위 큐"`):                           nDecision,
 			"q=" + url.QueryEscape(word+" 존재하지않는검색어"):                    "",
 			"q=" + url.QueryEscape(word) + "&kind=report":                nReport,
-			"q=" + url.QueryEscape(word) + "&location=archive":           nRelease,
+			"q=" + url.QueryEscape(word) + "&state=archived":             nRelease,
 			"q=" + url.QueryEscape(word) + "&kind=report,implementation": join(nRelease, nReport),
 			"q=" + url.QueryEscape(word) + "&kind=incident":              nLock,
 			"q=%20%20&kind=incident":                                     nLock,
 		} {
-			if got := names(scope + query); sortedJoin(got) != sortedJoin(want) {
+			qs := scope + query
+			if strings.Contains(query, "state=") {
+				qs = "project=" + projects + "&" + query
+			}
+			if got := names(qs); sortedJoin(got) != sortedJoin(want) {
 				t.Errorf("%s: %q, want %q", query, got, want)
 			}
 		}
 		// The filters, without a query.
 		for query, want := range map[string]string{
 			"project=" + q.Key: join(nLock, nDecision),
-			"project=" + p.Key + "&kind=decision&limit=2":                     join(nDecision, nKorean),
-			"project=" + projects + "&kind=incident":                          nLock,
-			"project=" + p.Key + "&location=archive":                          nRelease,
-			"project=" + p.Key + "&kind=report,implementation":                join(nReport, nRelease),
-			"project=" + projects + "&location=archive,history&kind=incident": nLock,
-			"project=" + projectKey("NOPE"):                                   "",
+			"project=" + p.Key + "&state=all&kind=decision&limit=2":         join(nDecision, nKorean),
+			"project=" + projects + "&kind=incident":                        nLock,
+			"project=" + p.Key + "&state=archived":                          nRelease,
+			"project=" + p.Key + "&state=all&kind=report,implementation":    join(nReport, nRelease),
+			"project=" + p.Key + "&kind=report,implementation":              nReport,
+			"project=" + projects + "&state=archived,current&kind=incident": nLock,
+			"project=" + projects + "&state=superseded":                     "",
+			"project=" + projectKey("NOPE"):                                 "",
 		} {
 			if got := names(query); got != want {
 				t.Errorf("%s: %q, want %q", query, got, want)
@@ -450,7 +480,7 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("page of a search = %+v", hitPage)
 		}
 		for _, bad := range []string{
-			"kind=plan", "kind=decision,plan", "location=draft", "project=agb", "project=A", "project=" + p.Key + ",x", "kind=decision&kind=report",
+			"kind=plan", "kind=decision,plan", "location=history", "state=old", "imported=maybe", "project=agb", "project=A", "project=" + p.Key + ",x", "kind=decision&kind=report",
 			"q=a&q=b", "limit=0", "limit=201", "offset=-1", "sort=date", "status=all", "content=true", "q=" + url.QueryEscape(strings.Repeat("a ", 11)),
 		} {
 			wantError(t, owner.do(t, "GET", "/v1/documents?"+bad, nil), 400, "bad_request")
@@ -468,7 +498,7 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("legacy document = %d %+v", status, d)
 		}
 		dec, status := mustPutDocument(t, as("claude"), q.Key, "decisions/2026-10-17-14-30-scope.md", "legacy", "범위 결정 "+word+"\n")
-		if status != 201 || dec.Kind != "decision" || dec.Date == nil || *dec.Date != "2026-10-17 14:30" {
+		if status != 201 || dec.Kind != "other" || !dec.Imported || dec.Date == nil || *dec.Date != "2026-10-17 14:30" {
 			t.Errorf("legacy decision = %d %+v", status, dec)
 		}
 		for _, target := range []string{documentPath(q.Key, nLegacy), documentPath(q.Key, url.PathEscape(nLegacy))} {
@@ -477,8 +507,9 @@ func TestDocuments(t *testing.T) {
 				t.Errorf("get %s = %+v", target, got)
 			}
 		}
-		expect(t, putDocument(t, owner, q.Key, "archive/notes.md", "legacy", "# x\n"), 422)
-		found := decodeAs[list[document]](t, owner.do(t, "GET", "/v1/documents?q="+url.QueryEscape(word)+"&location=legacy", nil), 200)
+		expect(t, putDocument(t, owner, q.Key, "archive/_template.md", "legacy", "# x\n"), 422)
+		expect(t, putDocument(t, owner, q.Key, "decisions/notes.txt", "legacy", "# x\n"), 422)
+		found := decodeAs[list[document]](t, owner.do(t, "GET", "/v1/documents?q="+url.QueryEscape(word)+"&imported=true&state=all", nil), 200)
 		if found.Total != 2 {
 			t.Errorf("search of legacy documents = %d", found.Total)
 		}
@@ -511,7 +542,7 @@ func TestDocuments(t *testing.T) {
 			if got := decodeAs[list[document]](t, owner.do(t, "GET", "/v1/projects/"+r.Key+"/documents", nil), 200); got.Total != 1 {
 				t.Errorf("%s project: list total = %d", status, got.Total)
 			}
-			if got := decodeAs[list[document]](t, owner.do(t, "GET", "/v1/documents?project="+r.Key, nil), 200); got.Total != 1 {
+			if got := decodeAs[list[document]](t, owner.do(t, "GET", "/v1/documents?project="+r.Key+"&state=all", nil), 200); got.Total != 1 {
 				t.Errorf("%s project: search total = %d", status, got.Total)
 			}
 		}

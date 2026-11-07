@@ -77,7 +77,7 @@ func TestIssueCreate(t *testing.T) {
 			"labels":     strs("api", "cli", "api"),
 			"parent":     parent.Key,
 			"depends_on": strs(dep.Key, p.Key+"-2"),
-			"refs":       strs("repo:wsk0715/agent-board", "doc:api.md", "repo:wsk0715/agent-board", "url:https://example.com/x?y=1"),
+			"refs":       strs("repo:wsk0715/agent-board", "file:api.md", "repo:wsk0715/agent-board", "url:https://example.com/x?y=1"),
 		}
 		iss := createIssue(t, owner, in)
 		if iss.Title != "전체 속성" || iss.Body == nil || *iss.Body != "## 배경\n\n본문" {
@@ -98,7 +98,7 @@ func TestIssueCreate(t *testing.T) {
 		if !equalStrings(sortedCopy(iss.DependsOn), sortedCopy([]string{dep.Key, p.Key + "-2"})) {
 			t.Errorf("depends_on = %v (cross-project allowed)", iss.DependsOn)
 		}
-		if !equalStrings(sortedCopy(iss.Refs), []string{"doc:api.md", "repo:wsk0715/agent-board", "url:https://example.com/x?y=1"}) {
+		if !equalStrings(sortedCopy(iss.Refs), []string{"file:api.md", "repo:wsk0715/agent-board", "url:https://example.com/x?y=1"}) {
 			t.Errorf("refs = %v (duplicates must merge)", iss.Refs)
 		}
 		got := getIssue(t, iss.Key)
@@ -258,7 +258,7 @@ func TestIssueValidation(t *testing.T) {
 func TestIssuePatch(t *testing.T) {
 	p := createProject(t, "IP")
 	parent := newIssue(t, p.Key, "parent", nil)
-	iss := newIssue(t, p.Key, "patch me", map[string]any{"labels": strs("api"), "refs": strs("doc:a.md")})
+	iss := newIssue(t, p.Key, "patch me", map[string]any{"labels": strs("api"), "refs": strs("file:a.md")})
 
 	t.Run("merge patch changes only the sent fields", func(t *testing.T) {
 		tick()
@@ -270,7 +270,7 @@ func TestIssuePatch(t *testing.T) {
 		if got.Title != "patched" || *got.Body != templateBody(t, "feature") || !equalStrings(sortedCopy(got.Labels), []string{"api", "cli"}) || got.Parent == nil || *got.Parent != parent.Key {
 			t.Errorf("patched = %+v", got)
 		}
-		if !equalStrings(got.Refs, []string{"doc:a.md"}) || got.Status != "backlog" || got.Priority != "P2" {
+		if !equalStrings(got.Refs, []string{"file:a.md"}) || got.Status != "backlog" || got.Priority != "P2" {
 			t.Errorf("untouched fields changed: %+v", got)
 		}
 		if got.Version != 2 || got.UpdatedBy != "claude" || got.CreatedBy != "owner" || !(got.UpdatedAt > iss.UpdatedAt) {
