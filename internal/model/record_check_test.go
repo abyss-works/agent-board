@@ -49,6 +49,8 @@ func TestCheckRecord(t *testing.T) {
 		{"time placeholder in body", checkName, replace("이유.", "<yyyy-mm-dd HH:MM>"), &tmpl, []string{"<yyyy-mm-dd HH:MM>"}, 1},
 		{"placeholder in a table cell", checkName, replace("이유.", "| 대안 | 이유 |\n|---|---|\n| <대안> | b |"), &tmpl, []string{"<대안>"}, 1},
 		{"plain tags are fine", checkName, replace("이유.", "줄바꿈<br>과 <b>굵게</b>, <https://example.com>."), &tmpl, nil, 0},
+		{"statute notation is no placeholder", checkName, replace("이유.", "제3조 <신설 2021.11.30>, <개정 2022. 1. 4.>"), &tmpl, nil, 0},
+		{"placeholder beside a statute notation", checkName, replace("이유.", "<신설 2021.11.30> <왜 필요했는지>"), &tmpl, []string{"<왜 필요했는지>"}, 1},
 		{"comparison is fine", checkName, replace("이유.", "a < b and c > d"), &tmpl, nil, 0},
 		{"remnants in a fenced block are fine", checkName, replace("이유.", "```md\n<!-- 파일명: x -->\n<왜 필요했는지>\n## 없는 절\n```"), &tmpl, nil, 0},
 		{"remnants in a tilde fence are fine", checkName, replace("이유.", "~~~~\n<왜 필요했는지>\n```\n<!-- a -->\n~~~~"), &tmpl, nil, 0},
