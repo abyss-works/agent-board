@@ -45,7 +45,7 @@ var documentFields = map[string]bool{
 // is other metadata for the same content. A null field is a field that was not
 // sent.
 func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, documentFields)
+	b, aerr := readBodyLimit(w, r, documentFields, maxDocumentBodyBytes, errDocumentTooLarge)
 	if aerr != nil {
 		writeError(w, aerr)
 		return

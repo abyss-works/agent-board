@@ -64,7 +64,7 @@ type documentConflict struct {
 	} `json:"error"`
 }
 
-const maxDocumentBytes = 262144
+const maxDocumentBytes = 1 << 20
 
 func contentSHA(content string) string {
 	sum := sha256.Sum256([]byte(content))
@@ -295,7 +295,7 @@ func TestDocuments(t *testing.T) {
 		}
 		wantError(t, owner.do(t, "PUT", documentPath(p.Key, "2026-10-20-1544-decision-x.md"), map[string]any{"location": nil, "content": nil}), 422, "validation_failed")
 
-		// Exactly the limit is accepted, and 256KB of Korean text, which is three bytes a character.
+		// Exactly the limit is accepted, and 1MB of Korean text, which is three bytes a character.
 		if d, status := mustPutDocument(t, owner, p.Key, nAtLimit, "history", head+strings.Repeat("a", maxDocumentBytes-len(head))); status != 201 || d.Size != maxDocumentBytes {
 			t.Errorf("at the limit: status %d, size %d", status, d.Size)
 		}
@@ -316,7 +316,7 @@ func TestDocuments(t *testing.T) {
 		}
 		wantError(t, owner.doRaw(t, "PUT", path, []byte(`{"location":"history","content":`)), 400, "bad_request")
 		wantError(t, owner.doRaw(t, "PUT", path, []byte(`["history"]`)), 400, "bad_request")
-		huge := owner.do(t, "PUT", path, map[string]any{"location": "history", "content": head + strings.Repeat("a", 1<<20)})
+		huge := owner.do(t, "PUT", path, map[string]any{"location": "history", "content": head + strings.Repeat("a", 7<<20)})
 		wantError(t, huge, 413, "payload_too_large")
 		wantError(t, putDocument(t, owner, projectKey("NOPE"), "2026-10-20-1544-decision-x.md", "history", ok), 404, "not_found")
 

@@ -232,11 +232,18 @@ func TestPutDocumentRules(t *testing.T) {
 			t.Errorf("%s: %d %s", c.label, rec.Code, rec.Body.String())
 		}
 	}
-	// A document of exactly the limit is accepted.
+	// A document of exactly the limit is accepted, also when JSON escaping
+	// makes the request body several times larger than the content.
+	if model.MaxDocumentBytes != 1<<20 {
+		t.Errorf("MaxDocumentBytes = %d, want 1 MiB", model.MaxDocumentBytes)
+	}
+	if rec := e.putDocument(t, "AGB", "2026-10-20-1545-decision-escaped.md", "history", head+strings.Repeat("<", model.MaxDocumentBytes-len(head)), nil); rec.Code != 201 {
+		t.Errorf("escaped document at the limit: %d %.200s", rec.Code, rec.Body.String())
+	}
 	if rec := e.putDocument(t, "AGB", apiDocPriority, "history", head+strings.Repeat("a", model.MaxDocumentBytes-len(head)), nil); rec.Code != 201 {
 		t.Errorf("document at the limit: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec, l := e.getDocuments(t, "/v1/projects/AGB/documents"); rec.Code != 200 || l.Total != 1 {
+	if rec, l := e.getDocuments(t, "/v1/projects/AGB/documents"); rec.Code != 200 || l.Total != 2 {
 		t.Errorf("refused puts left documents behind: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -274,8 +281,8 @@ func TestPutDocumentBadRequests(t *testing.T) {
 	if rec.Code != 422 || len(b.Error.Details) != 1 || b.Error.Details[0].Field != "title" {
 		t.Errorf("null fields: %d %s", rec.Code, rec.Body.String())
 	}
-	// A body over 1MiB is refused before anything else.
-	big := e.do(t, "PUT", documentPath("AGB", apiDocPriority), docRequest("history", good+strings.Repeat("a", 1<<20)), nil)
+	// A body far over the largest escaped document is refused before anything else.
+	big := e.do(t, "PUT", documentPath("AGB", apiDocPriority), docRequest("history", good+strings.Repeat("a", 7<<20)), nil)
 	if big.Code != 413 || decodeErr(t, big).Error.Code != "payload_too_large" {
 		t.Errorf("large body: %d", big.Code)
 	}

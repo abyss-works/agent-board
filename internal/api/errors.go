@@ -61,6 +61,7 @@ var (
 	errUnauthorized       = &apiError{Status: 401, Code: "unauthorized", Message: "유효한 Bearer 토큰이 필요합니다."}
 	errPreconditionFailed = &apiError{Status: 412, Code: "precondition_failed", Message: "If-Match의 버전이 현재 버전과 다릅니다."}
 	errPayloadTooLarge    = &apiError{Status: 413, Code: "payload_too_large", Message: "요청 본문은 1MiB를 넘을 수 없습니다."}
+	errDocumentTooLarge   = &apiError{Status: 413, Code: "payload_too_large", Message: "요청 본문이 문서 한도를 넘었습니다."}
 	errInternal           = &apiError{Status: 500, Code: "internal", Message: "서버 오류입니다."}
 
 	errActorMismatch = forbidden("토큰과 X-Actor가 맞지 않습니다.",

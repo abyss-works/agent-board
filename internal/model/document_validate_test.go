@@ -190,6 +190,12 @@ func TestValidateDocumentRules(t *testing.T) {
 	}
 }
 
+func TestMaxDocumentBytesIsOneMiB(t *testing.T) {
+	if MaxDocumentBytes != 1024*1024 {
+		t.Errorf("MaxDocumentBytes = %d, want %d", MaxDocumentBytes, 1024*1024)
+	}
+}
+
 func TestValidateDocumentSizeBoundary(t *testing.T) {
 	head := "---\ntitle: 제목\n---\n"
 	pad := func(n int, unit string) string { return strings.Repeat(unit, n) }

@@ -16,6 +16,11 @@ import (
 
 const maxBodyBytes = 1 << 20
 
+// maxDocumentBodyBytes bounds a document put. JSON escapes a control character
+// or "<" as a six-byte sequence, so the body of a document at its size limit can
+// be six times as long as the content; the rest is room for the other fields.
+const maxDocumentBodyBytes = 6*model.MaxDocumentBytes + 64<<10
+
 // body is a decoded JSON object whose keys were checked against the
 // allowed set. Values are decoded lazily so type errors name the field.
 type body map[string]json.RawMessage
@@ -23,11 +28,16 @@ type body map[string]json.RawMessage
 // readBody decodes the request body as a JSON object and rejects unknown
 // fields with 400. allowed maps field names to true.
 func readBody(w http.ResponseWriter, r *http.Request, allowed map[string]bool) (body, *apiError) {
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	return readBodyLimit(w, r, allowed, maxBodyBytes, errPayloadTooLarge)
+}
+
+// readBodyLimit is readBody with its own size limit and the error for a body over it.
+func readBodyLimit(w http.ResponseWriter, r *http.Request, allowed map[string]bool, limit int64, tooLarge *apiError) (body, *apiError) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			return nil, errPayloadTooLarge
+			return nil, tooLarge
 		}
 		return nil, badRequest("요청 본문을 읽지 못했습니다.")
 	}

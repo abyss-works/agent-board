@@ -139,7 +139,7 @@ func repoFiles(root string, cfg *repoConfig) (files []docFile, skipped []string,
 			skipped = append(skipped, rel+" (커밋하지 않았거나 커밋 뒤 바뀜)")
 			continue
 		case info.Size() > model.MaxDocumentBytes:
-			skipped = append(skipped, rel+" (256KB 초과)")
+			skipped = append(skipped, rel+" (1MB 초과)")
 			continue
 		}
 		name := rule.docName(rel)
@@ -344,7 +344,7 @@ var docSyncCmd = &command{
 (base, path)과 기본 값(kind, archived, imported)이 서버에 보내는 이름과 메타데이터가 됩니다. 이름이 _ 로
 시작하거나 .example.md 로 끝나는 파일(서식)은 문서가 아니라 보지 않습니다.
 
-커밋했고 그 뒤 바뀌지 않은 파일만 올리며, 나머지는 skipped 로 알립니다. 256KB 를 넘는 파일과 규칙이 같은
+커밋했고 그 뒤 바뀌지 않은 파일만 올리며, 나머지는 skipped 로 알립니다. 1MB 를 넘는 파일과 규칙이 같은
 이름을 만드는 파일도 skipped 입니다. --root 가 git 저장소가 아니면 아무것도 올리지 않고 실패합니다.
 
 - 서버에 없는 파일은 올립니다(uploaded).
