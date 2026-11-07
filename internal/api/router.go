@@ -24,6 +24,9 @@ type Options struct {
 	Token   string
 	Actors  []model.Actor
 	Version string
+	// Release is the release the binary was built for, such as v0.8.1. Empty
+	// when unknown; health then omits it.
+	Release string
 	Logger  *slog.Logger
 	Store   *store.Store
 	// Web is the built web client. When set, every path outside /v1 is served
@@ -139,7 +142,11 @@ func route(mux *http.ServeMux, pattern string, m methods) {
 }
 
 func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"status": "ok", "version": h.opts.Version, "api_version": APIVersion})
+	body := map[string]any{"status": "ok", "version": h.opts.Version, "api_version": APIVersion}
+	if h.opts.Release != "" {
+		body["release"] = h.opts.Release
+	}
+	writeJSON(w, 200, body)
 }
 
 func (h *handler) listActors(w http.ResponseWriter, _ *http.Request) {

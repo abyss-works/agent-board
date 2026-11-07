@@ -27,6 +27,7 @@ import (
 // enabled in the configuration.
 type Options struct {
 	Version     string
+	Release     string
 	Logger      *slog.Logger
 	BackupStore backup.ObjectStore
 }
@@ -83,7 +84,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if cfg.WebDir != "" {
 		web = os.DirFS(cfg.WebDir)
 	}
-	apiOpts := api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Logger: opts.Logger, Store: st, Web: web}
+	apiOpts := api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Release: opts.Release, Logger: opts.Logger, Store: st, Web: web}
 	if searcher != nil {
 		apiOpts.Semantic = searcher
 		apiOpts.SimilarModel = cfg.Embedding.Model
