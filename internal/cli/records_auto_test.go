@@ -6,30 +6,37 @@ import (
 	"testing"
 )
 
-// mgmtRepo is a management repository whose AGENTS.md names agb as the
-// knowledge store of project CLI, with one committed record document that
+const autoConfig = `{"project": "CLI", "auto_sync": true, "documents": [{"glob": "notes/*.md", "name": "base"}], "follow_up_headings": ["후속"]}`
+
+// agbRepo is a repository with the given .agb.json, one committed document that
 // has follow-ups, one committed and later edited, and one never committed.
-func mgmtRepo(t *testing.T, knowledge string) (root, committed string) {
+func agbRepo(t *testing.T, config string) (root, committed string) {
 	t.Helper()
 	root = gitRepo(t)
 	committed = "2026-10-20-1544-report-committed.md"
-	writeFiles(t, root, map[string]string{
-		"AGENTS.md":            "# AGENTS\n\n- 이슈 추적: agb, 프로젝트 키 `CLI`\n- 지식 저장소: " + knowledge + "\n",
-		"history/" + committed: docText("report", "본문") + "\n## 후속\n\n- CSP 헤더\n",
-		"history/2026-10-20-1545-report-edited.md": docText("report", "처음"),
-		"history/_report.md":                       "서식",
-	})
+	files := map[string]string{
+		"notes/" + committed:                     docText("report", "본문") + "\n## 후속\n\n- CSP 헤더\n",
+		"notes/2026-10-20-1545-report-edited.md": docText("report", "처음"),
+		"notes/_report.md":                       "서식",
+	}
+	if config != "" {
+		files[".agb.json"] = config
+	}
+	writeFiles(t, root, files)
 	for _, args := range [][]string{
-		{"add", "AGENTS.md", "history"},
+		{"add", "notes", ".agb.json"},
 		{"-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "docs"},
 	} {
+		if config == "" && args[0] == "add" {
+			args = []string{"add", "notes"}
+		}
 		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
 	writeFiles(t, root, map[string]string{
-		"history/2026-10-20-1545-report-edited.md":      docText("report", "고침"),
-		"history/2026-10-20-1546-report-uncommitted.md": docText("report", "초안"),
+		"notes/2026-10-20-1545-report-edited.md":      docText("report", "고침"),
+		"notes/2026-10-20-1546-report-uncommitted.md": docText("report", "초안"),
 	})
 	return root, committed
 }
@@ -37,10 +44,10 @@ func mgmtRepo(t *testing.T, knowledge string) (root, committed string) {
 const agendaJSON = `{"projects":[]}`
 
 func TestAgendaUploadsCommittedRecords(t *testing.T) {
-	root, committed := mgmtRepo(t, "agb, 프로젝트 키 `CLI`")
+	root, committed := agbRepo(t, autoConfig)
 	srv := docSyncServer(t, nil, map[string]canned{
-		"GET /v1/agenda": {body: agendaJSON},
-		"PUT /v1/projects/CLI/documents/" + committed: {status: 201, body: serverDoc("CLI", committed, "history", "x")},
+		"GET /v1/agenda":   {body: agendaJSON},
+		putPath(committed): {status: 201, body: serverDoc("CLI", committed, "history", "x")},
 	})
 	t.Chdir(root)
 	h := newHarness(t, srv, false)
@@ -67,12 +74,12 @@ func TestAgendaUploadsCommittedRecords(t *testing.T) {
 }
 
 func TestDoneCommentUploadsRecordsAndWarnsOnFailure(t *testing.T) {
-	root, committed := mgmtRepo(t, "agb, 프로젝트 키 `CLI`")
+	root, committed := agbRepo(t, autoConfig)
 	comment := `{"id":1,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"s","client_host":"desk","at":"2026-10-17T05:46:06.000Z","changes":null,"summary":null,"body":"x"}`
 	srv := docSyncServer(t, nil, map[string]canned{
-		"PATCH /v1/issues/CLI-1":                      {body: `{}`},
-		"POST /v1/issues/CLI-1/comments":              {status: 201, body: comment},
-		"PUT /v1/projects/CLI/documents/" + committed: {status: 500, body: `{"error":{"code":"internal","message":"서버 오류"}}`},
+		"PATCH /v1/issues/CLI-1":         {body: `{}`},
+		"POST /v1/issues/CLI-1/comments": {status: 201, body: comment},
+		putPath(committed):               {status: 500, body: `{"error":{"code":"internal","message":"서버 오류"}}`},
 	})
 	t.Chdir(root)
 	h := newHarness(t, srv, false)
@@ -95,10 +102,14 @@ func TestDoneCommentUploadsRecordsAndWarnsOnFailure(t *testing.T) {
 	}
 }
 
-func TestRecordsAreLeftAloneOutsideAgbManagedRepositories(t *testing.T) {
+func TestRecordsAreLeftAloneWithoutAnAutoSyncConfig(t *testing.T) {
 	for name, dir := range map[string]func(t *testing.T) string{
-		"knowledge store elsewhere": func(t *testing.T) string { r, _ := mgmtRepo(t, "`docs/` 폴더"); return r },
-		"not a repository":          func(t *testing.T) string { return t.TempDir() },
+		"no config": func(t *testing.T) string { r, _ := agbRepo(t, ""); return r },
+		"auto_sync off": func(t *testing.T) string {
+			r, _ := agbRepo(t, strings.Replace(autoConfig, `"auto_sync": true`, `"auto_sync": false`, 1))
+			return r
+		},
+		"not a repository": func(t *testing.T) string { return t.TempDir() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := docSyncServer(t, nil, map[string]canned{"GET /v1/agenda": {body: agendaJSON}})
@@ -111,5 +122,18 @@ func TestRecordsAreLeftAloneOutsideAgbManagedRepositories(t *testing.T) {
 				t.Errorf("requests = %v", srv.paths())
 			}
 		})
+	}
+}
+
+func TestAnInvalidConfigIsAWarningNotAFailure(t *testing.T) {
+	root, _ := agbRepo(t, `{"project": "CLI", "auto_sync": true, "folders": []}`)
+	srv := docSyncServer(t, nil, map[string]canned{"GET /v1/agenda": {body: agendaJSON}})
+	t.Chdir(root)
+	h := newHarness(t, srv, false)
+	if code := h.run("agenda"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "folders") || len(srv.reqs) != 1 {
+		t.Errorf("stderr = %s, requests = %v", h.stderr, srv.paths())
 	}
 }

@@ -99,8 +99,9 @@ type Settings struct {
 
 // resolveSettings applies the precedence flag > environment > file and
 // fills the defaults for the session ID and the client host. The token is
-// AGB_TOKEN, else the token of the requesting actor in the file, else the
-// shared token in the file. Values that would be rejected by the server are
+// the token of the requesting actor in the file, else AGB_TOKEN, else the
+// shared token in the file. AGB_TOKEN is a shared token for user actors, so it
+// must not shadow the token an agent actor logged in with. Values that would be rejected by the server are
 // refused here with a usage error.
 func resolveSettings(g *globals, getenv func(string) string, file Config, now time.Time, hostname string) (Settings, error) {
 	pick := func(flag, envName, fileValue string) string {
@@ -118,9 +119,9 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 		SessionID:  pick(g.sessionID, "AGB_SESSION_ID", file.SessionID),
 		ClientHost: pick(g.clientHost, "AGB_CLIENT_HOST", file.ClientHost),
 	}
-	s.Token = pick("", "AGB_TOKEN", file.Tokens[s.Actor])
-	if s.Token == "" {
-		s.Token = file.Token
+	s.Token = pick("", "AGB_TOKEN", file.Token)
+	if t := file.Tokens[s.Actor]; t != "" {
+		s.Token = t
 	}
 	if s.SessionID == "" {
 		s.SessionID = defaultSessionID(now)

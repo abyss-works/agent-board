@@ -21,6 +21,10 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+// release is the release the binary belongs to (vX.Y.Z), set at build time
+// with -ldflags "-X main.release=...". Empty for builds not made from a release.
+var release = ""
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
 }
@@ -51,7 +55,7 @@ func serve(stderr io.Writer, getenv func(string) string) int {
 		return 1
 	}
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
-	opts := server.Options{Version: version, Logger: logger}
+	opts := server.Options{Version: version, Release: release, Logger: logger}
 	if cfg.Backup.Enabled() {
 		store, err := backup.NewS3(cfg.Backup.Endpoint, cfg.Backup.Bucket, cfg.Backup.AccessKeyID, cfg.Backup.SecretAccessKey)
 		if err != nil {

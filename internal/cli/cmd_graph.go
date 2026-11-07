@@ -12,10 +12,10 @@ import (
 
 var graphCmd = &command{
 	name: "graph", summary: "이슈·기록 문서의 결정 그래프 (연결된 이슈와 문서)",
-	usage: `사용법: agb graph <노드> [--depth <1|2>]
+	usage: `사용법: agb graph <노드> [--depth <1|2>] [--state <current|all>]
 
 이슈나 기록 문서에 연결된 이슈와 문서를 보입니다. 연결은 상위 이슈(parent), 선행 이슈(depends_on), 참조(ref),
-기록 문서 프런트매터의 issue(about), supersedes, related 에서 만듭니다. 서버가 의미 검색을 켜 두었으면 내용이 비슷한
+기록 문서의 관계(이슈 about, supersedes, related)에서 만듭니다. 서버가 의미 검색을 켜 두었으면 내용이 비슷한
 문서끼리 similar 로도 잇습니다. similar 는 누가 적은 연결이 아니라 임베딩으로 추정한 것이라 점수가 붙습니다.
 방향과 관계없이 depth 만큼 따라갑니다.
 
@@ -26,13 +26,19 @@ var graphCmd = &command{
 출력의 줄마다 기준 노드에서 본 방향(→ 나가는 연결, ← 들어오는 연결)과 간선 종류가 나옵니다. depth 2 의 간선은
 기준 노드에 닿지 않아도 나옵니다.
 
+기본은 유효한(current) 문서만 따라갑니다. 대체됨·아카이브 문서는 접어서, 접힌 문서가 있는 노드를 표 아래에
+상태별 개수로 보입니다. 기준 노드는 상태와 관계없이 보입니다.
+
 옵션:
   --depth <N>             1(기본) 또는 2
+  --state <S>             current(기본) 또는 all. all 이면 대체됨·아카이브 문서도 접지 않고 보입니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("graph", g)
 		var depth int
+		var state string
 		fs.IntVar(&depth, "depth", 0, "")
+		fs.StringVar(&state, "state", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -49,7 +55,7 @@ var graphCmd = &command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.Graph(ctx, node, depth)
+		resp, err := c.Graph(ctx, node, depth, state)
 		if err != nil {
 			return err
 		}
@@ -83,15 +89,19 @@ func (a *App) renderGraph(w io.Writer, resp *client.Response) error {
 	}
 	root := g.Nodes[0]
 	fmt.Fprintf(w, "%s  %s  %s\n", root.ID, root.Kind, deref(root.Title, "-"))
+	if root.State != nil {
+		fmt.Fprintf(w, "state: %s\n", *root.State)
+	}
 	if len(root.Refs) > 0 {
 		fmt.Fprintf(w, "refs: %s\n", strings.Join(root.Refs, ", "))
 	}
 	if len(g.Edges) == 0 {
 		fmt.Fprintln(w, "연결된 이슈나 문서가 없습니다.")
+		printFolded(w, g.Nodes)
 		return nil
 	}
 	fmt.Fprintln(w)
-	tb := &table{header: []string{"DIR", "EDGE", "NODE", "KIND", "STATUS", "TITLE"}}
+	tb := &table{header: []string{"DIR", "EDGE", "NODE", "KIND", "STATE", "TITLE"}}
 	for _, e := range g.Edges {
 		dir, other := "→", e.To
 		switch {
@@ -101,9 +111,10 @@ func (a *App) renderGraph(w io.Writer, resp *client.Response) error {
 			dir, other = e.From+" →", e.To
 		}
 		n := nodes[other]
-		tb.add(dir, edgeLabel(e.Type, e.Score), other, n.Kind, deref(n.Status, "-"), deref(n.Title, "-"))
+		tb.add(dir, edgeLabel(e.Type, e.Score), other, n.Kind, nodeState(n), deref(n.Title, "-"))
 	}
 	tb.write(w, a.TermWidth)
+	printFolded(w, g.Nodes)
 	return nil
 }
 

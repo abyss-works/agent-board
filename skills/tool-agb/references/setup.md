@@ -49,8 +49,9 @@ go install -trimpath -ldflags "-X main.version=<VER>-dev.$(git rev-parse --short
    ```
    - 기본 위치는 `~/.agents/skills/tool-agb/`다. 에이전트 도구가 다른 폴더의 스킬을 읽으면 `--dir <그 도구의 전역 스킬 폴더>`를 준다.
    - Expected: `설치했습니다: <위치> (이전 <버전>, 새 <버전>)` 또는 `변경 없음: <위치> (<버전>)`
-   - 설치 위치가 링크(정션, 심볼릭 링크)이면 링크만 지우고 복사본을 둔다. 링크가 가리키던 파일은 바뀌지 않는다.
+   - 설치 위치가 링크(정션, 심볼릭 링크)이면 링크만 지우고 복사본을 둔다. 링크가 가리키던 파일은 바뀌지 않는다. 링크를 유지해야 하는 기기에서는 설치하지 않고 `agb skill check`만 쓴다.
    - `agb: 모르는 명령 "skill"`이 나오면 CLI가 v0.4.0 이하다. 1절로 CLI를 다시 설치한다.
+   - `agb skill check`는 아무것도 바꾸지 않고 CLI 판을 서버 릴리즈와, 설치된 스킬(링크이면 가리키는 대상)을 내장 스킬과 견준다. 종료 코드 0은 맞거나 비교를 건너뜀(개발 빌드, 서버가 릴리즈를 알리지 않음, 서버에 닿지 못함), 1은 CLI가 서버보다 오래됐거나 스킬이 없거나 다름이다. 출력된 `갱신:`이나 `맞추기:` 줄을 따른다.
 2. 확인한다.
    ```bash
    head -3 ~/.agents/skills/tool-agb/SKILL.md
@@ -91,7 +92,7 @@ agb --actor <자기 ID> project overview <KEY>
   - `config show`: `url`이 운영 주소이고 `actor_tokens`에 자기 ID가 있다.
   - `health`: `"status":"ok"`
   - `whoami`: `id`가 자기 행위자다.
-  - `project list`, `project overview`: 종료 코드 0이고, 목록에 프로젝트 `AGENTS.md`의 "이슈 추적" 칸에 적힌 키가 있다.
+  - `project list`, `project overview`: 종료 코드 0이고, 목록에 작업할 프로젝트의 키(`.agb.json`의 `project` 또는 사용자가 알려 준 키)가 있다.
 
 새 기기는 1절, 2절, 3절, 4절 순서로 한다.
 
@@ -104,7 +105,8 @@ agb --actor <자기 ID> project overview <KEY>
 | `go install`이 모듈을 찾지 못한다 | `REF`가 맞는지, 네트워크가 GitHub에 닿는지 확인한다. 다른 경로로 우회 설치하지 않고 사용자에게 알린다. |
 | `agb health`가 실패하거나 502 | 서버를 직접 띄우거나 다시 시작하지 않는다. 등록할 항목을 최종 보고에 모으고 사용자에게 알린다. |
 | 400과 `details[].reason`의 `unknown_actor` | 행위자 ID가 서버에 선언되어 있지 않다. 다른 행위자로 바꾸지 않고 사용자에게 알린다. |
-| 400 `If-Match` 관련 오류 | 설치된 CLI가 서버보다 오래되었을 수 있다. `agb version`을 확인하고 1절로 다시 설치한다. |
+| 400 `If-Match` 관련 오류 | 설치된 CLI가 서버보다 오래되었을 수 있다. `agb skill check`로 확인하고 1절로 다시 설치한다. |
+| `agb: 모르는 명령 ...` | 설치된 CLI가 스킬이나 문서보다 오래되었거나, 스킬이 CLI보다 앞선 판일 수 있다. `agb skill check`를 실행하고 출력된 `갱신:`이나 `맞추기:` 줄을 따른다. |
 
 ## 6. 최신 버전 확인
 
@@ -115,6 +117,7 @@ gh api repos/abyss-works/agent-board/commits/main --jq '.sha[0:7] + " " + .commi
 
 - 운영 서버의 `version`은 `git-<커밋>`이다. `main`의 최신 커밋 메시지가 릴리즈 버전(`vX.Y.Z`)이다.
 - 두 커밋이 같으면 운영 서버가 최신 릴리즈다. 설치한 `agb version`이 그 버전과 같아야 한다. 릴리즈별 변경은 `CHANGELOG.md`에 있다.
+- 운영 서버의 `release`(`vX.Y.Z`)가 배포된 릴리즈다. `agb skill check`가 이 값을 `agb version`과 견준다. 릴리즈 커밋이 아닌 빌드는 `release`가 없다.
 
 ## 7. 운영 인스턴스
 

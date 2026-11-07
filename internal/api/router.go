@@ -24,6 +24,9 @@ type Options struct {
 	Token   string
 	Actors  []model.Actor
 	Version string
+	// Release is the release the binary was built for, such as v0.8.1. Empty
+	// when unknown; health then omits it.
+	Release string
 	Logger  *slog.Logger
 	Store   *store.Store
 	// Web is the built web client. When set, every path outside /v1 is served
@@ -122,24 +125,33 @@ type methods map[string]http.HandlerFunc
 // JSON 405 with an Allow header. Path parameters stay available through
 // r.PathValue.
 func route(mux *http.ServeMux, pattern string, m methods) {
+	mux.HandleFunc(pattern, m.serve())
+}
+
+// serve is the handler of a method table.
+func (m methods) serve() http.HandlerFunc {
 	allowed := make([]string, 0, len(m))
 	for k := range m {
 		allowed = append(allowed, k)
 	}
 	sort.Strings(allowed)
 	allow := strings.Join(allowed, ", ")
-	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if fn, ok := m[r.Method]; ok {
 			fn(w, r)
 			return
 		}
 		w.Header().Set("Allow", allow)
 		writeError(w, &apiError{Status: 405, Code: "method_not_allowed", Message: "이 경로는 " + allow + " 메서드만 지원합니다."})
-	})
+	}
 }
 
 func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"status": "ok", "version": h.opts.Version, "api_version": APIVersion})
+	body := map[string]any{"status": "ok", "version": h.opts.Version, "api_version": APIVersion}
+	if h.opts.Release != "" {
+		body["release"] = h.opts.Release
+	}
+	writeJSON(w, 200, body)
 }
 
 func (h *handler) listActors(w http.ResponseWriter, _ *http.Request) {

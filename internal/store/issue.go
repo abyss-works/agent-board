@@ -324,6 +324,11 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		if issue.Milestone != nil {
 			refErrs = append(refErrs, checkIssueMilestone(ctx, tx, projectID, *issue.Milestone))
 		}
+		refTargets, err := resolveRefs(ctx, tx, projectID, issue.Refs, nil)
+		if err != nil && !isValidation(err) {
+			return err
+		}
+		refErrs = append(refErrs, err)
 		if err := model.MergeValidation(refErrs...); err != nil {
 			return err
 		}
@@ -349,7 +354,7 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		if err != nil {
 			return err
 		}
-		if err := writeLinks(ctx, tx, id, issue.Labels, depIDs, issue.Refs); err != nil {
+		if err := writeLinks(ctx, tx, id, issue.Labels, depIDs, issue.Refs, refTargets); err != nil {
 			return err
 		}
 		changes := map[string]model.Change{}
@@ -467,6 +472,16 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if next.Milestone != nil && (cur.Milestone == nil || *cur.Milestone != *next.Milestone) {
 			refErrs = append(refErrs, checkIssueMilestone(ctx, tx, cur.projectID, *next.Milestone))
 		}
+		// A reference the issue has keeps its target; only a new one has to resolve.
+		keep, err := storedRefTargets(ctx, tx, cur.id)
+		if err != nil {
+			return err
+		}
+		refTargets, err := resolveRefs(ctx, tx, cur.projectID, next.Refs, keep)
+		if err != nil && !isValidation(err) {
+			return err
+		}
+		refErrs = append(refErrs, err)
 		if err := model.MergeValidation(refErrs...); err != nil {
 			return err
 		}
@@ -500,7 +515,7 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 				return err
 			}
 		}
-		if err := writeLinks(ctx, tx, cur.id, next.Labels, depIDs, next.Refs); err != nil {
+		if err := writeLinks(ctx, tx, cur.id, next.Labels, depIDs, next.Refs, refTargets); err != nil {
 			return err
 		}
 		if _, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil, nil); err != nil {
@@ -604,7 +619,7 @@ func resolveLinks(ctx context.Context, tx *sql.Tx, parent *string, deps []string
 	return parentID, depIDs, nil
 }
 
-func writeLinks(ctx context.Context, tx *sql.Tx, id int64, labels []string, depIDs []int64, refs []string) error {
+func writeLinks(ctx context.Context, tx *sql.Tx, id int64, labels []string, depIDs []int64, refs []string, refTargets map[string]refTarget) error {
 	for _, l := range labels {
 		if _, err := tx.ExecContext(ctx, `insert into issue_label(issue_id, label) values (?, ?)`, id, l); err != nil {
 			return err
@@ -616,7 +631,8 @@ func writeLinks(ctx context.Context, tx *sql.Tx, id int64, labels []string, depI
 		}
 	}
 	for _, r := range refs {
-		if _, err := tx.ExecContext(ctx, `insert into issue_ref(issue_id, ref) values (?, ?)`, id, r); err != nil {
+		t := refTargets[r]
+		if _, err := tx.ExecContext(ctx, `insert into issue_ref(issue_id, ref, target_issue_id, target_document_id) values (?, ?, ?, ?)`, id, r, t.issue, t.doc); err != nil {
 			return err
 		}
 	}
@@ -808,4 +824,11 @@ func enumStrings[T ~string](vals []T) []string {
 		out[i] = string(v)
 	}
 	return out
+}
+
+// isValidation reports whether err is a *model.ValidationError, which the
+// caller merges with the other violations instead of returning it at once.
+func isValidation(err error) bool {
+	var verr *model.ValidationError
+	return errors.As(err, &verr)
 }

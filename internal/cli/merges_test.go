@@ -100,8 +100,8 @@ func TestDoneWithoutALocationSkipsLinking(t *testing.T) {
 	if code := h.run("issue", "comment", "CLI-1", "--status", "done", "--repo", dir, "--body", "끝"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	if !strings.Contains(h.stderr.String(), "작업 위치 댓글이 없어 커밋을 잇지 않았습니다") {
-		t.Errorf("stderr = %s", h.stderr)
+	if h.stderr.Len() != 0 {
+		t.Errorf("no location means no commits to link, so no warning: stderr = %s", h.stderr)
 	}
 	n := 0
 	for _, r := range srv.reqs {

@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -28,7 +29,8 @@ func CheckRecord(name, content string, template *string) []string {
 		add("맨 앞에 ---로 시작해 ---로 닫는 YAML 프런트매터가 없습니다.")
 	} else {
 		body = afterFrontMatter(content)
-		if meta, _ := ParseFrontMatter(content); nameOK && meta.Kind != string(kind) {
+		meta, _ := ParseFrontMatter(content)
+		if nameOK && meta.Kind != string(kind) {
 			add("프런트매터의 kind(%q)가 파일명의 종류(%s)와 다릅니다.", meta.Kind, kind)
 		}
 		have := map[string]bool{}
@@ -36,6 +38,24 @@ func CheckRecord(name, content string, template *string) []string {
 			have[en.Key] = true
 			if IsPlaceholder(en.Value) {
 				add("프런트매터의 %s 값이 서식의 자리표시자(%s)입니다.", en.Key, en.Value)
+			}
+		}
+		if meta.Title == nil && (have["title"] || template == nil) {
+			add("프런트매터의 title이 필요합니다. 서버는 기록 문서의 title을 필수로 받습니다.")
+		}
+		for _, rel := range []struct {
+			key   string
+			items []string
+		}{{"supersedes", meta.Supersedes}, {"related", meta.Related}} {
+			for _, item := range rel.items {
+				if isPlaceholderScalar(strings.TrimSpace(item)) || isNoRelation(item) || IsDocumentName(item) {
+					continue
+				}
+				hint := ""
+				if rel.key == "supersedes" {
+					hint = " 문서의 일부만 대체하면 related로 씁니다."
+				}
+				add("프런트매터의 %s 값 %q이 문서 이름(.md로 끝나는 한 단어)이 아닙니다.%s", rel.key, item, hint)
 			}
 		}
 		if template != nil {
@@ -79,9 +99,11 @@ var (
 
 // isBodyPlaceholder reports whether the text between angle brackets is a
 // template placeholder: it holds whitespace or a non-ASCII character, and does
-// not start or end with whitespace, which would make it a comparison.
+// not start or end with whitespace, which would make it a comparison, and
+// holds no ASCII digit. A template describes what to write and names no
+// number, while a statute notation such as "<신설 2021.11.30>" carries a date.
 func isBodyPlaceholder(inside string) bool {
-	if strings.TrimSpace(inside) != inside {
+	if strings.TrimSpace(inside) != inside || strings.ContainsAny(inside, "0123456789") {
 		return false
 	}
 	return strings.IndexFunc(inside, func(r rune) bool { return r > unicode.MaxASCII || unicode.IsSpace(r) }) >= 0
@@ -216,4 +238,63 @@ func excerpt(s string) string {
 		return string(r[:40]) + "…"
 	}
 	return s
+}
+
+// StripHTMLComments removes the HTML comments of text that lie outside fenced
+// code blocks. A comment that fills its own lines goes with its line break and
+// the blank line after it, so the text around it closes up.
+func StripHTMLComments(text string) string {
+	masked := maskFences(text)
+	matches := htmlComment.FindAllStringIndex(masked, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	// Fenced lines are emptied in the masked text, so offsets differ line by line.
+	// Every other line is the same in both texts.
+	starts := func(s string) []int {
+		out := []int{0}
+		for i := 0; i < len(s); i++ {
+			if s[i] == '\n' {
+				out = append(out, i+1)
+			}
+		}
+		return out
+	}
+	mStarts, oStarts := starts(masked), starts(text)
+	toOriginal := func(off int, end bool) int {
+		probe := off
+		if end {
+			probe = off - 1
+		}
+		line := sort.Search(len(mStarts), func(i int) bool { return mStarts[i] > probe }) - 1
+		col := off - mStarts[line]
+		return oStarts[line] + col
+	}
+	lineBreak := func(at int) int {
+		switch {
+		case strings.HasPrefix(text[at:], "\r\n"):
+			return 2
+		case strings.HasPrefix(text[at:], "\n"):
+			return 1
+		}
+		return 0
+	}
+	var b strings.Builder
+	prev := 0
+	for _, m := range matches {
+		s, e := toOriginal(m[0], false), toOriginal(m[1], true)
+		if s < prev {
+			continue
+		}
+		if s == 0 || text[s-1] == '\n' {
+			if n := lineBreak(e); n > 0 {
+				e += n
+				e += lineBreak(e)
+			}
+		}
+		b.WriteString(text[prev:s])
+		prev = e
+	}
+	b.WriteString(text[prev:])
+	return b.String()
 }

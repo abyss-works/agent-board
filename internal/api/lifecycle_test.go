@@ -246,7 +246,7 @@ func TestSpecChangeClearsTheAcknowledgementOnTheAPI(t *testing.T) {
 	}{
 		"labels":             {"backlog", `{"labels":["api"]}`},
 		"priority":           {"backlog", `{"priority":"P0"}`},
-		"refs":               {"backlog", `{"refs":["doc:api.md"]}`},
+		"refs":               {"backlog", `{"refs":["file:api.md"]}`},
 		"decision_needed":    {"backlog", `{"decision_needed":"어느 쪽으로 할지"}`},
 		"backlog to doing":   {"backlog", `{"status":"doing"}`},
 		"doing to review":    {"doing", `{"status":"review"}`},

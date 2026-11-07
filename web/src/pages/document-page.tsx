@@ -11,7 +11,7 @@ import { Markdown } from '@/components/markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { frontMatterIssueKeys, splitFrontMatter } from '@/lib/documents'
-import { DOCUMENT_KIND_LABEL } from '@/lib/labels'
+import { DOCUMENT_KIND_LABEL, DOCUMENT_STATE_LABEL } from '@/lib/labels'
 import { formatKst } from '@/lib/time'
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -31,7 +31,7 @@ function Meta({ doc, issueKeys }: { doc: RecordDocument; issueKeys: string[] }) 
       </Field>
       <Field label="종류">{DOCUMENT_KIND_LABEL[doc.kind]}</Field>
       <Field label="날짜">{doc.date ?? '없음'}</Field>
-      <Field label="위치">{doc.location}</Field>
+      <Field label="상태">{DOCUMENT_STATE_LABEL[doc.state]}</Field>
       {doc.tags.length > 0 ? (
         <Field label="태그">
           <div className="flex flex-wrap gap-1">

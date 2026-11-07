@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"path"
 	"sort"
 	"strings"
 
@@ -15,16 +13,28 @@ import (
 // The node itself comes first. A missing node, or a deleted issue, is
 // ErrNotFound.
 //
-// ponytail: the whole graph is built from the issue and document tables on
-// every call. Fine for hundreds of issues and documents; keep derived edge
-// columns or an edge table when documents reach the thousands.
-func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel string) (*model.Graph, error) {
+// With fold, a document that is superseded or archived is left out as a
+// neighbor and is no way to a farther node; the nodes next to such documents
+// count them by state in Folded. The node asked for is shown whatever its state.
+//
+// ponytail: the whole graph is built from the issue, document and relation
+// tables on every call. Fine for hundreds of issues and documents; keep derived
+// edge columns or an edge table when documents reach the thousands.
+func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel string, fold bool) (*model.Graph, error) {
 	g, err := s.buildGraph(ctx, similarModel)
 	if err != nil {
 		return nil, err
 	}
 	if _, ok := g.nodes[node]; !ok {
 		return nil, ErrNotFound
+	}
+	// folded reports a document that fold leaves out.
+	folded := func(id string) bool {
+		if !fold || id == node {
+			return false
+		}
+		n := g.nodes[id]
+		return n.State != nil && *n.State != string(model.StateCurrent)
 	}
 	adj := map[string][]int{}
 	for n, e := range g.edges {
@@ -39,7 +49,7 @@ func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel 
 		for _, id := range frontier {
 			for _, n := range adj[id] {
 				for _, other := range []string{g.edges[n].From, g.edges[n].To} {
-					if !seen[other] {
+					if !seen[other] && !folded(other) {
 						seen[other] = true
 						order = append(order, other)
 						next = append(next, other)
@@ -51,7 +61,11 @@ func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel 
 	}
 	out := &model.Graph{Nodes: []model.GraphNode{}, Edges: []model.GraphEdge{}}
 	for _, id := range order {
-		out.Nodes = append(out.Nodes, g.nodes[id])
+		n := g.nodes[id]
+		if fold {
+			n.Folded = foldedAround(g, adj, id, seen)
+		}
+		out.Nodes = append(out.Nodes, n)
 	}
 	for _, e := range g.edges {
 		if seen[e.From] && seen[e.To] {
@@ -59,6 +73,32 @@ func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel 
 		}
 	}
 	return out, nil
+}
+
+// foldedAround counts, by state, the documents next to the node that are not in
+// the graph shown. It is nil when there are none.
+func foldedAround(g *graph, adj map[string][]int, id string, shown map[string]bool) *model.GraphFolded {
+	var f model.GraphFolded
+	counted := map[string]bool{}
+	for _, n := range adj[id] {
+		for _, other := range []string{g.edges[n].From, g.edges[n].To} {
+			o := g.nodes[other]
+			if other == id || shown[other] || counted[other] || o.State == nil {
+				continue
+			}
+			counted[other] = true
+			switch model.DocumentState(*o.State) {
+			case model.StateSuperseded:
+				f.Superseded++
+			case model.StateArchived:
+				f.Archived++
+			}
+		}
+	}
+	if f.Superseded+f.Archived == 0 {
+		return nil
+	}
+	return &f
 }
 
 type graph struct {
@@ -87,57 +127,24 @@ func (s *Store) buildGraph(ctx context.Context, similarModel string) (*graph, er
 		return nil, err
 	}
 
-	type doc struct {
-		id, project, content string
-	}
-	var docs []doc
-	// byName finds a document by its name and, for a legacy path, its base
-	// name, which is how other records cite it.
-	byName := map[string][]string{}
-	rows, err = s.db.QueryContext(ctx, `select p.key, d.name, d.title, d.kind, d.content from document d join project p on p.id = d.project_id`)
+	rows, err = s.db.QueryContext(ctx, `select p.key, d.name, d.title, d.kind, (`+documentState+`) from document d join project p on p.id = d.project_id`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var n model.GraphNode
-		var title sql.NullString
-		var content string
-		if err := rows.Scan(&n.Project, &n.Key, &title, &n.Kind, &content); err != nil {
+		var state string
+		var title *string
+		if err := rows.Scan(&n.Project, &n.Key, &title, &n.Kind, &state); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		n.ID, n.Type, n.Refs = model.DocumentNodeID(n.Project, n.Key), "document", []string{}
-		if title.Valid {
-			n.Title = &title.String
-		}
+		n.ID, n.Type, n.Title, n.State, n.Refs = model.DocumentNodeID(n.Project, n.Key), "document", title, &state, []string{}
 		g.nodes[n.ID] = n
-		docs = append(docs, doc{n.ID, n.Project, content})
-		byName[n.Key] = append(byName[n.Key], n.ID)
-		if base := path.Base(n.Key); base != n.Key {
-			byName[base] = append(byName[base], n.ID)
-		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	// resolve picks the document a file name means: the one in the same
-	// project, or else the only one anywhere. An ambiguous name links nothing.
-	resolve := func(project, name string) (string, bool) {
-		ids := byName[name]
-		var same []string
-		for _, id := range ids {
-			if strings.HasPrefix(id, "doc:"+project+"/") {
-				same = append(same, id)
-			}
-		}
-		switch {
-		case len(same) == 1:
-			return same[0], true
-		case len(same) == 0 && len(ids) == 1:
-			return ids[0], true
-		}
-		return "", false
 	}
 	add := func(from, to string, typ model.GraphEdgeType) {
 		_, a := g.nodes[from]
@@ -169,26 +176,32 @@ func (s *Store) buildGraph(ctx context.Context, similarModel string) (*graph, er
 		return nil, err
 	}
 
-	rows, err = s.db.QueryContext(ctx, `select i.key, p.key, r.ref from issue_ref r join issue i on i.id = r.issue_id join project p on p.id = i.project_id order by i.key, r.ref`)
+	// The references of an issue: those that resolved to an issue or a
+	// document are edges, the others that are no node, such as a commit, stay
+	// on the node. A reference that did not resolve links nothing.
+	rows, err = s.db.QueryContext(ctx, `select i.key, r.ref, ti.key, tp.key, td.name
+		from issue_ref r join issue i on i.id = r.issue_id
+		left join issue ti on ti.id = r.target_issue_id
+		left join document td on td.id = r.target_document_id left join project tp on tp.id = td.project_id
+		order by i.key, r.ref`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var key, project, ref string
-		if err := rows.Scan(&key, &project, &ref); err != nil {
+		var key, ref string
+		var issueKey, project, docName *string
+		if err := rows.Scan(&key, &ref, &issueKey, &project, &docName); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		from := model.IssueNodeID(key)
-		kind, value, _ := strings.Cut(ref, ":")
-		switch kind {
-		case "issue":
-			add(from, model.IssueNodeID(value), model.EdgeRef)
-		case "doc":
-			if to, ok := resolve(project, value); ok {
-				add(from, to, model.EdgeRef)
-			}
-		default:
+		kind, _, _ := strings.Cut(ref, ":")
+		switch {
+		case issueKey != nil:
+			add(from, model.IssueNodeID(*issueKey), model.EdgeRef)
+		case docName != nil:
+			add(from, model.DocumentNodeID(*project, *docName), model.EdgeRef)
+		case kind != "issue" && kind != "doc":
 			if n, ok := g.nodes[from]; ok {
 				n.Refs = append(n.Refs, ref)
 				g.nodes[from] = n
@@ -200,22 +213,35 @@ func (s *Store) buildGraph(ctx context.Context, similarModel string) (*graph, er
 		return nil, err
 	}
 
-	for _, d := range docs {
-		issues, supersedes, related := model.FrontMatterLinks(d.content)
-		for _, key := range issues {
-			add(d.id, model.IssueNodeID(key), model.EdgeAbout)
+	// The relations of a document that resolved. A relation kept as text links nothing.
+	rows, err = s.db.QueryContext(ctx, `select sp.key, sd.name, r.kind, tp.key, td.name, ti.key
+		from document_relation r
+		join document sd on sd.id = r.document_id join project sp on sp.id = sd.project_id
+		left join document td on td.id = r.target_document_id left join project tp on tp.id = td.project_id
+		left join issue ti on ti.id = r.target_issue_id
+		where r.target_text is null order by r.id`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var project, name, kind string
+		var targetProject, targetDoc, targetIssue *string
+		if err := rows.Scan(&project, &name, &kind, &targetProject, &targetDoc, &targetIssue); err != nil {
+			rows.Close()
+			return nil, err
 		}
-		for _, name := range supersedes {
-			if to, ok := resolve(d.project, path.Base(name)); ok {
-				add(d.id, to, model.EdgeSupersedes)
-			}
-		}
-		for _, name := range related {
-			if to, ok := resolve(d.project, path.Base(name)); ok {
-				add(d.id, to, model.EdgeRelated)
-			}
+		from := model.DocumentNodeID(project, name)
+		if targetIssue != nil {
+			add(from, model.IssueNodeID(*targetIssue), model.EdgeAbout)
+		} else {
+			add(from, model.DocumentNodeID(*targetProject, *targetDoc), model.GraphEdgeType(kind))
 		}
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	// Inferred links come last and only between documents that no written
 	// link joins already. Only pairs found with the model in use count; an
 	// empty model (search by meaning off) matches none, so stored pairs left

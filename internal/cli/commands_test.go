@@ -757,8 +757,11 @@ func TestActorTokenFeedsCommands(t *testing.T) {
 		}
 	}
 	h.env["AGB_TOKEN"] = "env-token"
-	if got := authorization("--actor", "codex", "whoami"); got != "Bearer env-token" {
-		t.Errorf("AGB_TOKEN must win: Authorization = %q", got)
+	if got := authorization("--actor", "codex", "whoami"); got != "Bearer agb_codex-token" {
+		t.Errorf("the actor token must beat AGB_TOKEN: Authorization = %q", got)
+	}
+	if got := authorization("--actor", "gemini", "whoami"); got != "Bearer env-token" {
+		t.Errorf("AGB_TOKEN must beat the shared token: Authorization = %q", got)
 	}
 }
 
@@ -798,7 +801,7 @@ func TestHelpAndUnknownCommands(t *testing.T) {
 			t.Errorf("the settings group lacks %q:\n%s", w, settings)
 		}
 	}
-	for _, w := range []string{"토큰 선택: AGB_TOKEN > 설정 파일의 행위자별 토큰(agb login) > 설정 파일의 공용 토큰", "공용 토큰은 사용자 행위자(owner)만 씁니다."} {
+	for _, w := range []string{"토큰 선택: 설정 파일의 행위자별 토큰(agb login) > AGB_TOKEN > 설정 파일의 공용 토큰", "공용 토큰은 사용자 행위자(owner)만 씁니다."} {
 		if !strings.Contains(top, w) {
 			t.Errorf("help lacks %q:\n%s", w, top)
 		}
@@ -813,6 +816,7 @@ func TestHelpAndUnknownCommands(t *testing.T) {
 		{[]string{"login", "--help"}, []string{"agb login --actor <ID>", "--no-browser", "승인 주소", "표준 오류"}},
 		{[]string{"issue", "ack", "--help"}, []string{"보고하며 그 이슈의 키, 제목, 내용을 적었을 때"}},
 		{[]string{"skill", "install", "--help"}, []string{"~/.agents/skills", "링크가 가리키던 파일은 그대로 둡니다"}},
+		{[]string{"skill", "check", "--help"}, []string{"종료 코드", "정션"}},
 		{[]string{"help", "login"}, []string{"--no-browser"}},
 		{[]string{"logout", "--help"}, []string{"agb logout --actor <ID>", "tokens", "종료 코드 2"}},
 		{[]string{"help", "logout"}, []string{"AGB_TOKEN은 쓰지 않습니다"}},

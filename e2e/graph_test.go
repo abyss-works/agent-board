@@ -29,7 +29,7 @@ func TestGraph(t *testing.T) {
 	child := newIssue(t, p.Key, "하위", map[string]any{"parent": parent.Key, "refs": []string{"commit:abc1234"}})
 	mustPutDocument(t, owner, p.Key, "2026-11-06-1500-decision-old.md", "history", documentText("decision", "2026-11-06 15:00", "옛 결정", "", "본문"))
 	mustPutDocument(t, owner, p.Key, "2026-11-06-1501-decision-new.md", "history",
-		"---\nkind: decision\nissue: "+child.Key+"\nsupersedes: 2026-11-06-1500-decision-old.md\n---\n본문\n")
+		"---\nkind: decision\ntitle: 새 결정\nissue: "+child.Key+"\nsupersedes: 2026-11-06-1500-decision-old.md\n---\n본문\n")
 
 	g := decodeAs[graphResult](t, owner.do(t, "GET", "/v1/graph?node="+url.QueryEscape("issue:"+child.Key), nil), 200)
 	want := map[graphEdge]bool{
@@ -49,7 +49,7 @@ func TestGraph(t *testing.T) {
 	if len(g.Nodes) == 0 || g.Nodes[0].ID != "issue:"+child.Key || len(g.Nodes[0].Refs) != 1 {
 		t.Errorf("nodes = %+v", g.Nodes)
 	}
-	deep := decodeAs[graphResult](t, owner.do(t, "GET", "/v1/graph?depth=2&node="+url.QueryEscape("issue:"+child.Key), nil), 200)
+	deep := decodeAs[graphResult](t, owner.do(t, "GET", "/v1/graph?depth=2&state=all&node="+url.QueryEscape("issue:"+child.Key), nil), 200)
 	found := false
 	for _, e := range deep.Edges {
 		found = found || e.Type == "supersedes"

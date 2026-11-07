@@ -117,14 +117,15 @@ export interface DocumentFilters {
   project: string | null
   q: string
   kind: readonly string[]
-  location: readonly string[]
+  /** 비어 있으면 서버 기본인 유효 문서만 찾는다. */
+  state: readonly string[]
 }
 
-/** GET /v1/documents. q가 있으면 관련도 순이고 스니펫이 붙는다. 없으면 날짜 최신 먼저다. 종류·위치는 쉼표 OR. */
+/** GET /v1/documents. q가 있으면 관련도 순이고 스니펫이 붙는다. 없으면 날짜 최신 먼저다. 종류·상태는 쉼표 OR. */
 export function useDocuments(f: DocumentFilters) {
   const api = useApi()
   const inst = useKeyPrefix()
-  const params = { project: f.project, q: f.q, kind: f.kind.join(','), location: f.location.join(','), limit: 200 }
+  const params = { project: f.project, q: f.q, kind: f.kind.join(','), state: f.state.join(','), limit: 200 }
   return useQuery({
     queryKey: [inst, 'documents', params],
     queryFn: ({ signal }) => api.get<Page<RecordDocument>>('/documents', params, signal),

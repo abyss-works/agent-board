@@ -99,7 +99,9 @@ func TestResolveSettingsTokenOrder(t *testing.T) {
 		file Config
 		want string
 	}{
-		{"AGB_TOKEN beats the actor token and the shared token", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "env-token"},
+		{"the actor token beats AGB_TOKEN", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "codex-file-token"},
+		{"AGB_TOKEN beats the shared token when the actor has no token", &globals{actor: "gemini"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "env-token"},
+		{"AGB_TOKEN is used when the file has no tokens", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, Config{URL: "http://x"}, "env-token"},
 		{"actor token from the --actor flag", &globals{actor: "codex"}, nil, file, "codex-file-token"},
 		{"actor token from AGB_ACTOR", &globals{}, map[string]string{"AGB_ACTOR": "claude"}, file, "claude-file-token"},
 		{"the flag actor picks its own token over the AGB_ACTOR one", &globals{actor: "codex"}, map[string]string{"AGB_ACTOR": "claude"}, file, "codex-file-token"},

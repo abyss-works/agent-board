@@ -43,14 +43,64 @@ func quote(s string) string {
 }
 
 // SearchFilter selects the hits of the unified search. Query is required.
-// Values of one field are OR. CommentKinds narrows the comments only.
+// Values of one field are OR. CommentKinds narrows the comments only. Statuses
+// narrows the issues and, by the status of their issue, the comments; States
+// narrows the documents. Both select everything when empty, except that
+// deleted issues and their comments never show.
 type SearchFilter struct {
 	Query        string
 	Projects     []string
 	Types        []model.SearchType
 	CommentKinds []model.CommentKind
+	Statuses     []model.IssueStatus
+	States       []model.DocumentState
 	Limit        int
 	Offset       int
+}
+
+// issueStatusCond is the condition on the status of the issue i that the filter
+// asks for, with its arguments, or none.
+func (f SearchFilter) issueStatusCond() (string, []any) {
+	if len(f.Statuses) == 0 {
+		return "", nil
+	}
+	var args []any
+	for _, s := range f.Statuses {
+		args = append(args, string(s))
+	}
+	return " and i.status in (" + placeholders(len(args)) + ")", args
+}
+
+// documentStateCond is the condition on the state of the document d.
+func (f SearchFilter) documentStateCond() (string, []any) {
+	if len(f.States) == 0 {
+		return "", nil
+	}
+	var args []any
+	for _, s := range f.States {
+		args = append(args, string(s))
+	}
+	return " and (" + documentState + ") in (" + placeholders(len(args)) + ")", args
+}
+
+// fillHitDocuments sets the supersession of the document hits: docIDs maps the
+// index of a hit to the row id of its document. One query reads them all.
+func fillHitDocuments(ctx context.Context, q querier, hits []model.SearchHit, docIDs map[int]int64) error {
+	if len(docIDs) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(docIDs))
+	for _, id := range docIDs {
+		ids = append(ids, id)
+	}
+	rels, err := loadRelations(ctx, q, ids)
+	if err != nil {
+		return err
+	}
+	for i, id := range docIDs {
+		hits[i].Supersedes, hits[i].SupersededBy = rels[id].supersedes, rels[id].supersededBy
+	}
+	return nil
 }
 
 // Search finds issues, comments and record documents with the query rules of
@@ -82,10 +132,12 @@ func (s *Store) Search(ctx context.Context, f SearchFilter) ([]model.SearchHit, 
 	}
 	if want(model.SearchIssue) {
 		args = append(args, match)
-		parts = append(parts, `select 'issue', p.key, i.key, null, i.title, i.type, i.updated_at,
+		where := projects(` where issue_fts match ? and i.status <> 'deleted'`)
+		cond, condArgs := f.issueStatusCond()
+		args = append(args, condArgs...)
+		parts = append(parts, `select 'issue', p.key, i.key, null, i.title, i.type, i.status, null, null, i.updated_at,
 			snippet(issue_fts, -1, '[', ']', '...', 16), issue_fts.rank
-			from issue_fts join issue i on i.id = issue_fts.rowid join project p on p.id = i.project_id`+
-			projects(` where issue_fts match ? and i.status <> 'deleted'`))
+			from issue_fts join issue i on i.id = issue_fts.rowid join project p on p.id = i.project_id`+where+cond)
 	}
 	if want(model.SearchComment) {
 		args = append(args, match)
@@ -96,46 +148,56 @@ func (s *Store) Search(ctx context.Context, f SearchFilter) ([]model.SearchHit, 
 				args = append(args, string(k))
 			}
 		}
-		parts = append(parts, `select 'comment', p.key, i.key, a.id, a.summary, a.comment_kind, a.at,
+		cond, condArgs := f.issueStatusCond()
+		args = append(args, condArgs...)
+		parts = append(parts, `select 'comment', p.key, i.key, a.id, a.summary, a.comment_kind, i.status, null, null, a.at,
 			snippet(comment_fts, -1, '[', ']', '...', 16), comment_fts.rank
-			from comment_fts join activity a on a.id = comment_fts.rowid join issue i on i.id = a.issue_id join project p on p.id = i.project_id`+where)
+			from comment_fts join activity a on a.id = comment_fts.rowid join issue i on i.id = a.issue_id join project p on p.id = i.project_id`+where+cond)
 	}
 	if want(model.SearchDocument) {
 		args = append(args, match)
-		parts = append(parts, `select 'document', p.key, d.name, null, d.title, d.kind, coalesce(d.date, d.created_at),
+		where := projects(` where document_fts match ?`)
+		cond, condArgs := f.documentStateCond()
+		args = append(args, condArgs...)
+		parts = append(parts, `select 'document', p.key, d.name, null, d.title, d.kind, null, (`+documentState+`), d.id, coalesce(d.date, d.created_at),
 			snippet(document_fts, -1, '[', ']', '...', 16), document_fts.rank
-			from document_fts join document d on d.id = document_fts.rowid join project p on p.id = d.project_id`+
-			projects(` where document_fts match ?`))
+			from document_fts join document d on d.id = document_fts.rowid join project p on p.id = d.project_id`+where+cond)
 	}
 	union := strings.Join(parts, " union all ")
 	var total int
 	if err := s.db.QueryRowContext(ctx, `select count(*) from (`+union+`)`, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `select * from (`+union+`) order by 9, 1, 3 limit ? offset ?`, append(args, f.Limit, f.Offset)...)
+	rows, err := s.db.QueryContext(ctx, `select * from (`+union+`) order by 12, 1, 3 limit ? offset ?`, append(args, f.Limit, f.Offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 	hits := []model.SearchHit{}
+	docIDs := map[int]int64{}
 	for rows.Next() {
 		var h model.SearchHit
-		var id sql.NullInt64
-		var title, kind sql.NullString
+		var id, docID sql.NullInt64
+		var title, kind, status, state sql.NullString
 		var rank float64
-		if err := rows.Scan(&h.Type, &h.Project, &h.Key, &id, &title, &kind, &h.At, &h.Snippet, &rank); err != nil {
+		if err := rows.Scan(&h.Type, &h.Project, &h.Key, &id, &title, &kind, &status, &state, &docID, &h.At, &h.Snippet, &rank); err != nil {
 			return nil, 0, err
 		}
 		if id.Valid {
 			h.CommentID = &id.Int64
 		}
-		if title.Valid {
-			h.Title = &title.String
-		}
-		if kind.Valid {
-			h.Kind = &kind.String
+		h.Title, h.Kind, h.Status, h.State = nullable(title), nullable(kind), nullable(status), nullable(state)
+		if docID.Valid {
+			docIDs[len(hits)] = docID.Int64
 		}
 		hits = append(hits, h)
 	}
-	return hits, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	rows.Close()
+	if err := fillHitDocuments(ctx, s.db, hits, docIDs); err != nil {
+		return nil, 0, err
+	}
+	return hits, total, nil
 }

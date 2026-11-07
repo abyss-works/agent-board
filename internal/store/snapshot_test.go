@@ -204,13 +204,13 @@ func TestSnapshotCarriesDocuments(t *testing.T) {
 	if err := db.QueryRow("pragma user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(`select count(*), count(case when location = 'archive' then 1 end), count(title) from document`).Scan(&documents, &archived, &withTitle); err != nil {
+	if err := db.QueryRow(`select count(*), count(case when archived = 1 then 1 end), count(title) from document`).Scan(&documents, &archived, &withTitle); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(`select sha256 from document where name = ?`, docLinear).Scan(&sum); err != nil {
 		t.Fatal(err)
 	}
-	if version != SchemaVersion || documents != 5 || archived != 1 || withTitle != 4 {
+	if version != SchemaVersion || documents != 5 || archived != 1 || withTitle != 5 {
 		t.Errorf("snapshot: version %d, documents %d (archived %d, with a title %d)", version, documents, archived, withTitle)
 	}
 	if want := docSHA(docText("report", "Linear는 여러 사람이 쓰는 도구다. 우선순위 비교 항목을 남긴다.",

@@ -63,6 +63,7 @@ type Health struct {
 	Status     string `json:"status"`
 	Version    string `json:"version"`
 	APIVersion int    `json:"api_version"`
+	Release    string `json:"release,omitempty"`
 }
 
 // Request sends method path with an optional JSON body and extra headers

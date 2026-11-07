@@ -172,7 +172,7 @@ const Usage = `사용법: agb <명령> [옵션]
   config            설정 파일 경로, 표시, 수정 (url, actor, session_id, client_host, 토큰)
   login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
   logout            이 행위자의 토큰 폐기와 로컬 삭제
-  skill             내장 에이전트 스킬 출력과 설치 (~/.agents/skills/tool-agb)
+  skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
 
 상태:
   health            서버 상태 (인증 없음)
@@ -185,7 +185,8 @@ const Usage = `사용법: agb <명령> [옵션]
   milestone         마일스톤 목록·단건·생성·수정·닫기·다시 열기·삭제
   template          이슈 종류별 본문 템플릿 목록·출력
   issue             이슈 목록·단건·생성·수정·삭제·확인·댓글·활동
-  doc               기록 문서 작성·검사·등록·동기화·검색·조회
+  doc               기록 문서 작성·검사·등록·동기화·상태 수정·검색·조회
+  init              저장소 최상위에 .agb.json 만들기 (agb 를 지식 저장소로 씀)
 
 조회:
   agenda            프로젝트별 사용자 차례, 에이전트 할 일, 대기 (별칭 next)
@@ -210,7 +211,7 @@ const Usage = `사용법: agb <명령> [옵션]
   --config <경로>   설정 파일 경로
 
 우선순위: 옵션 > 환경변수 > 설정 파일. 토큰은 옵션으로 받지 않습니다.
-토큰 선택: AGB_TOKEN > 설정 파일의 행위자별 토큰(agb login) > 설정 파일의 공용 토큰.
+토큰 선택: 설정 파일의 행위자별 토큰(agb login) > AGB_TOKEN > 설정 파일의 공용 토큰.
 공용 토큰은 사용자 행위자(owner)만 씁니다. 에이전트는 agb login --actor <ID> 로 받은 토큰을 씁니다.
 종료 코드: 0 성공, 1 API·네트워크 오류, 2 사용법 오류
 
@@ -218,7 +219,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을 봅니�
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, initCmd,
 	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
@@ -246,7 +247,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	cmd := root.find(rest[0])
 	if cmd == nil {
-		fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n%s\n%s", rest[0], root.suggest("agb", rest[0]), Usage)
+		fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n설치된 CLI가 스킬이나 문서보다 오래됐을 수 있습니다. `agb skill check`로 확인하고, 갱신 방법은 references/setup.md 1절을 따르세요.\n%s\n%s", rest[0], root.suggest("agb", rest[0]), Usage)
 		return 2
 	}
 	err := a.dispatch(ctx, g, cmd, "agb "+cmd.name, rest[1:])
@@ -307,6 +308,8 @@ func (a *App) exit(g *globals, err error) int {
 	var ue *usageError
 	var apiErr *client.Error
 	switch {
+	case errors.Is(err, errCheckMismatch):
+		return 1
 	case errors.As(err, &ue):
 		fmt.Fprintf(a.Stderr, "agb: %s\n", ue.msg)
 		if ue.help != "" {
@@ -327,6 +330,7 @@ func (a *App) exit(g *globals, err error) int {
 func (a *App) printAPIError(g *globals, e *client.Error) {
 	if a.jsonOutput(g) && len(e.Body) > 0 && e.Code != "http_error" {
 		writeJSON(a.Stderr, e.Body)
+		a.printMetadataDiffersHint(e)
 		return
 	}
 	fmt.Fprintf(a.Stderr, "agb: %d %s: %s\n", e.Status, e.Code, e.Message)
@@ -348,6 +352,17 @@ func (a *App) printAPIError(g *globals, e *client.Error) {
 		fmt.Fprintf(a.Stderr, "  `agb login --actor %s`로 다시 로그인하세요.\n", orPlaceholder(a.requestActor(g)))
 	case e.Status == http.StatusForbidden && hasReason(e.Details, "actor_mismatch"):
 		fmt.Fprintf(a.Stderr, "  이 행위자의 토큰이 없거나 다른 행위자의 토큰입니다. `agb login --actor %s`를 실행하세요.\n", orPlaceholder(a.requestActor(g)))
+	}
+	a.printMetadataDiffersHint(e)
+}
+
+// printMetadataDiffersHint tells what to do about a document that is on the
+// server with the same content and other metadata: only the archive mark and
+// the relations can be changed, each with a command of its own.
+func (a *App) printMetadataDiffersHint(e *client.Error) {
+	if e.Status == http.StatusConflict && hasReason(e.Details, "metadata_differs") {
+		fmt.Fprintln(a.Stderr, "  올린 문서의 아카이브 표시는 agb doc archive|unarchive 로, 관계(supersedes, related, 이슈)는 agb doc link|unlink 로 고칩니다.")
+		fmt.Fprintln(a.Stderr, "  종류, 날짜, 제목, 태그, 가져온 문서 여부, 경로는 고칠 수 없으니 서버의 값을 그대로 둡니다.")
 	}
 }
 

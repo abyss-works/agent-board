@@ -81,7 +81,13 @@ jobs:
       - name: Build and push
         run: |
           tag="git-${GITHUB_SHA::7}"
-          docker build --platform linux/arm64 --build-arg "VERSION=${tag}" -t "${IMAGE}:${tag}" -t "${IMAGE}:main" .
+          # A release merge commit is titled vX.Y.Z; any other commit builds without a release.
+          release=""
+          subject="$(git log -1 --format=%s)"
+          if printf '%s' "$subject" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            release="$subject"
+          fi
+          docker build --platform linux/arm64 --build-arg "VERSION=${tag}" --build-arg "RELEASE=${release}" -t "${IMAGE}:${tag}" -t "${IMAGE}:main" .
           docker push "${IMAGE}:${tag}"
           docker push "${IMAGE}:main"
       - name: Log out of GHCR

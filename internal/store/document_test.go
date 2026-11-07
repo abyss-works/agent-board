@@ -19,10 +19,11 @@ const (
 	docBare     = "2026-10-18-1000-decision-no-meta.md"
 )
 
-// docText builds a record document: a front matter block of the given kind and
-// the extra lines, then the body.
+// docText builds a record document: a front matter block of the given kind, a
+// default title and the extra lines, then the body. A title among the lines
+// comes later and wins.
 func docText(kind, body string, lines ...string) string {
-	return "---\nkind: " + kind + "\n" + strings.Join(append(lines, ""), "\n") + "---\n\n" + body + "\n"
+	return "---\nkind: " + kind + "\ntitle: 제목\n" + strings.Join(append(lines, ""), "\n") + "---\n\n" + body + "\n"
 }
 
 func docSHA(content string) string {
@@ -30,13 +31,28 @@ func docSHA(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// locArgs reads a location of a v0.8.x client as the arguments it stands for.
+func locArgs(name, location string) model.DocumentArgs {
+	var a model.DocumentArgs
+	a.ApplyLocation(name, model.DocumentLocation(location))
+	return a
+}
+
 func putDoc(t *testing.T, s *Store, tr model.Trace, project, name, location, content string) (*model.Document, bool) {
 	t.Helper()
-	d, created, err := s.PutDocument(t.Context(), tr, project, name, DocumentInput{Location: location, Content: content})
+	return putDocArgs(t, s, tr, project, name, content, locArgs(name, location))
+}
+
+func putDocArgs(t *testing.T, s *Store, tr model.Trace, project, name, content string, args model.DocumentArgs) (*model.Document, bool) {
+	t.Helper()
+	res, created, err := s.PutDocument(t.Context(), tr, project, name, DocumentInput{Content: content, Args: args})
 	if err != nil {
-		t.Fatalf("PutDocument(%s, %s, %s): %v", project, name, location, err)
+		t.Fatalf("PutDocument(%s, %s): %v", project, name, err)
 	}
-	return d, created
+	if res.Warnings == nil {
+		t.Errorf("PutDocument(%s, %s): warnings must be an empty list, not nil", project, name)
+	}
+	return &res.Document, created
 }
 
 func docNames(items []model.Document) []string {
@@ -59,7 +75,7 @@ func seedDocuments(t *testing.T, s *Store) {
 	putDoc(t, s, trClaude, "AGB", docRelease, "archive", docText("implementation",
 		"배포 절차와 마이그레이션 확인.",
 		"date: 2026-10-19 16:57", "title: v0.2.0 릴리즈", "tags: [release, migration]"))
-	putDoc(t, s, trClaude, "AGB", docBare, "history", docText("decision", "메타데이터가 없는 결정 기록."))
+	putDoc(t, s, trClaude, "AGB", docBare, "history", docText("decision", "메타데이터가 없는 결정 기록.", "title: 메타 없는 결정"))
 	putDoc(t, s, trClaude, "OTH", docLock, "history", docText("incident",
 		"쓰기 트랜잭션이 잠겨 요청이 실패했다.",
 		"date: 2026-10-21 09:00", "title: 데이터베이스 잠금 사고", "tags: [sqlite, lock]"))
@@ -122,19 +138,6 @@ func deref(s *string) string {
 	return *s
 }
 
-func TestPutDocumentWithoutMetadata(t *testing.T) {
-	s, ctx := seeded(t)
-	mustProject(t, s, ctx, "AGB")
-	d, _ := putDoc(t, s, trOwner, "AGB", docBare, "history", docText("decision", "본문"))
-	if d.Date != nil || d.Title != nil || d.Tags == nil || len(d.Tags) != 0 {
-		t.Errorf("date %v, title %v, tags %#v; want nil, nil and an empty list", d.Date, d.Title, d.Tags)
-	}
-	got, err := s.GetDocument(ctx, "AGB", docBare)
-	if err != nil || got.Date != nil || got.Title != nil || got.Tags == nil || len(got.Tags) != 0 {
-		t.Errorf("stored metadata = %+v, %v", got, err)
-	}
-}
-
 func TestPutDocumentSameContentChangesNothing(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
@@ -153,38 +156,6 @@ func TestPutDocumentSameContentChangesNothing(t *testing.T) {
 	}
 }
 
-func TestPutDocumentSameContentMovesTheLocation(t *testing.T) {
-	s, ctx := seeded(t)
-	mustProject(t, s, ctx, "AGB")
-	content := docText("decision", "옮길 기록", "title: 옮길 기록")
-	first, _ := putDoc(t, s, trOwner, "AGB", docPriority, "history", content)
-
-	moved, created := putDoc(t, s, trClaude, "AGB", docPriority, "archive", content)
-	if created {
-		t.Error("a moved document must not report created")
-	}
-	if moved.Location != model.LocationArchive || moved.UpdatedBy != "claude" || !first.UpdatedAt.Before(moved.UpdatedAt) ||
-		moved.CreatedBy != "owner" || moved.CreatedAt != first.CreatedAt || moved.SHA256 != first.SHA256 || moved.Size != first.Size {
-		t.Errorf("moved = %+v, first = %+v", moved, first)
-	}
-	got, _ := s.GetDocument(ctx, "AGB", docPriority)
-	if got.Content == nil || *got.Content != content {
-		t.Errorf("moving a document changed its content: %q", deref(got.Content))
-	}
-
-	// It may move back, and the search index still holds it once.
-	back, _ := putDoc(t, s, trOwner, "AGB", docPriority, "history", content)
-	if back.Location != model.LocationHistory || back.UpdatedBy != "owner" {
-		t.Errorf("moved back = %+v", back)
-	}
-	if _, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "기록", Limit: 10}); err != nil || total != 1 {
-		t.Errorf("search after moving = %d, %v; want the document once", total, err)
-	}
-	if _, err := s.db.Exec(`insert into document_fts(document_fts, rank) values ('integrity-check', 1)`); err != nil {
-		t.Errorf("document_fts integrity after moving: %v", err)
-	}
-}
-
 func TestPutDocumentRefusesOtherContent(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
@@ -198,7 +169,7 @@ func TestPutDocumentRefusesOtherContent(t *testing.T) {
 		"other content and a move":    {"archive", docText("decision", "고친 본문", "title: 원본")},
 		"same content, other newline": {"history", strings.ReplaceAll(content, "\n", "\r\n")},
 	} {
-		_, _, err := s.PutDocument(ctx, trClaude, "AGB", docPriority, DocumentInput{Location: other.location, Content: other.content})
+		_, _, err := s.PutDocument(ctx, trClaude, "AGB", docPriority, DocumentInput{Content: other.content, Args: locArgs(docPriority, other.location)})
 		var imm *ImmutableError
 		if !errors.As(err, &imm) || imm.SHA256 != first.SHA256 {
 			t.Errorf("%s: err = %v, want an ImmutableError carrying %s", label, err, first.SHA256)
@@ -213,32 +184,29 @@ func TestPutDocumentRefusesOtherContent(t *testing.T) {
 func TestPutDocumentRules(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
-	ok := docText("decision", "본문")
+	ok := docText("decision", "본문", "title: 제목")
 	cases := []struct {
-		label, name, location, content string
-		want                           []string
+		label, name, content string
+		want                 []string
 	}{
-		{"name without the pattern", "priority-model.md", "history", ok, []string{"name"}},
-		{"unknown kind in the name", "2026-10-20-1544-plan-x.md", "history", docText("plan", "본문"), []string{"name"}},
-		{"upper case slug", "2026-10-20-1544-decision-Priority.md", "history", ok, []string{"name"}},
-		{"kind of the front matter differs", "2026-10-20-1544-report-x.md", "history", ok, []string{"content"}},
-		{"no front matter", docPriority, "history", "# 제목\n본문\n", []string{"content"}},
-		{"unclosed front matter", docPriority, "history", "---\nkind: decision\n본문\n", []string{"content"}},
-		{"front matter without kind", docPriority, "history", "---\ntitle: 제목\n---\n본문\n", []string{"content"}},
-		{"empty content", docPriority, "history", "", []string{"content"}},
-		{"bytes over the limit", docPriority, "history", docText("decision", strings.Repeat("a", model.MaxDocumentBytes)), []string{"content"}},
-		{"unknown location", docPriority, "draft", ok, []string{"location"}},
-		{"empty location", docPriority, "", ok, []string{"location"}},
-		{"every violation at once", "x.md", "tmp", "본문", []string{"name", "location", "content"}},
+		{"name without the pattern", "priority-model.md", ok, []string{"name"}},
+		{"unknown kind in the name", "2026-10-20-1544-plan-x.md", docText("plan", "본문", "title: 제목"), []string{"name", "kind"}},
+		{"upper case slug", "2026-10-20-1544-decision-Priority.md", ok, []string{"name"}},
+		{"kind of the front matter differs", "2026-10-20-1544-report-x.md", ok, []string{"kind"}},
+		{"no front matter", docPriority, "# 제목\n본문\n", []string{"title"}},
+		{"unclosed front matter", docPriority, "---\nkind: decision\n본문\n", []string{"title"}},
+		{"empty content", docPriority, "", []string{"title"}},
+		{"bytes over the limit", docPriority, docText("decision", strings.Repeat("a", model.MaxDocumentBytes), "title: 제목"), []string{"content"}},
+		{"every violation at once", "x.md", "본문", []string{"name", "title"}},
 	}
 	for _, c := range cases {
-		_, _, err := s.PutDocument(ctx, trOwner, "AGB", c.name, DocumentInput{Location: c.location, Content: c.content})
+		_, _, err := s.PutDocument(ctx, trOwner, "AGB", c.name, DocumentInput{Content: c.content})
 		if got := violationFields(err); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: violations = %v (%v), want %v", c.label, got, err, c.want)
 		}
 	}
 	// A document of exactly the limit is accepted.
-	head := docText("decision", "")
+	head := docText("decision", "", "title: 제목")
 	atLimit := head + strings.Repeat("a", model.MaxDocumentBytes-len(head))
 	if d, _ := putDoc(t, s, trOwner, "AGB", docPriority, "history", atLimit); d.Size != model.MaxDocumentBytes {
 		t.Errorf("size = %d", d.Size)
@@ -251,10 +219,10 @@ func TestPutDocumentRules(t *testing.T) {
 func TestPutDocumentNeedsAnActiveProject(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
-	content := docText("decision", "본문")
+	content := docText("decision", "본문", "title: 제목")
 	putDoc(t, s, trOwner, "AGB", docPriority, "history", content)
 
-	if _, _, err := s.PutDocument(ctx, trOwner, "NOPE", docPriority, DocumentInput{Location: "history", Content: content}); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.PutDocument(ctx, trOwner, "NOPE", docPriority, DocumentInput{Content: content}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing project err = %v", err)
 	}
 	for _, status := range []model.ProjectStatus{model.ProjectArchived, model.ProjectDeleted} {
@@ -264,12 +232,12 @@ func TestPutDocumentNeedsAnActiveProject(t *testing.T) {
 		// Neither a new document, nor the same one again, nor an invalid one is written;
 		// the project state is the first rule that answers.
 		for label, put := range map[string]struct{ name, content string }{
-			"new":       {docLinear, docText("report", "본문")},
+			"new":       {docLinear, docText("report", "본문", "title: 제목")},
 			"same":      {docPriority, content},
 			"invalid":   {"x.md", "본문"},
-			"different": {docPriority, docText("decision", "다른 본문")},
+			"different": {docPriority, docText("decision", "다른 본문", "title: 제목")},
 		} {
-			if _, _, err := s.PutDocument(ctx, trOwner, "AGB", put.name, DocumentInput{Location: "history", Content: put.content}); !errors.Is(err, ErrProjectNotActive) {
+			if _, _, err := s.PutDocument(ctx, trOwner, "AGB", put.name, DocumentInput{Content: put.content}); !errors.Is(err, ErrProjectNotActive) {
 				t.Errorf("%s project, %s document: err = %v, want ErrProjectNotActive", status, label, err)
 			}
 		}
@@ -285,20 +253,22 @@ func TestPutDocumentNeedsAnActiveProject(t *testing.T) {
 	if _, err := s.UpdateProject(ctx, trOwner, "AGB", ProjectPatch{Status: &active}); err != nil {
 		t.Fatal(err)
 	}
-	if _, created := putDoc(t, s, trOwner, "AGB", docLinear, "history", docText("report", "본문")); !created {
+	if _, created := putDoc(t, s, trOwner, "AGB", docLinear, "history", docText("report", "본문", "title: 제목")); !created {
 		t.Error("a document must be accepted again once the project is active")
 	}
 }
 
-func TestDocumentsLeaveNoActivity(t *testing.T) {
+func TestPutDocumentLeavesNoActivity(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
-	content := docText("decision", "본문")
+	content := docText("decision", "본문", "title: 제목")
 	putDoc(t, s, trOwner, "AGB", docPriority, "history", content)
-	putDoc(t, s, trOwner, "AGB", docPriority, "archive", content)
-	var n int
-	if err := s.db.QueryRow(`select count(*) from activity`).Scan(&n); err != nil || n != 0 {
-		t.Errorf("activity records = %d, %v; a document write has none", n, err)
+	putDoc(t, s, trOwner, "AGB", docPriority, "history", content)
+	for _, table := range []string{"activity", "document_activity"} {
+		var n int
+		if err := s.db.QueryRow(`select count(*) from ` + table).Scan(&n); err != nil || n != 0 {
+			t.Errorf("%s records = %d, %v; a put has none", table, n, err)
+		}
 	}
 }
 
@@ -316,7 +286,7 @@ func TestListDocuments(t *testing.T) {
 			t.Errorf("a list item has no content or snippet and belongs to the project: %+v", it)
 		}
 	}
-	if items[1].Location != model.LocationArchive || items[3].Date == nil || *items[3].Date != "2026-10-20 15:44" {
+	if items[1].Location != model.LocationArchive || items[1].State != model.StateArchived || !items[1].Archived || items[3].Date == nil || *items[3].Date != "2026-10-20 15:44" {
 		t.Errorf("list items = %+v", items)
 	}
 
@@ -376,9 +346,12 @@ func TestSearchDocumentsWithoutAQueryNewestFirst(t *testing.T) {
 		"unknown project":     {DocumentFilter{Projects: []string{"NOPE"}}, []string{}},
 		"one kind":            {DocumentFilter{Kinds: []model.DocumentKind{model.DocumentDecision}}, []string{docPriority, docBare}},
 		"kinds are OR":        {DocumentFilter{Kinds: []model.DocumentKind{model.DocumentDecision, model.DocumentReport}}, []string{docPriority, docLinear, docBare}},
-		"one location":        {DocumentFilter{Locations: []model.DocumentLocation{model.LocationArchive}}, []string{docRelease}},
-		"locations are OR":    {DocumentFilter{Locations: model.DocumentLocations}, all},
-		"filters are AND":     {DocumentFilter{Projects: []string{"AGB"}, Kinds: []model.DocumentKind{model.DocumentDecision, model.DocumentReport}, Locations: []model.DocumentLocation{model.LocationHistory}}, []string{docPriority, docLinear, docBare}},
+		"one state":           {DocumentFilter{States: []model.DocumentState{model.StateArchived}}, []string{docRelease}},
+		"states are OR":       {DocumentFilter{States: model.DocumentStates}, all},
+		"current":             {DocumentFilter{States: []model.DocumentState{model.StateCurrent}}, []string{docLock, docPriority, docLinear, docBare}},
+		"imported only":       {DocumentFilter{Imported: boolPtr(true)}, []string{}},
+		"not imported":        {DocumentFilter{Imported: boolPtr(false)}, all},
+		"filters are AND":     {DocumentFilter{Projects: []string{"AGB"}, Kinds: []model.DocumentKind{model.DocumentDecision, model.DocumentReport}, States: []model.DocumentState{model.StateCurrent}}, []string{docPriority, docLinear, docBare}},
 		"nothing matches all": {DocumentFilter{Projects: []string{"OTH"}, Kinds: []model.DocumentKind{model.DocumentDecision}}, []string{}},
 	} {
 		if got := search(c.f); !reflect.DeepEqual(got, c.want) {
@@ -438,8 +411,8 @@ func TestSearchDocumentsByRelevance(t *testing.T) {
 		"no document has it":                {DocumentFilter{Query: "없는검색어"}, []string{}},
 		"with a project":                    {DocumentFilter{Query: "우선순위", Projects: []string{"OTH"}}, []string{}},
 		"with a kind":                       {DocumentFilter{Query: "우선순위", Kinds: []model.DocumentKind{model.DocumentReport}}, []string{docLinear}},
-		"with a location":                   {DocumentFilter{Query: "배포", Locations: []model.DocumentLocation{model.LocationArchive}}, []string{docRelease}},
-		"with a location that lacks it":     {DocumentFilter{Query: "배포", Locations: []model.DocumentLocation{model.LocationHistory}}, []string{}},
+		"with a state":                      {DocumentFilter{Query: "배포", States: []model.DocumentState{model.StateArchived}}, []string{docRelease}},
+		"with a state that lacks it":        {DocumentFilter{Query: "배포", States: []model.DocumentState{model.StateCurrent}}, []string{}},
 		"in every project":                  {DocumentFilter{Query: "기록"}, []string{docBare}},
 	} {
 		items, total := search(c.f)
@@ -518,7 +491,7 @@ deltaword'`)
 func TestDocumentWritesChangeTheFingerprint(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
-	content := docText("decision", "본문")
+	content := docText("decision", "본문", "title: 제목")
 	before, _ := s.FingerprintNow(ctx)
 	putDoc(t, s, trOwner, "AGB", docPriority, "history", content)
 	afterPut, _ := s.FingerprintNow(ctx)
@@ -532,13 +505,73 @@ func TestDocumentWritesChangeTheFingerprint(t *testing.T) {
 	if same, _ := s.FingerprintNow(ctx); same != afterPut {
 		t.Errorf("fingerprint changed by a put that changed nothing: %q -> %q", afterPut, same)
 	}
-	putDoc(t, s, trOwner, "AGB", docPriority, "archive", content)
-	afterMove, _ := s.FingerprintNow(ctx)
-	if afterMove == afterPut {
-		t.Error("fingerprint unchanged after a document moved")
+	if _, err := s.SetDocumentArchived(ctx, trOwner, "AGB", docPriority, true); err != nil {
+		t.Fatal(err)
 	}
-	putDoc(t, s, trOwner, "AGB", docLinear, "history", docText("report", "본문"))
-	if afterSecond, _ := s.FingerprintNow(ctx); afterSecond == afterMove {
+	afterArchive, _ := s.FingerprintNow(ctx)
+	if afterArchive == afterPut {
+		t.Error("fingerprint unchanged after a document was archived")
+	}
+	if _, err := s.SetDocumentArchived(ctx, trOwner, "AGB", docPriority, true); err != nil {
+		t.Fatal(err)
+	}
+	if same, _ := s.FingerprintNow(ctx); same != afterArchive {
+		t.Errorf("fingerprint changed by an archive mark that was set already: %q -> %q", afterArchive, same)
+	}
+	putDoc(t, s, trOwner, "AGB", docLinear, "history", docText("report", "본문", "title: 제목"))
+	if afterSecond, _ := s.FingerprintNow(ctx); afterSecond == afterArchive {
 		t.Error("fingerprint unchanged after a second document was stored")
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestEmbeddingWritesChangeTheFingerprint(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	putDoc(t, s, trOwner, "AGB", docPriority, "history", docText("decision", "본문", "title: 제목"))
+	putDoc(t, s, trOwner, "AGB", docLinear, "history", docText("report", "본문", "title: 제목"))
+	var d1, d2 struct{ ID int64 }
+	for name, d := range map[string]*struct{ ID int64 }{docPriority: &d1, docLinear: &d2} {
+		if err := s.db.QueryRow(`select id from document where name = ?`, name).Scan(&d.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base, _ := s.FingerprintNow(ctx)
+
+	rows := []EmbeddingRow{{Chunk: 0, Model: "m", SHA256: "a", Text: "t", Vector: []float32{1}}}
+	if err := s.ReplaceEmbeddings(ctx, SourceDocument, d1.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	afterEmbed, _ := s.FingerprintNow(ctx)
+	if afterEmbed == base {
+		t.Error("fingerprint unchanged after an embedding was stored")
+	}
+	rows[0].SHA256 = "b"
+	if err := s.ReplaceEmbeddings(ctx, SourceDocument, d1.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	if afterReplace, _ := s.FingerprintNow(ctx); afterReplace == afterEmbed {
+		t.Error("fingerprint unchanged after an embedding was replaced")
+	}
+	afterReplace, _ := s.FingerprintNow(ctx)
+	if err := s.ReplaceSimilarDocuments(ctx, "m", []SimilarPair{{Document: d1.ID, Similar: d2.ID, Score: 0.9}}); err != nil {
+		t.Fatal(err)
+	}
+	afterSimilar, _ := s.FingerprintNow(ctx)
+	if afterSimilar == afterReplace {
+		t.Error("fingerprint unchanged after similar documents were stored")
+	}
+	if err := s.ReplaceSimilarDocuments(ctx, "m", []SimilarPair{{Document: d1.ID, Similar: d2.ID, Score: 0.8}}); err != nil {
+		t.Fatal(err)
+	}
+	if afterScore, _ := s.FingerprintNow(ctx); afterScore == afterSimilar {
+		t.Error("fingerprint unchanged after a similarity score changed")
+	}
+	if err := s.ReplaceEmbeddings(ctx, SourceDocument, d1.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if afterRemove, _ := s.FingerprintNow(ctx); afterRemove == afterSimilar {
+		t.Error("fingerprint unchanged after an embedding was removed")
 	}
 }

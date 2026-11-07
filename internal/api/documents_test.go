@@ -25,7 +25,7 @@ const (
 // apiDocText builds a record document: a front matter block of the given kind
 // and the extra lines, then the body.
 func apiDocText(kind, body string, lines ...string) string {
-	return "---\nkind: " + kind + "\n" + strings.Join(append(lines, ""), "\n") + "---\n\n" + body + "\n"
+	return "---\nkind: " + kind + "\ntitle: 제목\n" + strings.Join(append(lines, ""), "\n") + "---\n\n" + body + "\n"
 }
 
 func apiDocSHA(content string) string {
@@ -142,7 +142,8 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 		var skip json.RawMessage
 		dec.Decode(&skip)
 	}
-	wantKeys := []string{"project", "name", "location", "kind", "date", "title", "tags", "sha256", "size", "created_at", "created_by", "updated_at", "updated_by"}
+	wantKeys := []string{"project", "name", "kind", "date", "title", "tags", "state", "archived", "imported", "path", "supersedes", "superseded_by", "related", "issues", "unresolved_refs",
+		"sha256", "size", "created_at", "created_by", "updated_at", "updated_by", "location", "warnings"}
 	if !reflect.DeepEqual(keys, wantKeys) {
 		t.Errorf("put response fields = %v, want %v", keys, wantKeys)
 	}
@@ -156,13 +157,13 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 		t.Errorf("repeat: %d %s Location=%q", again.Code, again.Body.String(), again.Header().Get("Location"))
 	}
 
-	// The same content in another folder moves the document.
+	// A v0.8.x client that sends the same content with another location changes nothing.
 	moved := e.putDocument(t, "AGB", apiDocPriority, "archive", content, map[string]string{"X-Actor": "owner"})
 	var m model.Document
 	decodeJSON(t, moved, &m)
-	if moved.Code != 200 || moved.Header().Get("Location") != "" || m.Location != model.LocationArchive || m.UpdatedBy != "owner" || m.CreatedBy != "claude" ||
-		m.CreatedAt != d.CreatedAt || !d.UpdatedAt.Before(m.UpdatedAt) || m.SHA256 != d.SHA256 {
-		t.Errorf("move: %d %s", moved.Code, moved.Body.String())
+	if moved.Code != 200 || moved.Header().Get("Location") != "" || m.Location != model.LocationHistory || m.UpdatedBy != "claude" ||
+		m.CreatedAt != d.CreatedAt || m.UpdatedAt != d.UpdatedAt || m.SHA256 != d.SHA256 {
+		t.Errorf("location only: %d %s", moved.Code, moved.Body.String())
 	}
 
 	// Other content is refused, with the hash of the stored content in the details.
@@ -189,7 +190,7 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 	got := e.do(t, "GET", documentPath("AGB", apiDocPriority), "", nil)
 	var full model.Document
 	decodeJSON(t, got, &full)
-	if got.Code != 200 || full.Content == nil || *full.Content != content || full.Location != model.LocationArchive || full.SHA256 != d.SHA256 {
+	if got.Code != 200 || full.Content == nil || *full.Content != content || full.Location != model.LocationHistory || full.SHA256 != d.SHA256 {
 		t.Errorf("get: %d %s", got.Code, got.Body.String())
 	}
 	if !strings.Contains(got.Body.String(), `"size":`) || !strings.Contains(got.Body.String(), `"content":"---\nkind: decision\n`) {
@@ -210,16 +211,12 @@ func TestPutDocumentRules(t *testing.T) {
 		want                           []string
 	}{
 		{"name without the pattern", "priority-model.md", "history", ok, []string{"name"}},
-		{"unknown kind in the name", "2026-10-20-1544-plan-x.md", "history", apiDocText("plan", "본문"), []string{"name"}},
 		{"upper case slug", "2026-10-20-1544-decision-Priority.md", "history", ok, []string{"name"}},
-		{"kind of the front matter differs", "2026-10-20-1544-report-x.md", "history", ok, []string{"content"}},
-		{"no front matter", apiDocPriority, "history", "# 제목\n본문\n", []string{"content"}},
-		{"unclosed front matter", apiDocPriority, "history", "---\nkind: decision\n본문\n", []string{"content"}},
-		{"empty content", apiDocPriority, "history", "", []string{"content"}},
+		{"kind of the front matter differs", "2026-10-20-1544-report-x.md", "history", ok, []string{"kind"}},
+		{"no front matter", apiDocPriority, "history", "# 제목\n본문\n", []string{"title"}},
+		{"empty content", apiDocPriority, "history", "", []string{"title"}},
 		{"one byte over the limit", apiDocPriority, "history", head + strings.Repeat("a", model.MaxDocumentBytes-len(head)+1), []string{"content"}},
 		{"unknown location", apiDocPriority, "draft", ok, []string{"location"}},
-		{"empty location", apiDocPriority, "", ok, []string{"location"}},
-		{"every violation at once", "x.md", "tmp", "본문", []string{"name", "location", "content"}},
 	}
 	for _, c := range cases {
 		rec := e.putDocument(t, "AGB", c.name, c.location, c.content, nil)
@@ -235,11 +232,18 @@ func TestPutDocumentRules(t *testing.T) {
 			t.Errorf("%s: %d %s", c.label, rec.Code, rec.Body.String())
 		}
 	}
-	// A document of exactly the limit is accepted.
+	// A document of exactly the limit is accepted, also when JSON escaping
+	// makes the request body several times larger than the content.
+	if model.MaxDocumentBytes != 1<<20 {
+		t.Errorf("MaxDocumentBytes = %d, want 1 MiB", model.MaxDocumentBytes)
+	}
+	if rec := e.putDocument(t, "AGB", "2026-10-20-1545-decision-escaped.md", "history", head+strings.Repeat("<", model.MaxDocumentBytes-len(head)), nil); rec.Code != 201 {
+		t.Errorf("escaped document at the limit: %d %.200s", rec.Code, rec.Body.String())
+	}
 	if rec := e.putDocument(t, "AGB", apiDocPriority, "history", head+strings.Repeat("a", model.MaxDocumentBytes-len(head)), nil); rec.Code != 201 {
 		t.Errorf("document at the limit: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec, l := e.getDocuments(t, "/v1/projects/AGB/documents"); rec.Code != 200 || l.Total != 1 {
+	if rec, l := e.getDocuments(t, "/v1/projects/AGB/documents"); rec.Code != 200 || l.Total != 2 {
 		t.Errorf("refused puts left documents behind: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -271,14 +275,14 @@ func TestPutDocumentBadRequests(t *testing.T) {
 	if rec := e.do(t, "PUT", documentPath("AGB", apiDocPriority), "", nil); rec.Code != 400 {
 		t.Errorf("empty body: %d", rec.Code)
 	}
-	// Null fields are left for validation to report.
+	// A null field is a field that was not sent; the content then lacks its title.
 	rec := e.do(t, "PUT", documentPath("AGB", apiDocPriority), `{"location":null,"content":null}`, nil)
 	b := decodeErr(t, rec)
-	if rec.Code != 422 || len(b.Error.Details) != 2 || b.Error.Details[0].Field != "location" || b.Error.Details[1].Field != "content" {
+	if rec.Code != 422 || len(b.Error.Details) != 1 || b.Error.Details[0].Field != "title" {
 		t.Errorf("null fields: %d %s", rec.Code, rec.Body.String())
 	}
-	// A body over 1MiB is refused before anything else.
-	big := e.do(t, "PUT", documentPath("AGB", apiDocPriority), docRequest("history", good+strings.Repeat("a", 1<<20)), nil)
+	// A body far over the largest escaped document is refused before anything else.
+	big := e.do(t, "PUT", documentPath("AGB", apiDocPriority), docRequest("history", good+strings.Repeat("a", 7<<20)), nil)
 	if big.Code != 413 || decodeErr(t, big).Error.Code != "payload_too_large" {
 		t.Errorf("large body: %d", big.Code)
 	}
@@ -332,10 +336,10 @@ func TestGetDocument(t *testing.T) {
 	rec := e.do(t, "GET", documentPath("AGB", apiDocBare), "", nil)
 	var d model.Document
 	decodeJSON(t, rec, &d)
-	if rec.Code != 200 || d.Content == nil || d.Date != nil || d.Title != nil || d.Tags == nil || len(d.Tags) != 0 {
+	if rec.Code != 200 || d.Content == nil || d.Date == nil || *d.Date != "2026-10-18 10:00" || d.Title == nil || d.Tags == nil || len(d.Tags) != 0 {
 		t.Errorf("get: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"date":null`, `"title":null`, `"tags":[]`} {
+	for _, want := range []string{`"date":"2026-10-18 10:00"`, `"tags":[]`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("JSON lacks %s: %s", want, rec.Body.String())
 		}
@@ -426,8 +430,9 @@ func TestSearchDocuments(t *testing.T) {
 	// Without a query: newest first by the date of the front matter, across the projects;
 	// a document without a date is last.
 	rec, l := search("")
+	cur := join(apiDocLock, apiDocPriority, apiDocLinear, apiDocBare)
 	all := join(apiDocLock, apiDocPriority, apiDocLinear, apiDocRelease, apiDocBare)
-	if rec.Code != 200 || apiDocNames(l.Items) != all || l.Total != 5 || l.Limit != 50 || l.Offset != 0 {
+	if rec.Code != 200 || apiDocNames(l.Items) != cur || l.Total != 4 || l.Limit != 50 || l.Offset != 0 {
 		t.Fatalf("all: %d %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), `"content"`) || strings.Contains(rec.Body.String(), `"snippet"`) {
@@ -453,21 +458,22 @@ func TestSearchDocuments(t *testing.T) {
 		"?q=queue":                    apiDocPriority,
 		"?q=" + url.QueryEscape("우선순위 서버"):  apiDocPriority,
 		"?q=" + url.QueryEscape(`"우선순위 큐"`): apiDocPriority,
-		"?q=%20%20": all,
+		"?q=%20%20":  cur,
+		"?state=all": all,
 		"?q=" + url.QueryEscape("없는검색어"): "",
-		"?q=agent-board":                              "",
-		"?project=OTH":                                apiDocLock,
-		"?project=OTH,AGB":                            all,
-		"?project=NOPE":                               "",
-		"?kind=decision":                              join(apiDocPriority, apiDocBare),
-		"?kind=decision,report":                       join(apiDocPriority, apiDocLinear, apiDocBare),
-		"?location=archive":                           apiDocRelease,
-		"?location=history,archive":                   all,
-		"?project=AGB&kind=decision&location=history": join(apiDocPriority, apiDocBare),
-		"?q=" + url.QueryEscape("우선순위") + "&kind=report":    apiDocLinear,
-		"?q=" + url.QueryEscape("배포") + "&location=archive": apiDocRelease,
-		"?q=" + url.QueryEscape("배포") + "&location=history": "",
-		"?q=" + url.QueryEscape("우선순위") + "&project=OTH":    "",
+		"?q=agent-board":                           "",
+		"?project=OTH":                             apiDocLock,
+		"?project=OTH,AGB":                         cur,
+		"?project=NOPE":                            "",
+		"?kind=decision":                           join(apiDocPriority, apiDocBare),
+		"?kind=decision,report":                    join(apiDocPriority, apiDocLinear, apiDocBare),
+		"?state=archived":                          apiDocRelease,
+		"?state=current,archived":                  all,
+		"?project=AGB&kind=decision&state=current": join(apiDocPriority, apiDocBare),
+		"?q=" + url.QueryEscape("우선순위") + "&kind=report":  apiDocLinear,
+		"?q=" + url.QueryEscape("배포") + "&state=archived": apiDocRelease,
+		"?q=" + url.QueryEscape("배포") + "&state=current":  "",
+		"?q=" + url.QueryEscape("우선순위") + "&project=OTH":  "",
 	} {
 		if got := names(query); got != want {
 			t.Errorf("%s: %q, want %q", query, got, want)
@@ -475,7 +481,7 @@ func TestSearchDocuments(t *testing.T) {
 	}
 
 	rec, l = search("?limit=2&offset=1")
-	if rec.Code != 200 || apiDocNames(l.Items) != join(apiDocPriority, apiDocLinear) || l.Total != 5 || l.Limit != 2 || l.Offset != 1 {
+	if rec.Code != 200 || apiDocNames(l.Items) != join(apiDocPriority, apiDocLinear) || l.Total != 4 || l.Limit != 2 || l.Offset != 1 {
 		t.Errorf("page: %d %s", rec.Code, rec.Body.String())
 	}
 	rec, l = search("?q=" + url.QueryEscape("우선순위") + "&limit=1&offset=1")
@@ -487,7 +493,7 @@ func TestSearchDocuments(t *testing.T) {
 	}
 
 	for _, query := range []string{
-		"?kind=plan", "?kind=decision,plan", "?location=draft", "?project=agb", "?project=A", "?project=AGB,x",
+		"?kind=plan", "?kind=decision,plan", "?location=history", "?state=old", "?project=agb", "?project=A", "?project=AGB,x",
 		"?kind=decision&kind=report", "?project=AGB&project=OTH", "?q=a&q=b", "?limit=0", "?limit=201", "?offset=-1",
 		"?sort=date", "?status=all", "?content=true",
 		"?q=" + url.QueryEscape(strings.Repeat("a ", 11)),
@@ -579,40 +585,38 @@ func TestLegacyDocument(t *testing.T) {
 		t.Errorf("put a legacy decision without front matter: %d %s", rec.Code, rec.Body.String())
 	}
 	for label, c := range map[string]struct{ name, location string }{
-		"a legacy path in history":   {"decisions/x.md", "history"},
-		"a record name in legacy":    {apiDocBare, "legacy"},
-		"a file directly in archive": {"archive/x.md", "legacy"},
-		"a draft":                    {"draft/x.md", "legacy"},
+		"a legacy path in history": {"decisions/x.md", "history"},
+		"a template":               {"decisions/_template.md", "legacy"},
+		"not markdown":             {"decisions/x.txt", "legacy"},
 	} {
 		if rec := e.putDocument(t, "AGB", c.name, c.location, apiDocText("decision", "본문"), nil); rec.Code != 422 {
 			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
 		}
 	}
-	rec, l := e.getDocuments(t, "/v1/documents?location=legacy&kind=other")
-	if rec.Code != 200 || l.Total != 1 || l.Items[0].Name != name {
+	rec, l := e.getDocuments(t, "/v1/documents?imported=true&kind=other&state=all")
+	if rec.Code != 200 || l.Total != 2 || l.Items[1].Name != name {
 		t.Errorf("search legacy and other: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestPutDocumentRefusesTemplateRemnants(t *testing.T) {
+func TestPutDocumentRefusesPlaceholders(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
-	for label, content := range map[string]string{
-		"guidance comment":    apiDocText("decision", "<!-- 파일명: history/x.md. 이 주석은 지운다. -->"),
-		"placeholder title":   apiDocText("decision", "본문", "title: <문서 제목>"),
-		"placeholder tags":    apiDocText("decision", "본문", "tags: [<주제어>, <주제어>]"),
-		"placeholder any key": apiDocText("decision", "본문", "status: <채택 | 기각 | 보류>"),
+	for label, c := range map[string]struct{ content, field string }{
+		"placeholder title": {apiDocText("decision", "본문", "title: <문서 제목>"), "title"},
+		"placeholder tags":  {apiDocText("decision", "본문", "tags: [<주제어>, b]"), "tags[0]"},
 	} {
-		rec := e.putDocument(t, "AGB", apiDocPriority, "history", content, nil)
+		rec := e.putDocument(t, "AGB", apiDocPriority, "history", c.content, nil)
 		b := decodeErr(t, rec)
-		if rec.Code != 422 || b.Error.Code != "validation_failed" || len(b.Error.Details) != 1 || b.Error.Details[0].Field != "content" {
+		if rec.Code != 422 || b.Error.Code != "validation_failed" || len(b.Error.Details) != 1 || b.Error.Details[0].Field != c.field || b.Error.Details[0].Reason != "placeholder" {
 			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
 		}
 	}
 	if rec, l := e.getDocuments(t, "/v1/projects/AGB/documents"); rec.Code != 200 || l.Total != 0 {
 		t.Errorf("refused puts left documents behind: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.putDocument(t, "AGB", apiDocPriority, "history", apiDocText("decision", "본문", "title: 제목", "status: 채택"), nil); rec.Code != 201 {
-		t.Errorf("filled document: %d %s", rec.Code, rec.Body.String())
+	// The guidance comment of a template is for the client check, not the server.
+	if rec := e.putDocument(t, "AGB", apiDocPriority, "history", apiDocText("decision", "<!-- 파일명: history/x.md. 이 주석은 지운다. -->", "status: 채택"), nil); rec.Code != 201 {
+		t.Errorf("document with a comment: %d %s", rec.Code, rec.Body.String())
 	}
 }

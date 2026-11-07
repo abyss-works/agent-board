@@ -2,6 +2,54 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
+## v0.9.0 (2026-11-07)
+
+### 운영자 확인 사항
+
+- 서버를 먼저 배포한 뒤 CLI를 갱신한다. 새 CLI의 `doc put` 메타데이터 인자, `doc archive`, `doc link`, `doc activity`, `--state` 필터는 이전 서버에서 실패한다.
+- 서버가 시작할 때 스키마 13에서 14로 이관한다. SQL 단계와 Go 백필 단계가 한 트랜잭션이고, 실패하면 버전 13에 남아 다음 시작 때 다시 시도한다. 이전 바이너리는 더 새로운 스키마를 만나면 시작을 거부하므로, 태그만 되돌려서는 롤백할 수 없다. 배포 직전에 운영 데이터베이스의 SQLite 스냅샷을 떠 두고, 롤백은 스냅샷으로 복원한 뒤 이전 태그로 띄운다. 운영 데이터베이스의 사본에서 먼저 이관을 돌려 본다.
+- 구 CLI 호환: 이번 판과 이후 패치 판(v0.9.x)에서 서버는 구 CLI의 문서 등록 요청(`content`와 `location`)을 받는다. `location`을 `archived`, `imported`로 바꿔 읽고 응답에는 계산한 `location`을 넣는다. 구 CLI가 옮긴 파일을 다시 올려도 서버의 문서는 바뀌지 않는다. 호환은 그 뒤의 판에서 없앨 수 있으므로 모든 호스트의 CLI를 갱신한다. 구 CLI의 `doc search --location`은 400이다.
+- 문서를 올리는 저장소는 저장소 최상위에 `.agb.json`을 만들어야 한다. 새 CLI는 이 파일이 있는 저장소에서만 문서를 자동으로 올린다. 이전 CLI가 하던 폴더 규칙은 CLI와 서버에서 없어졌으므로 저장소가 `documents` 규칙으로 쓴다. 만드는 법과 예시는 스킬의 `references/documents.md`에 있다.
+
+### 서버와 API
+
+- 마이그레이션 14: 기록 문서의 `location`을 없애고 `archived`, `imported`, `path`를 더한다. 새 표 `document_relation`에 `supersedes`, `related`, `about` 관계를 두고, `document_activity`에 아카이브와 관계를 고친 이력을 둔다. `issue_ref`에 풀린 대상(`target_issue_id`, `target_document_id`)을 더한다. 이관은 `history`를 일반 문서로, `archive`를 아카이브로, `legacy`를 가져온 문서로 옮기고 프런트매터의 `supersedes`, `related`, `issue`를 관계로 옮긴다. 문장이 섞인 `supersedes`는 `related`로 내린다. 따옴표로 감싼 값 뒤의 글도 문장으로 본다. 문서 이름은 그대로다. `similar_document`는 비우고 다시 계산한다.
+- 문서 상태 `current`, `superseded`, `archived`는 저장하지 않고 계산한다. 우선순위는 아카이브, 대체됨, 유효 순이다.
+- `PUT /v1/projects/{key}/documents/{name}`은 `content`만 필수이고 `kind`, `date`, `title`, `tags`, `supersedes`, `related`, `issues`, `archived`, `imported`, `path`를 받는다. 값은 인자, 프런트매터, 대체값 순으로 정한다. 응답에 `warnings`가 붙는다. 같은 원문에 다른 메타데이터는 409 `metadata_differs`다. 일반 문서는 `title`이 필수이고 풀리지 않는 참조는 422 `unresolved`다. 가져온 문서(`imported`)는 형식을 느슨하게 보고 풀리지 않는 참조를 경고로 두었다가 대상이 올라오면 푼다.
+- 기록 문서 크기 상한을 256KB에서 1MB(1048576바이트)로 올린다. `PUT` 요청 본문의 상한은 JSON 이스케이프를 고려해 문서 상한의 6배에 64KB를 더한 값이고, 다른 요청은 그대로 1MiB다. `agb doc sync`는 1MB를 넘는 파일을 `skipped`로 알린다. 마크다운이 아닌 첨부와 고칠 수 있는 임시 문서 자리는 두지 않고, 결정 기록의 `status`, `decided_by`는 필드로 저장하지 않는다.
+- 서식 안내 주석 검사는 서버에서 빼고 클라이언트의 `doc check`가 한다.
+- `POST`와 `DELETE` `.../documents/{name}/archive`, `.../relations`로 아카이브 표시와 관계를 고치고, `GET .../activity`가 그 이력을 돌려준다. 원문, 종류, 날짜, 제목, 태그는 고칠 수 없다.
+- `GET /v1/documents`와 `GET /v1/search`가 문서 `state` 필터를 받는다. 기본은 `current`다. `GET /v1/documents`는 `imported` 필터를 받고 `location`은 400이다. 통합 검색은 이슈와 댓글에 `status` 필터(`open`, `closed`, `all` 또는 상태 이름)를 받고, 항목마다 `status`, `state`, `supersedes`, `superseded_by`가 붙는다.
+- `GET /v1/graph`는 문서의 간선을 관계 표에서 읽고 `state`(`current`, `all`)를 받는다. 기본은 대체됨·아카이브 이웃을 접고 노드의 `folded`에 개수를 둔다. `digest`와 `similar` 후보는 유효한 문서만 쓴다.
+- 이슈 참조 `doc:`가 `doc:PROJECT/이름`으로 다른 프로젝트의 문서를 가리킬 수 있다. 같은 프로젝트에 그 이름의 문서가 있으면 그 문서가 먼저다.
+- 문서 등록의 `location`이 빈 문자열이어도 세 값(`history`, `archive`, `legacy`) 밖이면 422다. 프로젝트 없음(404), 활성이 아님(409)이 값 위반(422)보다 먼저 나간다.
+- `supersedes`, `related`의 값 `none`(소문자)과 빈 값을 관계 없음으로 받는다. 프런트매터와 요청 인자 양쪽에 적용하고, 목록 안의 `none`과 빈 항목은 건너뛴다. `agb doc check`도 같은 규칙을 따른다. `POST .../relations`의 `target`은 바뀌지 않는다.
+- 백업 변경 감지가 `embedding`, `similar_document` 표의 변경도 본다. 임베딩만 바뀐 주기에도 백업이 만들어져, 복원 뒤 다시 임베딩하는 비용이 줄어든다.
+
+### CLI
+
+- `agb init -p <KEY>`: 저장소 최상위에 규칙이 빈 `.agb.json`을 만든다. 이미 있으면 덮어쓰지 않고 실패한다.
+- `.agb.json`: `project`, `auto_sync`, `documents`(glob 규칙, 이름 방식 `base`/`path`, 기본 `kind`/`archived`/`imported`), `new`(서식 경로, 출력 폴더, 채울 값), `follow_up_headings`. 알 수 없는 키와 잘못된 값은 오류다.
+- `agb doc put`은 `--kind`, `--date`, `--title`, `--tag`, `--supersedes`, `--related`, `--issue`, `--archived`, `--imported`, `--path`로 메타데이터를 따로 넘기고 서버의 경고를 출력한다. 원문 바이트는 바꾸지 않는다.
+- `agb doc archive`, `unarchive`, `link`, `unlink`, `activity`: 올린 문서의 아카이브 표시와 관계를 고치고 이력을 본다. 409 `metadata_differs`에는 이 명령을 안내한다.
+- `agb doc sync`와 자동 등록은 `.agb.json` 규칙에 맞는 파일 중 서버에 없는 것만 이름순으로 올린다. 위치를 옮기는 `moved`는 없어졌다. 서버에 있는 문서의 메타데이터 차이는 고치지 않는다. 커밋했고 바뀌지 않은 파일만 올리는 동작은 그대로다. 서버의 경고를 `warnings`로 알린다.
+- `agb doc check`는 `title`, `supersedes`와 `related` 값의 형식(문서 이름), 남은 HTML 주석을 검사하고 참조 대상이 서버에 있는지 조회한다. `agb doc new`는 `.agb.json`의 `new` 설정을 읽는다.
+- `agb find`는 기본으로 열린 이슈와 유효한 문서를 찾고 `--status`, `--state`로 넓힌다. `agb recall`은 `--status`, `--state`를 받는다. `find`, `recall`, `doc list`, `doc search`는 상태 열과 `supersedes`, `superseded_by`를 보인다. `doc list`, `doc search`는 `--location`을 없애고 `--state`, `--imported`를 받는다. `doc get`은 상태와 관계를 보인다. `agb graph --state all`과 접힌 이웃 표시를 더한다.
+- CLI가 더는 쓰지 않는 `AGENTS.md` 해석, 폴더 상수, 이전 체계 경로 판별을 지운다.
+- `agb doc check`가 본문의 `<신설 2021.11.30>` 같은 숫자가 든 꺾쇠 표기를 자리표시자로 보지 않는다. 숫자가 없는 `<왜 필요했는지>` 같은 서식 자리표시자는 계속 잡는다.
+- 토큰 선택 순서를 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰으로 바꾼다. 이전에는 `AGB_TOKEN`이 행위자별 토큰보다 앞서, 셸에 공용 토큰이 있으면 에이전트 행위자의 요청이 403이었다. 행위자별 토큰이 없는 행위자와 설정 파일이 없는 사용은 그대로다.
+- `agb issue comment --status done`은 작업 위치 댓글이 없는 이슈에서 경고를 내지 않는다. 작업 위치가 있는데 병합 커밋을 찾지 못할 때만 경고한다.
+
+### 웹 클라이언트
+
+- 기록 문서 목록의 위치 필터를 상태 필터로 바꾼다.
+
+### 에이전트 스킬
+
+- 기록 문서 절을 `.agb.json` 기준으로 고치고, 문서 형식, 메타데이터, 상태, 오류 코드, `.agb.json` 스키마, 형식에 맞지 않는 문서를 올리는 법, v0.8에서 옮겨 오는 절차를 담은 `references/documents.md`를 더한다.
+- `find`, `recall`, `graph`의 상태 기본 범위와 넓히는 법을 안내한다.
+- 프로젝트 키를 `.agb.json`의 `project`나 사용자가 준 키로 정하게 하고, 작업 위치 댓글의 계기를 "작업을 멈출 때"로 맞추며, 스킬 본문에서 바깥 프로젝트의 문서와 폴더 구조를 전제한 문장을 뺀다.
+
 ## v0.8.1 (2026-11-07)
 
 ### 서버와 API
