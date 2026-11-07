@@ -159,7 +159,9 @@ func writeMerges(w io.Writer, links []mergeLink) {
 
 // linkMerges adds the merges of the issue's work branches as commit refs and
 // returns the merges part for the done comment. issue is the response of the
-// status change. Problems are warnings: the comment is still added.
+// status change. An issue without a location comment has no work branch to
+// link, so it passes silently. Problems are warnings: the comment is still
+// added.
 func (a *App) linkMerges(ctx context.Context, c *client.Client, key string, issue *client.Response, dirs []string) string {
 	warn := func(format string, args ...any) string {
 		fmt.Fprintf(a.Stderr, "agb: 경고: "+format+"\n", args...)
@@ -183,7 +185,7 @@ func (a *App) linkMerges(ctx context.Context, c *client.Client, key string, issu
 	}
 	located := locatedRepos(bodies)
 	if len(located) == 0 {
-		return warn("작업 위치 댓글이 없어 커밋을 잇지 않았습니다.")
+		return ""
 	}
 	links, misses := mergeLinks(dirs, located)
 	for _, m := range misses {

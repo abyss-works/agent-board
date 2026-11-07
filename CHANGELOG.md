@@ -37,6 +37,7 @@
 - `agb find`는 기본으로 열린 이슈와 유효한 문서를 찾고 `--status`, `--state`로 넓힌다. `agb recall`은 `--status`, `--state`를 받는다. `find`, `recall`, `doc list`, `doc search`는 상태 열과 `supersedes`, `superseded_by`를 보인다. `doc list`, `doc search`는 `--location`을 없애고 `--state`, `--imported`를 받는다. `doc get`은 상태와 관계를 보인다. `agb graph --state all`과 접힌 이웃 표시를 더한다.
 - CLI가 더는 쓰지 않는 `AGENTS.md` 해석, 폴더 상수, 이전 체계 경로 판별을 지운다.
 - `agb doc check`가 본문의 `<신설 2021.11.30>` 같은 숫자가 든 꺾쇠 표기를 자리표시자로 보지 않는다. 숫자가 없는 `<왜 필요했는지>` 같은 서식 자리표시자는 계속 잡는다.
+- `agb issue comment --status done`은 작업 위치 댓글이 없는 이슈에서 경고를 내지 않는다. 작업 위치가 있는데 병합 커밋을 찾지 못할 때만 경고한다.
 
 ### 웹 클라이언트
 
