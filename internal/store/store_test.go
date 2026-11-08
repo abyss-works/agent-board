@@ -511,7 +511,7 @@ func TestMigrateAddsTokenToVersion4Database(t *testing.T) {
 	rows.Close()
 	wantCols := map[string]string{
 		"id": "INTEGER:0:", "actor_id": "TEXT:1:", "client_host": "TEXT:1:", "token_hash": "TEXT:1:", "created_at": "TEXT:1:",
-		"created_by": "TEXT:1:", "last_used_at": "TEXT:0:", "revoked_at": "TEXT:0:", "revoked_by": "TEXT:0:",
+		"created_by": "TEXT:1:", "last_used_at": "TEXT:0:", "revoked_at": "TEXT:0:", "revoked_by": "TEXT:0:", "revoked_session": "TEXT:0:", "revoked_host": "TEXT:0:",
 	}
 	if !reflect.DeepEqual(cols, wantCols) {
 		t.Errorf("token columns = %v, want %v", cols, wantCols)

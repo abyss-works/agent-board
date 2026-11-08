@@ -2,12 +2,17 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"sort"
+	"strings"
 
 	"github.com/wsk0715/agent-board/internal/client"
+	"github.com/wsk0715/agent-board/internal/model"
 )
 
 var projectCmd = &command{name: "project", summary: "프로젝트 관리", subs: []*command{
-	projectListCmd, projectGetCmd, projectCreateCmd, projectUpdateCmd, projectDeleteCmd, projectOverviewCmd,
+	projectListCmd, projectGetCmd, projectCreateCmd, projectUpdateCmd, projectDeleteCmd, projectOverviewCmd, projectActivityCmd,
 }}
 
 var projectListCmd = &command{
@@ -194,4 +199,75 @@ var projectOverviewCmd = &command{
 		}
 		return a.emit(g, resp, a.renderOverview)
 	},
+}
+
+var projectActivityCmd = &command{
+	name: "activity", summary: "프로젝트, 주제, 마일스톤의 변경 기록 (최신 먼저)",
+	usage: `사용법: agb project activity <KEY> [--resource <R>] [--id <N>] [--limit <N>] [--offset <N>]
+
+프로젝트와 그 주제, 마일스톤을 만들거나 고친 기록을 최신 먼저 보입니다. 기록마다 행위자, 세션,
+기기, 시각과 바뀐 필드의 이전 값과 새 값이 있습니다. 삭제 표시, 마일스톤을 닫고 다시 여는 것도 status
+의 변경으로 남습니다.
+
+옵션:
+  --resource <R>          project, topic, milestone 중 하나만
+  --id <N>                주제나 마일스톤의 id 하나만 (--resource 와 함께)
+  --limit <N>             최대 200. 기본 50
+  --offset <N>
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("project activity", g)
+		var f client.ResourceActivityFilter
+		fs.StringVar(&f.Resource, "resource", "", "")
+		fs.Int64Var(&f.ID, "id", 0, "")
+		fs.IntVar(&f.Limit, "limit", 0, "")
+		fs.IntVar(&f.Offset, "offset", 0, "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		if f.ID != 0 && f.Resource == "" {
+			return usageErrorf("--id 는 --resource 와 함께 써야 합니다.")
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.ProjectActivity(ctx, key, f)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderResourceActivity)
+	},
+}
+
+func (a *App) renderResourceActivity(w io.Writer, resp *client.Response) error {
+	l, err := decode[listOf[model.ResourceActivity]](resp)
+	if err != nil {
+		return err
+	}
+	if len(l.Items) == 0 {
+		fmt.Fprintln(w, "활동 기록이 없습니다.")
+		return nil
+	}
+	tb := &table{header: []string{"AT", "ACTOR", "KIND", "TARGET", "CHANGES"}}
+	for _, it := range l.Items {
+		keys := make([]string, 0, len(it.Changes))
+		for k := range it.Changes {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = k + ": " + rawString(it.Changes[k].From) + " → " + rawString(it.Changes[k].To)
+		}
+		tb.add(formatTime(it.At, a.Location), it.Actor, string(it.Kind), fmt.Sprintf("%s#%d", it.Resource, it.ResourceID), strings.Join(parts, "; "))
+	}
+	tb.write(w, a.TermWidth)
+	footer(w, len(l.Items), l.Total, l.Offset)
+	return nil
 }

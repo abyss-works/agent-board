@@ -48,12 +48,13 @@ func scanProject(sc interface{ Scan(...any) error }) (*model.Project, error) {
 	return &p, nil
 }
 
-// CreateProject inserts a project in active state.
+// CreateProject inserts a project in active state and records it.
 func (s *Store) CreateProject(ctx context.Context, tr model.Trace, key, name string) (*model.Project, error) {
 	if err := model.ValidateProject(key, name); err != nil {
 		return nil, err
 	}
-	now := s.stamp().String()
+	at := s.stamp()
+	now := at.String()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx, `select count(*) from project where key = ?`, key).Scan(&n); err != nil {
@@ -62,10 +63,18 @@ func (s *Store) CreateProject(ctx context.Context, tr model.Trace, key, name str
 		if n > 0 {
 			return ErrDuplicateKey
 		}
-		_, err := tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`insert into project(key, name, status, created_at, updated_at, created_by, updated_by) values (?, ?, ?, ?, ?, ?, ?)`,
 			key, name, string(model.ProjectActive), now, now, tr.Actor, tr.Actor)
-		return err
+		if err != nil {
+			return err
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		return insertResourceActivity(ctx, tx, id, model.ResourceProject, id, model.ResourceCreated, tr, at,
+			resourceChanges(nil, projectFields(name, model.ProjectActive)))
 	})
 	if err != nil {
 		return nil, err
@@ -130,8 +139,8 @@ func (s *Store) ListProjects(ctx context.Context, f ProjectFilter) ([]model.Proj
 	return items, total, rows.Err()
 }
 
-// UpdateProject applies a merge patch. A patch that changes nothing leaves
-// updated_at and updated_by untouched.
+// UpdateProject applies a merge patch and records what it changed. A patch that
+// changes nothing leaves updated_at and updated_by untouched and records nothing.
 func (s *Store) UpdateProject(ctx context.Context, tr model.Trace, key string, patch ProjectPatch) (*model.Project, error) {
 	if patch.Name != nil {
 		if err := model.ValidateProjectName(*patch.Name); err != nil {
@@ -158,14 +167,27 @@ func (s *Store) UpdateProject(ctx context.Context, tr model.Trace, key string, p
 		if name == cur.Name && status == cur.Status {
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, `update project set name = ?, status = ?, updated_at = ?, updated_by = ? where key = ?`,
-			name, string(status), s.stamp().String(), tr.Actor, key)
-		return err
+		at := s.stamp()
+		var id int64
+		if err := tx.QueryRowContext(ctx, `select id from project where key = ?`, key).Scan(&id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `update project set name = ?, status = ?, updated_at = ?, updated_by = ? where id = ?`,
+			name, string(status), at.String(), tr.Actor, id); err != nil {
+			return err
+		}
+		return insertResourceActivity(ctx, tx, id, model.ResourceProject, id, model.ResourceUpdated, tr, at,
+			resourceChanges(projectFields(cur.Name, cur.Status), projectFields(name, status)))
 	})
 	if err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, key)
+}
+
+// projectFields are the fields of a project recorded in resource activity.
+func projectFields(name string, status model.ProjectStatus) map[string]any {
+	return map[string]any{"name": name, "status": status}
 }
 
 func placeholders(n int) string {

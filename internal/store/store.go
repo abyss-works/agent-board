@@ -25,7 +25,7 @@ import (
 var migrationFS embed.FS
 
 // SchemaVersion is the user_version the store expects after migrating.
-const SchemaVersion = 16
+const SchemaVersion = 18
 
 // goSteps are the migrations that need more than SQL. The step of version n
 // runs after the SQL file of that version, in the same transaction.

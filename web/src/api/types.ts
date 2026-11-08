@@ -205,6 +205,9 @@ export interface ActorToken {
   /** 폐기한 시각과 폐기한 행위자. 폐기되지 않았으면 둘 다 null이다. */
   revoked_at: string | null
   revoked_by: string | null
+  /** 폐기한 요청의 세션과 기기. 폐기되지 않았거나 기록이 없던 때의 폐기는 null이다. */
+  revoked_session: string | null
+  revoked_host: string | null
 }
 
 /** 기록 문서. 원문은 고치지 않고, 아카이브 표시와 관계만 전용 엔드포인트로 고친다. */
