@@ -751,6 +751,10 @@ func TestRevokeToken(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `"token":`) {
 		t.Errorf("a revoked token shows no secret: %s", rec.Body.String())
 	}
+	// The session and device of the revoking request are kept.
+	if got.RevokedSession == nil || *got.RevokedSession == "" || got.RevokedHost == nil || *got.RevokedHost == "" {
+		t.Errorf("revoked by session %v on %v", got.RevokedSession, got.RevokedHost)
+	}
 	wantErr(t, e.do(t, "GET", "/v1/actors/me", "", withToken(tok.Secret, "codex")), 401, "unauthorized", "")
 
 	// Revoking again changes nothing and answers the same.
