@@ -61,7 +61,8 @@ var issueListCmd = &command{
 	usage: `사용법: agb issue list [옵션]
 
 옵션:
-` + issueFilterUsage + `  -q <검색어>             전문 검색. 결과에 snippet 이 붙습니다
+` + issueFilterUsage + `  -q <검색어>             이슈 키, 제목, 본문의 키워드 검색(모든 단어 포함 AND, 접두 일치, 큰따옴표는 구).
+                          의미 검색은 하지 않음. 결과에 snippet 이 붙고 정렬 기본은 관련도 순. 자세한 규칙은 agb search --help
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue list", g)
@@ -100,11 +101,15 @@ var issueListCmd = &command{
 }
 
 var searchCmd = &command{
-	name: "search", summary: "전문 검색",
+	name: "search", summary: "이슈 키워드 검색 (모든 단어 포함, 관련도 순)",
 	usage: `사용법: agb search <검색어...> [옵션]
 
-이슈의 키, 제목, 본문을 검색합니다. 여러 단어는 모두 포함(AND)이고, 전체를 큰따옴표로
-감싸면 구(phrase) 하나로 찾습니다. agb issue list -q 와 같습니다. 상태 기본값은 open 이므로
+이슈의 키, 제목, 본문을 키워드로 검색합니다. 여러 단어는 모두 포함(AND)이고, 각 단어는 앞부분이 같으면
+일치합니다(접두 일치). 단어 수에 상한이 있습니다. 전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾고, 이때는
+접두 일치와 단어 수 상한이 적용되지 않습니다.
+의미 검색은 하지 않으므로 단어가 일치하지 않는 이슈는 나오지 않고, 댓글과 기록 문서도 찾지 않습니다.
+뜻으로 찾거나 댓글·문서까지 찾으려면 agb find 나 agb recall 을 씁니다.
+agb issue list -q 와 같고, 정렬 기본은 관련도 순입니다(--sort 로 바꿉니다). 상태 기본값은 open 이므로
 닫힌 이슈까지 찾으려면 --status all 을 줍니다.
 
 옵션:
@@ -209,7 +214,9 @@ var issueCreateCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키 (필수)
-  --title, -t <제목>      1~200자 (필수)
+  --title, -t <제목>      1~200자 (필수). 50자 이내로 종류별 형식에 맞춰 씁니다. feature "<사용자>는 <무엇>을 할 수 있다",
+                          bug "<위치>에서 <현상> 문제 수정", design "<주제> 결정", idea "<무엇> 검토",
+                          observation "<대상>의 <현상> 관찰". 자세한 규칙은 agb skill show 가 출력하는 스킬의 "2. 등록할 때"를 봅니다.
   --type <T>              feature(기본), bug, design, idea, observation
   --priority <P>          P0, P1, P2, P3. 생략하면 idea·observation은 P3, 사용자 행위자는 P1, 에이전트 행위자는 P2
   --status <S>            기본 backlog

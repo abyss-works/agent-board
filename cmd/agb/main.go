@@ -35,7 +35,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return 2
 	}
 	switch args[0] {
-	case "version":
+	case "version", "--version":
 		fmt.Fprintf(stdout, "agb %s\n", version)
 		return 0
 	case "serve":
