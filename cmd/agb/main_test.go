@@ -20,6 +20,14 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestVersionFlagMatchesVersionCommand(t *testing.T) {
+	_, want, _ := run2("version")
+	code, out, errb := run2("--version")
+	if code != 0 || out != want || errb != "" {
+		t.Fatalf("--version: code=%d out=%q err=%q, want out=%q", code, out, errb, want)
+	}
+}
+
 func TestUsage(t *testing.T) {
 	if code, _, errb := run2(); code != 2 || !strings.Contains(errb, "serve") {
 		t.Errorf("no args: code=%d err=%q", code, errb)
