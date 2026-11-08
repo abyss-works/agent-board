@@ -212,7 +212,9 @@ var issueCreateCmd = &command{
 
 옵션:
   --project, -p <P>       프로젝트 키 (필수)
-  --title, -t <제목>      1~200자 (필수)
+  --title, -t <제목>      1~200자 (필수). 50자 이내로 종류별 형식에 맞춰 씁니다. feature "<사용자>는 <무엇>을 할 수 있다",
+                          bug "<위치>에서 <현상> 문제 수정", design "<주제> 결정", idea "<무엇> 검토",
+                          observation "<대상>의 <현상> 관찰". 자세한 규칙은 agb skill show 가 출력하는 스킬의 "2. 등록할 때"를 봅니다.
   --type <T>              feature(기본), bug, design, idea, observation
   --priority <P>          P0, P1, P2, P3. 생략하면 idea·observation은 P3, 사용자 행위자는 P1, 에이전트 행위자는 P2
   --status <S>            기본 backlog
