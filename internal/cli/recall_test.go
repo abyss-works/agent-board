@@ -65,12 +65,12 @@ func TestRecall(t *testing.T) {
 func TestRecallWidensTheScopeAndShowsDocumentStates(t *testing.T) {
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/search", canned{body: `{"items":[` +
-		`{"type":"document","project":"AGT","key":"2026-10-17-1430-decision-scope.md","comment_id":null,"title":"범위","kind":"decision","status":null,"state":"superseded","supersedes":["2026-10-10-0900-decision-scope-draft.md"],"superseded_by":["2026-11-01-1000-decision-scope-v2.md"],"at":"2026-10-17 14:30","snippet":"[범위]"}` +
+		`{"type":"document","project":"XYZ","key":"2026-10-17-1430-decision-scope.md","comment_id":null,"title":"범위","kind":"decision","status":null,"state":"superseded","supersedes":["2026-10-10-0900-decision-scope-draft.md"],"superseded_by":["2026-11-01-1000-decision-scope-v2.md"],"at":"2026-10-17 14:30","snippet":"[범위]"}` +
 		`],"total":1,"limit":5,"offset":0}`})
 	srv.on("GET", "/v1/graph", canned{body: `{"nodes":[` +
-		`{"id":"doc:AGT/2026-10-17-1430-decision-scope.md","type":"document","project":"AGT","key":"2026-10-17-1430-decision-scope.md","title":"범위","kind":"decision","status":null,"state":"superseded","refs":[],"folded":null},` +
-		`{"id":"doc:AGT/2026-11-01-1000-decision-scope-v2.md","type":"document","project":"AGT","key":"2026-11-01-1000-decision-scope-v2.md","title":"범위 2판","kind":"decision","status":null,"state":"current","refs":[],"folded":null}],` +
-		`"edges":[{"from":"doc:AGT/2026-11-01-1000-decision-scope-v2.md","to":"doc:AGT/2026-10-17-1430-decision-scope.md","type":"supersedes"}]}`})
+		`{"id":"doc:XYZ/2026-10-17-1430-decision-scope.md","type":"document","project":"XYZ","key":"2026-10-17-1430-decision-scope.md","title":"범위","kind":"decision","status":null,"state":"superseded","refs":[],"folded":null},` +
+		`{"id":"doc:XYZ/2026-11-01-1000-decision-scope-v2.md","type":"document","project":"XYZ","key":"2026-11-01-1000-decision-scope-v2.md","title":"범위 2판","kind":"decision","status":null,"state":"current","refs":[],"folded":null}],` +
+		`"edges":[{"from":"doc:XYZ/2026-11-01-1000-decision-scope-v2.md","to":"doc:XYZ/2026-10-17-1430-decision-scope.md","type":"supersedes"}]}`})
 	h := newHarness(t, srv, true)
 	h.app.TermWidth = 0
 	if code := h.run("recall", "범위", "--status", "all", "--state", "all"); code != 0 {
@@ -80,9 +80,9 @@ func TestRecallWidensTheScopeAndShowsDocumentStates(t *testing.T) {
 		t.Errorf("search query = %s", q.Encode())
 	}
 	out := h.stdout.String()
-	for _, want := range []string{"1. [document] AGT 2026-10-17-1430-decision-scope.md  decision (superseded)  범위",
+	for _, want := range []string{"1. [document] XYZ 2026-10-17-1430-decision-scope.md  decision (superseded)  범위",
 		"supersedes: 2026-10-10-0900-decision-scope-draft.md", "superseded_by: 2026-11-01-1000-decision-scope-v2.md",
-		"← supersedes doc:AGT/2026-11-01-1000-decision-scope-v2.md decision (current)  범위 2판"} {
+		"← supersedes doc:XYZ/2026-11-01-1000-decision-scope-v2.md decision (current)  범위 2판"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
