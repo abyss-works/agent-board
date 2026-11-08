@@ -106,11 +106,12 @@ func TestIssueCreate(t *testing.T) {
 			t.Errorf("get = %+v", got)
 		}
 	})
-	t.Run("the default priority follows the actor kind and the type", func(t *testing.T) {
-		user := createIssue(t, owner, map[string]any{"project": p.Key, "title": "사용자 이슈"})
+	t.Run("the default priority follows the type", func(t *testing.T) {
+		bug := createIssue(t, owner, map[string]any{"project": p.Key, "title": "버그", "type": "bug"})
 		idea := createIssue(t, owner, map[string]any{"project": p.Key, "title": "아이디어", "type": "idea"})
-		if user.Priority != "P1" || idea.Priority != "P3" {
-			t.Errorf("default priority = user %s, idea %s; want P1 and P3", user.Priority, idea.Priority)
+		feature := createIssue(t, owner, map[string]any{"project": p.Key, "title": "기능"})
+		if bug.Priority != "P1" || idea.Priority != "P3" || feature.Priority != "P2" {
+			t.Errorf("default priority = bug %s, idea %s, feature %s; want P1, P3, P2", bug.Priority, idea.Priority, feature.Priority)
 		}
 	})
 	t.Run("created closed sets closed_at", func(t *testing.T) {

@@ -228,7 +228,7 @@ func TestOverview(t *testing.T) {
 	if c.ByType[model.TypeFeature] != 4 || c.ByType[model.TypeBug] != 1 || len(c.ByType) != 5 {
 		t.Errorf("by_type (open only) = %v", c.ByType)
 	}
-	if c.ByPriority[model.P0] != 1 || c.ByPriority[model.P1] != 4 || c.ByPriority[model.P2] != 0 || len(c.ByPriority) != 4 {
+	if c.ByPriority[model.P0] != 1 || c.ByPriority[model.P1] != 2 || c.ByPriority[model.P2] != 2 || len(c.ByPriority) != 4 {
 		t.Errorf("by_priority (open only) = %v", c.ByPriority)
 	}
 	if o.Doing.Total != 1 || o.Doing.Items[0].Key != dep.Key {

@@ -48,9 +48,9 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
   const [title, setTitle] = useState('')
   const [type, setType] = useState<IssueType>('feature')
   const [status, setStatus] = useState<IssueStatus>(initialStatus ?? 'backlog')
-  // 고르지 않으면 서버 기본값을 보여 주고 보내지 않는다. 사용자는 P1, 아이디어·관측은 P3이다.
+  // 고르지 않으면 서버 기본값을 보여 주고 보내지 않는다. bug는 P1, idea·observation은 P3, 나머지는 P2이다.
   const [priority, setPriority] = useState<Priority | null>(null)
-  const shownPriority: Priority = priority ?? (type === 'idea' || type === 'observation' ? 'P3' : 'P1')
+  const shownPriority: Priority = priority ?? (type === 'bug' ? 'P1' : type === 'idea' || type === 'observation' ? 'P3' : 'P2')
   const [labels, setLabels] = useState('')
   const [recheck, setRecheck] = useState('')
   const [decision, setDecision] = useState('')
