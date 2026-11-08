@@ -30,6 +30,21 @@ func decode[T any](resp *client.Response) (T, error) {
 }
 
 // footer notes when a list shows only part of the total.
+// searchOf is the answer of the unified search: the hits and the state of the
+// search by meaning (ok, disabled or failed).
+type searchOf struct {
+	listOf[model.SearchHit]
+	Semantic string `json:"semantic"`
+}
+
+// semanticNotice tells that the search by meaning failed and the keywords
+// answered alone. It says nothing for the other states.
+func semanticNotice(w io.Writer, semantic string) {
+	if semantic == "failed" {
+		fmt.Fprintln(w, "의미 검색을 쓰지 못해 키워드 검색 결과만 나왔습니다.")
+	}
+}
+
 func footer(w io.Writer, shown, total, offset int) {
 	if total > shown || offset > 0 {
 		fmt.Fprintf(w, "%d건 중 %d건 표시 (offset %d)\n", total, shown, offset)

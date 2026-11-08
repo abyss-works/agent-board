@@ -25,15 +25,15 @@ issue·supersedes·related, 그리고
 
 찾는 방식은 agb find 와 같습니다. 서버가 임베딩 API 를 켜 두었으면 키워드 검색(모든 단어 포함 AND, 접두 일치, 큰따옴표는 구)과
 의미 검색(검색어와 뜻이 가까운 것, 단어 일치 불필요)을 합친 순위라서, 질문 문장을 그대로 주면 되고 단어를 모두
-담지 않은 결과도 섞입니다. 유사도 하한이 없어 관련 없는 질문에도 가장 가까운 항목이 나오고 "결과 없음"은 거의 나오지
-않으므로, 결과가 있다는 것이 관련 있다는 뜻은 아닙니다. 원문을 읽어 판단합니다. --project, --type 같은 필터와 옵션 없이도 걸리는
-기본값(유효한 문서 등)은 의미 검색이 전체에서 고른 뒤에 걸리므로, 의미 검색이 보태는 결과가 적거나 없을 수 있습니다. 서버가 의미 검색을 켜지 않았거나 질문을 임베딩하지 못하면 키워드 검색만 하므로 모든 단어를
-AND 로 찾습니다. 이때는 핵심어 두세 개를 줍니다. 자세한 규칙은 agb find --help.
+담지 않은 결과도 섞입니다. 유사도가 서버가 정한 하한보다 낮은 항목은 의미 검색 결과에서 빠지지만, 하한을 넘었다는 것이 질문에 답이
+된다는 뜻은 아니므로 원문을 읽어 판단합니다. --project, --type 같은 필터와 옵션 없이도 걸리는 기본값(유효한 문서 등)은 의미
+검색이 가까운 것을 고르기 전에 적용됩니다. 서버가 의미 검색을 켜지 않았거나 질문을 임베딩하지 못하면 키워드 검색만 하므로 모든 단어를
+AND 로 찾습니다. 임베딩하지 못했을 때는 결과 아래에 그 알림이 한 줄 붙습니다. 이때는 핵심어 두세 개를 줍니다. 자세한 규칙은 agb find --help.
 
 출력: 결과마다 한 줄에 [type] 프로젝트 키 종류 (상태) 제목이 나오고, 키워드로 찾은 항목은 일치 부분이 [ ] 로 표시됩니다(의미 검색으로만 찾은 항목은 표시 없음). 문서가 다른
 문서를 대체했거나 대체되었으면 supersedes:, superseded_by: 로 그 이름이 나옵니다. 그 아래에 연결이 한 줄씩
 나옵니다. ← 는 그 결과를 가리키는 연결, → 는 그 결과가 가리키는 연결이고, similar 는 점수가 붙은 추정입니다.
-파이프에는 query, total, items[].hit, items[].links[](edge, direction, node)를 담은 JSON 으로 출력합니다.
+파이프에는 query, total, semantic(ok, disabled, failed), items[].hit, items[].links[](edge, direction, node)를 담은 JSON 으로 출력합니다.
 --fields, --text 는 items 의 항목마다 적용합니다. 예: --fields hit.project,hit.key,hit.title --text
 
 옵션:
@@ -73,11 +73,11 @@ AND 로 찾습니다. 이때는 핵심어 두세 개를 줍니다. 자세한 규
 		if err != nil {
 			return err
 		}
-		hits, err := decode[listOf[model.SearchHit]](resp)
+		hits, err := decode[searchOf](resp)
 		if err != nil {
 			return err
 		}
-		out := recallResult{Query: f.Query, Total: hits.Total, Items: []recallItem{}}
+		out := recallResult{Query: f.Query, Total: hits.Total, Semantic: hits.Semantic, Items: []recallItem{}}
 		for _, h := range hits.Items {
 			item := recallItem{Hit: h, Links: []recallLink{}}
 			node := recallNode(h)
@@ -109,9 +109,11 @@ AND 로 찾습니다. 이때는 핵심어 두세 개를 줍니다. 자세한 규
 // recallResult is the search hits of a question, each with the nodes the
 // decision graph links to it.
 type recallResult struct {
-	Query string       `json:"query"`
-	Total int          `json:"total"`
-	Items []recallItem `json:"items"`
+	Query string `json:"query"`
+	Total int    `json:"total"`
+	// Semantic is the state of the search by meaning: ok, disabled or failed.
+	Semantic string       `json:"semantic"`
+	Items    []recallItem `json:"items"`
 }
 
 type recallItem struct {
@@ -139,6 +141,7 @@ func recallNode(h model.SearchHit) string {
 func (a *App) renderRecall(w io.Writer, r recallResult) {
 	if len(r.Items) == 0 {
 		fmt.Fprintln(w, "검색 결과가 없습니다.")
+		semanticNotice(w, r.Semantic)
 		return
 	}
 	for n, it := range r.Items {
@@ -175,4 +178,5 @@ func (a *App) renderRecall(w io.Writer, r recallResult) {
 	if r.Total > len(r.Items) {
 		fmt.Fprintf(w, "\n%d건 중 %d건. 더 보려면 --limit 을 늘리거나 agb find 로 찾습니다.\n", r.Total, len(r.Items))
 	}
+	semanticNotice(w, r.Semantic)
 }
