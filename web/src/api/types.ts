@@ -114,6 +114,8 @@ export interface IssueSummary {
   status_changed_by: string
   created_by: string
   updated_by: string
+  /** 열린 이슈가 30일 넘게 활동(수정, 댓글)이 없었다. 서버가 읽을 때 계산한다. */
+  dormant: boolean
   /** q 검색일 때만 붙는다. 일치 부분은 [ ]로 감싼다. */
   snippet?: string
 }

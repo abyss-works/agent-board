@@ -18,6 +18,25 @@ function titleCell(html: string): string {
   return m ? m[1] : ''
 }
 
+describe('IssueRow의 오래됨 표시', () => {
+  const html = (dormant: boolean, compact?: boolean) =>
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <IssueRow issue={issueSummary({ dormant })} compact={compact} />
+      </MemoryRouter>,
+    )
+  it('오래된 이슈에만 표시를 단다', () => {
+    expect(html(true)).toContain('>오래됨</span>')
+    expect(html(false)).not.toContain('오래됨')
+  })
+  it('좁은 행에도 같은 표시를 단다', () => {
+    expect(html(true, true)).toContain('>오래됨</span>')
+  })
+  it('표시는 줄어드는 제목 칸 밖에 둔다', () => {
+    expect(titleCell(html(true))).not.toContain('오래됨')
+  })
+})
+
 describe('IssueRow의 결정 필요 표시', () => {
   it('결정 필요가 있으면 표시를 달고 질문을 설명으로 보인다', () => {
     const html = render('캐시를 Redis로 할지')

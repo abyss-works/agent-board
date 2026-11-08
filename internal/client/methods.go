@@ -66,6 +66,7 @@ type IssueFilter struct {
 	Topic           string // topic ids and none, comma separated (OR)
 	Milestone       string // milestone ids and none, comma separated (OR)
 	Acknowledged    string // "true" or "false"; empty sends no filter
+	Dormant         bool   // only dormant issues; false sends no filter
 	CreatedBy       string
 	UpdatedBy       string
 	StatusChangedBy string
@@ -92,6 +93,9 @@ func (f IssueFilter) Values() url.Values {
 	set(v, "topic", f.Topic)
 	set(v, "milestone", f.Milestone)
 	set(v, "acknowledged", f.Acknowledged)
+	if f.Dormant {
+		v.Set("dormant", "true")
+	}
 	set(v, "created_by", f.CreatedBy)
 	set(v, "updated_by", f.UpdatedBy)
 	set(v, "status_changed_by", f.StatusChangedBy)
