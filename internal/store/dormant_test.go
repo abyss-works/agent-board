@@ -7,7 +7,7 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-func TestStaleMarkAndFilter(t *testing.T) {
+func TestDormantMarkAndFilter(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
@@ -33,29 +33,29 @@ func TestStaleMarkAndFilter(t *testing.T) {
 		t.Fatalf("list: total %d err %v", total, err)
 	}
 	for _, it := range items {
-		if it.Stale != want[it.Key] {
-			t.Errorf("%s stale = %v, want %v", it.Key, it.Stale, want[it.Key])
+		if it.Dormant != want[it.Key] {
+			t.Errorf("%s dormant = %v, want %v", it.Key, it.Dormant, want[it.Key])
 		}
 	}
-	for key, stale := range want {
+	for key, dormant := range want {
 		got, err := s.GetIssue(ctx, key)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Stale != stale {
-			t.Errorf("GetIssue %s stale = %v, want %v", key, got.Stale, stale)
+		if got.Dormant != dormant {
+			t.Errorf("GetIssue %s dormant = %v, want %v", key, got.Dormant, dormant)
 		}
 	}
 
 	yes := true
-	items, total, err = s.ListIssues(ctx, IssueFilter{Statuses: model.IssueStatuses, Stale: &yes, Limit: 50})
+	items, total, err = s.ListIssues(ctx, IssueFilter{Statuses: model.IssueStatuses, Dormant: &yes, Limit: 50})
 	if err != nil || total != 1 || len(items) != 1 || items[0].Key != old.Key {
-		t.Errorf("stale=true: total %d items %v err %v", total, items, err)
+		t.Errorf("dormant=true: total %d items %v err %v", total, items, err)
 	}
-	// Pagination counts only stale issues.
-	items, total, _ = s.ListIssues(ctx, IssueFilter{Statuses: model.IssueStatuses, Stale: &yes, Limit: 1, Offset: 1})
+	// Pagination counts only dormant issues.
+	items, total, _ = s.ListIssues(ctx, IssueFilter{Statuses: model.IssueStatuses, Dormant: &yes, Limit: 1, Offset: 1})
 	if total != 1 || len(items) != 0 {
-		t.Errorf("offset past the only stale issue: total %d items %d", total, len(items))
+		t.Errorf("offset past the only dormant issue: total %d items %d", total, len(items))
 	}
 
 	// Moving the old issue refreshes updated_at and clears the mark.
@@ -64,12 +64,12 @@ func TestStaleMarkAndFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := s.GetIssue(ctx, old.Key)
-	if got.Stale {
-		t.Error("issue updated now must not be stale")
+	if got.Dormant {
+		t.Error("issue updated now must not be dormant")
 	}
 }
 
-func TestAgendaCountsStaleIssues(t *testing.T) {
+func TestAgendaCountsDormantIssues(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	mustProject(t, s, ctx, "OTH")
@@ -88,9 +88,9 @@ func TestAgendaCountsStaleIssues(t *testing.T) {
 	}
 	got := map[string]int{}
 	for _, p := range a.Projects {
-		got[p.Project.Key] = p.Stale
+		got[p.Project.Key] = p.Dormant
 	}
 	if got["AGB"] != 2 || got["OTH"] != 1 {
-		t.Errorf("stale counts = %v, want AGB 2 and OTH 1", got)
+		t.Errorf("dormant counts = %v, want AGB 2 and OTH 1", got)
 	}
 }

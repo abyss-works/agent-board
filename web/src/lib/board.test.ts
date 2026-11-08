@@ -32,7 +32,7 @@ function issue(key: string, status: IssueSummary['status']): IssueSummary {
     status_changed_by: 'owner',
     created_by: 'owner',
     updated_by: 'owner',
-    stale: false,
+    dormant: false,
   }
 }
 

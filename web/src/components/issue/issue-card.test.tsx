@@ -24,10 +24,10 @@ describe('IssueCardBody의 결정 필요 표시', () => {
 })
 
 describe('IssueCardBody의 오래됨 표시', () => {
-  const html = (stale: boolean) =>
+  const html = (dormant: boolean) =>
     renderToStaticMarkup(
       <MemoryRouter>
-        <IssueCardBody issue={issueSummary({ stale })} />
+        <IssueCardBody issue={issueSummary({ dormant })} />
       </MemoryRouter>,
     )
   it('오래된 이슈에만 표시를 단다', () => {

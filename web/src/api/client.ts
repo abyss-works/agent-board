@@ -111,7 +111,7 @@ export interface IssueListFilters {
   /** 'false'면 미확인만, 'true'면 확인된 것만. 없으면 거르지 않는다. */
   acknowledged?: 'true' | 'false'
   /** 'true'면 30일 넘게 활동이 없는 열린 이슈만. 없으면 거르지 않는다. */
-  stale?: 'true'
+  dormant?: 'true'
   q: string
   sort: string
   limit?: number
@@ -129,7 +129,7 @@ export function issueListQuery(f: IssueListFilters): string {
     topic: f.topic?.join(','),
     milestone: f.milestone?.join(','),
     acknowledged: f.acknowledged,
-    stale: f.stale,
+    dormant: f.dormant,
     q: f.q.trim(),
     sort: f.sort,
     limit: f.limit,

@@ -4,7 +4,7 @@ import type { IssueSummary, QueueItem } from '@/api/types'
 import { formatKst, formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { DecisionBadge, IssueKey, LabelChip, PriorityIcon, StaleBadge, StatusIcon, TypeIcon } from './meta'
+import { DecisionBadge, IssueKey, LabelChip, PriorityIcon, DormantBadge, StatusIcon, TypeIcon } from './meta'
 
 /** FTS 스니펫의 `[일치]` 부분을 강조해 그린다. */
 export function SnippetText({ snippet }: { snippet: string }) {
@@ -69,7 +69,7 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
       </div>
       {/* 줄어드는 제목 칸 밖에 두어야 좁은 행에서 옆 항목과 겹치지 않는다. */}
       {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
-      {issue.stale ? <StaleBadge /> : null}
+      {issue.dormant ? <DormantBadge /> : null}
       {!compact && issue.topic_path ? (
         <span className="hidden max-w-44 shrink-0 truncate text-[0.625rem] text-muted-foreground lg:inline" title={`주제 ${issue.topic_path}`}>
           {issue.topic_path}

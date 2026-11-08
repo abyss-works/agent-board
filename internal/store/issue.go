@@ -69,7 +69,7 @@ type IssueFilter struct {
 	UpdatedBy       []string
 	StatusChangedBy []string
 	Acknowledged    *bool // true: acknowledged by the user, false: not yet
-	Stale           *bool // true: only open issues without activity for model.IssueStaleAfter
+	Dormant         *bool // true: only open issues without activity for model.IssueDormantAfter
 	Topics          []int64
 	TopicNone       bool // also select issues without a topic
 	Milestones      []int64
@@ -97,17 +97,17 @@ type issueRow struct {
 // or a later comment, which does not touch updated_at.
 const lastActivityExpr = `max(i.updated_at, coalesce((select max(a.at) from activity a where a.issue_id = i.id), i.updated_at))`
 
-// staleCond selects open issues whose last activity is before the cutoff.
-const staleCond = `i.status in ('backlog','doing','review') and ` + lastActivityExpr + ` < ?`
+// dormantCond selects open issues whose last activity is before the cutoff.
+const dormantCond = `i.status in ('backlog','doing','review') and ` + lastActivityExpr + ` < ?`
 
-// staleCutoff is the last-activity time before which an open issue is stale.
-func (s *Store) staleCutoff() model.Time {
-	return model.NewTime(s.now().Add(-model.IssueStaleAfter))
+// dormantCutoff is the last-activity time before which an open issue is dormant.
+func (s *Store) dormantCutoff() model.Time {
+	return model.NewTime(s.now().Add(-model.IssueDormantAfter))
 }
 
-// summary converts a scanned row to a summary with its stale mark set.
+// summary converts a scanned row to a summary with its dormant mark set.
 func (s *Store) summary(r *issueRow) model.IssueSummary {
-	r.Stale = model.IsStale(r.Status, r.lastActivity, s.stamp())
+	r.Dormant = model.IsDormant(r.Status, r.lastActivity, s.stamp())
 	return r.Summary()
 }
 
@@ -284,7 +284,7 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*model.Issue, error) 
 	if err != nil {
 		return nil, err
 	}
-	r.Stale = model.IsStale(r.Status, r.lastActivity, s.stamp())
+	r.Dormant = model.IsDormant(r.Status, r.lastActivity, s.stamp())
 	return &r.Issue, nil
 }
 
@@ -774,10 +774,10 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 			where = append(where, "i.acknowledged_at is null")
 		}
 	}
-	if f.Stale != nil {
-		if *f.Stale {
-			where = append(where, staleCond)
-			args = append(args, s.staleCutoff().String())
+	if f.Dormant != nil {
+		if *f.Dormant {
+			where = append(where, dormantCond)
+			args = append(args, s.dormantCutoff().String())
 		}
 	}
 	if f.closedSince != nil {

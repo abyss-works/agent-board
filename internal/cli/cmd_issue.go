@@ -27,7 +27,7 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, m
 	fs.Var(milestones, "milestone", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
 	fs.StringVar(&f.Acknowledged, "acknowledged", "", "")
-	fs.BoolVar(&f.Stale, "stale", false, "")
+	fs.BoolVar(&f.Dormant, "dormant", false, "")
 	fs.StringVar(&f.CreatedBy, "created-by", "", "")
 	fs.StringVar(&f.UpdatedBy, "updated-by", "", "")
 	fs.StringVar(&f.StatusChangedBy, "status-changed-by", "", "")
@@ -49,7 +49,7 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
                           이름은 --project 하나가 필요하고, 삭제된 마일스톤을 포함해 정확히 같은 이름을 찾음
   --parent <KEY|none>     상위 이슈. none 이면 상위가 없는 이슈
   --acknowledged <true|false>  사용자가 확인한 이슈(true)나 아직 확인하지 않은 이슈(false)만
-  --stale                 30일 넘게 활동(수정, 댓글)이 없는 열린 이슈만. 표시만 하고 닫지 않습니다
+  --dormant                 30일 넘게 활동(수정, 댓글)이 없는 열린 이슈만. 표시만 하고 닫지 않습니다
   --created-by, --updated-by, --status-changed-by <행위자>   쉼표 OR
   --sort <F>              priority, created_at, updated_at, key, relevance. 쉼표로 여러 개, - 는 내림차순
   --limit <N>             최대 200. 기본 50

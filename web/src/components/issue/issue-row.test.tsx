@@ -19,10 +19,10 @@ function titleCell(html: string): string {
 }
 
 describe('IssueRow의 오래됨 표시', () => {
-  const html = (stale: boolean, compact?: boolean) =>
+  const html = (dormant: boolean, compact?: boolean) =>
     renderToStaticMarkup(
       <MemoryRouter>
-        <IssueRow issue={issueSummary({ stale })} compact={compact} />
+        <IssueRow issue={issueSummary({ dormant })} compact={compact} />
       </MemoryRouter>,
     )
   it('오래된 이슈에만 표시를 단다', () => {

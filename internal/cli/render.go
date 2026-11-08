@@ -57,10 +57,10 @@ func addDecisionColumn(tb *table, questions []*string) {
 // has a milestone, the SNIPPET column only for search results and the
 // DECISION column only when some issue asks for a decision.
 func (a *App) issueTable(items []model.IssueSummary) *table {
-	snippet, milestone, stale := false, false, false
+	snippet, milestone, dormant := false, false, false
 	for _, it := range items {
-		if it.Stale {
-			stale = true
+		if it.Dormant {
+			dormant = true
 		}
 		if it.Snippet != nil {
 			snippet = true
@@ -74,8 +74,8 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 		tb.header = append(tb.header, "MILESTONE")
 	}
 	tb.header = append(tb.header, "UPDATED")
-	if stale {
-		tb.header = append(tb.header, "STALE")
+	if dormant {
+		tb.header = append(tb.header, "DORMANT")
 	}
 	tb.header = append(tb.header, "TITLE")
 	if snippet {
@@ -88,8 +88,8 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 			row = append(row, deref(it.MilestoneName, "-"))
 		}
 		row = append(row, formatTime(it.UpdatedAt, a.Location))
-		if stale {
-			row = append(row, map[bool]string{true: "stale", false: "-"}[it.Stale])
+		if dormant {
+			row = append(row, map[bool]string{true: "dormant", false: "-"}[it.Dormant])
 		}
 		row = append(row, it.Title)
 		if snippet {
@@ -538,7 +538,7 @@ type agenda struct {
 	GeneratedAt model.Time `json:"generated_at"`
 	Projects    []struct {
 		Project  model.Project `json:"project"`
-		Stale    int           `json:"stale"`
+		Dormant  int           `json:"dormant"`
 		UserTurn struct {
 			Review         section[model.IssueSummary] `json:"review"`
 			Decisions      section[model.IssueSummary] `json:"decisions"`
@@ -587,7 +587,9 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 		if len(wt.External.Items) > 0 {
 			a.issueTable(wt.External.Items).write(w, a.TermWidth)
 		}
-		fmt.Fprintf(w, "\n== 오래됨: %d ==\n", p.Stale)
+		if p.Dormant > 0 {
+			fmt.Fprintf(w, "\n== 오래됨: %d ==\n", p.Dormant)
+		}
 	}
 	return nil
 }
