@@ -95,7 +95,7 @@ func TestCreateTokenRevokesTheActiveTokensOfTheSameActorAndHost(t *testing.T) {
 
 	// A token revoked earlier keeps the revocation it has.
 	stale := mustToken(t, s, "claude", "phone", "agb_stale")
-	revoked, err := s.RevokeToken(ctx, stale.ID, "claude")
+	revoked, err := s.RevokeToken(ctx, stale.ID, trClaude)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestAuthenticateToken(t *testing.T) {
 			t.Errorf("AuthenticateToken(%q) err = %v, want ErrNotFound", secret, err)
 		}
 	}
-	if _, err := s.RevokeToken(ctx, tok.ID, "owner"); err != nil {
+	if _, err := s.RevokeToken(ctx, tok.ID, trOwner); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.AuthenticateToken(ctx, "agb_secret"); !errors.Is(err, ErrNotFound) {
@@ -235,7 +235,7 @@ func TestListTokens(t *testing.T) {
 	a := mustToken(t, s, "claude", "pc", "agb_a")
 	b := mustToken(t, s, "codex", "pc", "agb_b")
 	c := mustToken(t, s, "claude", "laptop", "agb_c")
-	if _, err := s.RevokeToken(ctx, b.ID, "owner"); err != nil {
+	if _, err := s.RevokeToken(ctx, b.ID, trOwner); err != nil {
 		t.Fatal(err)
 	}
 	for filter, want := range map[model.TokenFilter][]int64{
@@ -256,7 +256,7 @@ func TestListTokens(t *testing.T) {
 func TestRevokeToken(t *testing.T) {
 	s, ctx := tokenStore(t)
 	tok := mustToken(t, s, "codex", "pc", "agb_secret")
-	revoked, err := s.RevokeToken(ctx, tok.ID, "owner")
+	revoked, err := s.RevokeToken(ctx, tok.ID, trOwner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,8 +264,12 @@ func TestRevokeToken(t *testing.T) {
 		t.Errorf("revoked = %+v", revoked)
 	}
 
+	if revoked.RevokedSession == nil || *revoked.RevokedSession != "s-owner" || revoked.RevokedHost == nil || *revoked.RevokedHost != "pc" {
+		t.Errorf("revoked by session %v on %v", revoked.RevokedSession, revoked.RevokedHost)
+	}
+
 	// Revoking again changes nothing and still succeeds.
-	again, err := s.RevokeToken(ctx, tok.ID, "claude")
+	again, err := s.RevokeToken(ctx, tok.ID, trClaude)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,15 +279,15 @@ func TestRevokeToken(t *testing.T) {
 
 	// A token revokes itself in the name of its own actor.
 	own := mustToken(t, s, "claude", "pc", "agb_own")
-	self, err := s.RevokeToken(ctx, own.ID, "claude")
+	self, err := s.RevokeToken(ctx, own.ID, trClaude)
 	if err != nil || self.RevokedBy == nil || *self.RevokedBy != "claude" {
 		t.Errorf("self revocation = %+v, %v", self, err)
 	}
 
-	if _, err := s.RevokeToken(ctx, 9999, "owner"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.RevokeToken(ctx, 9999, trOwner); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing token err = %v", err)
 	}
-	if _, err := s.RevokeToken(ctx, mustToken(t, s, "claude", "other", "agb_x").ID, "ghost"); err == nil {
+	if _, err := s.RevokeToken(ctx, mustToken(t, s, "claude", "other", "agb_x").ID, model.Trace{Actor: "ghost", SessionID: "s", ClientHost: "h"}); err == nil {
 		t.Error("a revocation by an undeclared actor was accepted")
 	}
 }
@@ -318,14 +322,14 @@ func TestTokenWritesChangeTheFingerprint(t *testing.T) {
 		t.Errorf("fingerprint changed by last_used_at alone: %q -> %q", afterCreate, got)
 	}
 
-	if _, err := s.RevokeToken(ctx, tok.ID, "owner"); err != nil {
+	if _, err := s.RevokeToken(ctx, tok.ID, trOwner); err != nil {
 		t.Fatal(err)
 	}
 	afterRevoke := print()
 	if afterRevoke == afterCreate {
 		t.Error("fingerprint unchanged after a token was revoked")
 	}
-	if _, err := s.RevokeToken(ctx, tok.ID, "owner"); err != nil {
+	if _, err := s.RevokeToken(ctx, tok.ID, trOwner); err != nil {
 		t.Fatal(err)
 	}
 	if got := print(); got != afterRevoke {
@@ -346,7 +350,7 @@ func TestSnapshotCarriesTokens(t *testing.T) {
 	if _, err := s.AuthenticateToken(ctx, "agb_second"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RevokeToken(ctx, first.ID, "owner"); err != nil {
+	if _, err := s.RevokeToken(ctx, first.ID, trOwner); err != nil {
 		t.Fatal(err)
 	}
 

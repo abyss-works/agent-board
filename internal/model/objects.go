@@ -81,6 +81,10 @@ type Token struct {
 	LastUsedAt *Time   `json:"last_used_at"`
 	RevokedAt  *Time   `json:"revoked_at"`
 	RevokedBy  *string `json:"revoked_by"`
+	// RevokedSession and RevokedHost are the session and device of the request
+	// that revoked the token.
+	RevokedSession *string `json:"revoked_session"`
+	RevokedHost    *string `json:"revoked_host"`
 }
 
 // IssuedToken is the token exchange response: the token and its secret.
@@ -248,4 +252,45 @@ type Activity struct {
 	// CommentKind is set only on comments that carry knowledge.
 	CommentKind *CommentKind `json:"comment_kind"`
 	Body        *string      `json:"body"`
+}
+
+// ResourceKind names a resource whose writes are recorded in resource
+// activity: a project, or a topic or milestone of one.
+type ResourceKind string
+
+const (
+	ResourceProject   ResourceKind = "project"
+	ResourceTopic     ResourceKind = "topic"
+	ResourceMilestone ResourceKind = "milestone"
+)
+
+// ResourceKinds lists every resource kind.
+var ResourceKinds = []ResourceKind{ResourceProject, ResourceTopic, ResourceMilestone}
+
+// ParseResourceKind returns the resource kind named v.
+func ParseResourceKind(v string) (ResourceKind, bool) { return parseEnum(v, ResourceKinds) }
+
+// ResourceActivityKind tells whether a record is the creation of a resource or
+// a later change. A deletion mark, a close and a reopen are changes of status.
+type ResourceActivityKind string
+
+const (
+	ResourceCreated ResourceActivityKind = "created"
+	ResourceUpdated ResourceActivityKind = "updated"
+)
+
+// ResourceActivity is one append-only record of a write to a project, topic or
+// milestone. Changes maps a field to its {from, to}; a created record has a
+// null from.
+type ResourceActivity struct {
+	ID         int64                `json:"id"`
+	Project    string               `json:"project"`
+	Resource   ResourceKind         `json:"resource"`
+	ResourceID int64                `json:"resource_id"`
+	Kind       ResourceActivityKind `json:"kind"`
+	Actor      string               `json:"actor"`
+	SessionID  string               `json:"session_id"`
+	ClientHost string               `json:"client_host"`
+	At         Time                 `json:"at"`
+	Changes    map[string]Change    `json:"changes"`
 }

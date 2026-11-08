@@ -32,13 +32,13 @@ func hashToken(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-const tokenCols = `t.id, t.actor_id, t.client_host, t.created_at, t.created_by, t.last_used_at, t.revoked_at, t.revoked_by`
+const tokenCols = `t.id, t.actor_id, t.client_host, t.created_at, t.created_by, t.last_used_at, t.revoked_at, t.revoked_by, t.revoked_session, t.revoked_host`
 
 func scanToken(sc rowScanner) (*model.Token, error) {
 	var t model.Token
 	var created string
 	var used, revoked, revokedBy sql.NullString
-	if err := sc.Scan(&t.ID, &t.Actor, &t.ClientHost, &created, &t.CreatedBy, &used, &revoked, &revokedBy); err != nil {
+	if err := sc.Scan(&t.ID, &t.Actor, &t.ClientHost, &created, &t.CreatedBy, &used, &revoked, &revokedBy, &t.RevokedSession, &t.RevokedHost); err != nil {
 		return nil, err
 	}
 	var err error
@@ -163,9 +163,10 @@ func (s *Store) ListTokens(ctx context.Context, filter model.TokenFilter) ([]mod
 	return items, rows.Err()
 }
 
-// RevokeToken revokes a token in the name of an actor. A token that is already
-// revoked is returned as it is, so repeating the call is harmless.
-func (s *Store) RevokeToken(ctx context.Context, id int64, by string) (*model.Token, error) {
+// RevokeToken revokes a token in the name of the actor, session and device of
+// tr. A token that is already revoked is returned as it is, so repeating the
+// call is harmless.
+func (s *Store) RevokeToken(ctx context.Context, id int64, tr model.Trace) (*model.Token, error) {
 	now := s.stamp().String()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		t, err := getToken(ctx, tx, id)
@@ -175,7 +176,8 @@ func (s *Store) RevokeToken(ctx context.Context, id int64, by string) (*model.To
 		if t.RevokedAt != nil {
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ? where id = ?`, now, by, id)
+		_, err = tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ?, revoked_session = ?, revoked_host = ? where id = ?`,
+			now, tr.Actor, tr.SessionID, tr.ClientHost, id)
 		return err
 	})
 	if err != nil {

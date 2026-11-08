@@ -115,7 +115,7 @@ func (h *handler) revokeToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	tok, err := h.store.RevokeToken(r.Context(), id, TraceFrom(r.Context()).Actor)
+	tok, err := h.store.RevokeToken(r.Context(), id, TraceFrom(r.Context()))
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
@@ -135,7 +135,9 @@ func (h *handler) revokeCurrentToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	tok, err := h.store.RevokeToken(r.Context(), cred.tokenID, cred.actor)
+	tr := TraceFrom(r.Context())
+	tr.Actor = cred.actor
+	tok, err := h.store.RevokeToken(r.Context(), cred.tokenID, tr)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
