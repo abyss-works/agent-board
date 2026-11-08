@@ -18,6 +18,8 @@
 
 ### CLI
 
+- `agb --version`이 `agb version`과 같은 출력을 낸다. 전에는 "flag provided but not defined: -version"으로 실패했다.
+- `find`, `recall`, `search`, `issue list -q`, `doc search`의 help와 `agb` 사용법이 실제 일치 방식을 적는다. `find`와 `recall`은 키워드 검색(모든 단어 포함, 접두 일치)과 의미 검색(서버가 임베딩 API를 켠 때만)의 순위를 합쳐 정렬한다. 의미 검색은 필터(옵션을 주지 않아도 걸리는 기본 상태 필터 포함)를 걸기 전에 전체에서 고르므로 보태는 결과가 적을 수 있고, 유사도 하한이 없다. 의미 검색을 쓸 수 없으면 키워드 검색만 한다. `search`, `issue list -q`, `doc search`는 키워드 검색만 한다. 검색 동작은 바뀌지 않는다.
 - `agb msg put`, `list`, `get`, `rm`을 더한다. `put`은 `--title`, `--to`, `--ttl`, `--body`, `--body-file`(`-`는 표준 입력)을 받고, 프로젝트는 `-p`나 `.agb.json`에서 정한다. `list`는 `--to`, `--all`을 받는다. `--fields`, `--text`, `--table`을 따르고, 예를 들어 `agb msg get <ID> --fields body --text`는 본문만 그대로 출력한다.
 - `.agb.json`의 `documents[].kind`, `doc put --kind`, `doc list --kind`, `doc search --kind`가 종류의 형식만 검사한다.
 - `doc new <종류>`가 `new.template`의 `{kind}`를 바꾼 서식 파일이 있는 종류를 만든다. 서식이 없으면 종류의 서식이 없다고 알린다.
