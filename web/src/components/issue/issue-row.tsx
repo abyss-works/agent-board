@@ -4,7 +4,7 @@ import type { IssueSummary, QueueItem } from '@/api/types'
 import { formatKst, formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { DecisionBadge, IssueKey, LabelChip, PriorityIcon, DormantBadge, StatusIcon, TypeIcon } from './meta'
+import { DecisionBadge, DormantBadge, IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon } from './meta'
 
 /** FTS 스니펫의 `[일치]` 부분을 강조해 그린다. */
 export function SnippetText({ snippet }: { snippet: string }) {

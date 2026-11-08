@@ -710,12 +710,19 @@ var issueSortCols = map[string][]string{
 	"relevance":  {"issue_fts.rank"},
 }
 
-// ListIssues returns a page of issue summaries and the total count. With a
-// Query it searches the FTS index and attaches snippets.
-func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSummary, int, error) {
+// issueQuery is the from, where and select-list parts shared by listing and
+// counting the issues a filter selects.
+type issueQuery struct {
+	match, from, cols, cond string
+	args                    []any
+}
+
+// buildIssueQuery turns a filter into SQL parts. With a Query the parts search
+// the FTS index.
+func (s *Store) buildIssueQuery(f IssueFilter) (issueQuery, error) {
 	match, err := BuildMatch(f.Query)
 	if err != nil {
-		return nil, 0, err
+		return issueQuery{}, err
 	}
 	var where []string
 	var args []any
@@ -791,6 +798,28 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 	if len(where) > 0 {
 		cond = " where " + strings.Join(where, " and ")
 	}
+	return issueQuery{match: match, from: from, cols: cols, cond: cond, args: args}, nil
+}
+
+// CountIssues returns how many issues the filter selects, ignoring paging.
+func (s *Store) CountIssues(ctx context.Context, f IssueFilter) (int, error) {
+	q, err := s.buildIssueQuery(f)
+	if err != nil {
+		return 0, err
+	}
+	var total int
+	err = s.db.QueryRowContext(ctx, `select count(*)`+q.from+q.cond, q.args...).Scan(&total)
+	return total, err
+}
+
+// ListIssues returns a page of issue summaries and the total count. With a
+// Query it searches the FTS index and attaches snippets.
+func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSummary, int, error) {
+	q, err := s.buildIssueQuery(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	match, from, cols, cond, args := q.match, q.from, q.cols, q.cond, q.args
 	var total int
 	if err := s.db.QueryRowContext(ctx, `select count(*)`+from+cond, args...).Scan(&total); err != nil {
 		return nil, 0, err

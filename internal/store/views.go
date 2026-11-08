@@ -409,7 +409,7 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		if err != nil {
 			return nil, err
 		}
-		_, dormantTotal, err := s.ListIssues(ctx, IssueFilter{Projects: []string{key}, Statuses: model.OpenStatuses, Dormant: &dormant, Limit: 1})
+		dormantTotal, err := s.CountIssues(ctx, IssueFilter{Projects: []string{key}, Statuses: model.OpenStatuses, Dormant: &dormant})
 		if err != nil {
 			return nil, err
 		}

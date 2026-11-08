@@ -3,7 +3,7 @@ import type { IssueSummary } from '@/api/types'
 import { formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { DecisionBadge, IssueKey, LabelChip, PriorityIcon, DormantBadge, TypeIcon } from './meta'
+import { DecisionBadge, DormantBadge, IssueKey, LabelChip, PriorityIcon, TypeIcon } from './meta'
 
 interface Props {
   issue: IssueSummary

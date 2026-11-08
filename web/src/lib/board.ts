@@ -18,10 +18,10 @@ export function moveIssue(board: Board, key: string, to: IssueStatus): Board {
       return { ...c, total: Math.max(0, c.total - 1), issues: c.issues.filter((i) => i.key !== key) }
     }
     if (c.status === to) {
-      return { ...c, total: c.total + 1, issues: [...c.issues, { ...moved, status: to }] }
+      return { ...c, total: c.total + 1, issues: [...c.issues, { ...moved, status: to, dormant: false }] }
     }
     return c
   })
-  if (!columns.some((c) => c.status === to)) columns.push({ status: to, total: 1, issues: [{ ...moved, status: to }] })
+  if (!columns.some((c) => c.status === to)) columns.push({ status: to, total: 1, issues: [{ ...moved, status: to, dormant: false }] })
   return { ...board, columns }
 }

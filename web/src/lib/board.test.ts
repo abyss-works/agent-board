@@ -79,6 +79,11 @@ describe('moveIssue', () => {
     expect(doing.total).toBe(2)
     expect(doing.issues[1].status).toBe('doing')
   })
+  it('옮긴 카드는 오래됨 표시를 거둔다', () => {
+    const dormant = { ...board, columns: board.columns.map((c) => (c.status === 'backlog' ? { ...c, issues: [{ ...c.issues[0], dormant: true }] } : c)) }
+    const next = moveIssue(dormant, 'AGB-1', 'done')
+    expect(next.columns.find((c) => c.status === 'done')!.issues[0].dormant).toBe(false)
+  })
   it('원본을 바꾸지 않는다', () => {
     moveIssue(board, 'AGB-1', 'doing')
     expect(board.columns[0].issues).toHaveLength(1)
