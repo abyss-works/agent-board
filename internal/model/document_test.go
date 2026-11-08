@@ -210,8 +210,8 @@ func TestParseFrontMatter(t *testing.T) {
 		},
 		{
 			"relations and issues",
-			"---\nkind: decision\nsupersedes: 2026-11-05-1333-report-x.md의 결론 중 \"y\"\nrelated: [a.md, 'decisions/b.md']\nissue: AGB-32\nissues: [HAM-4, AGB-50]\n---\n",
-			FrontMatter{Kind: "decision", Supersedes: []string{"2026-11-05-1333-report-x.md의 결론 중 \"y\""}, Related: []string{"a.md", "decisions/b.md"}, Issues: []string{"AGB-32", "HAM-4", "AGB-50"}},
+			"---\nkind: decision\nsupersedes: 2026-11-05-1333-report-x.md의 결론 중 \"y\"\nrelated: [a.md, 'decisions/b.md']\nissue: AGB-32\nissues: [XYZ-4, AGB-50]\n---\n",
+			FrontMatter{Kind: "decision", Supersedes: []string{"2026-11-05-1333-report-x.md의 결론 중 \"y\""}, Related: []string{"a.md", "decisions/b.md"}, Issues: []string{"AGB-32", "XYZ-4", "AGB-50"}},
 			true,
 		},
 		{

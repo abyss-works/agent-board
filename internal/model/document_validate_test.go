@@ -160,7 +160,7 @@ func TestValidateDocumentRules(t *testing.T) {
 		{"none inside a list is no relation", recordName, front("title: 제목", "related: [none, a.md]"), DocumentArgs{}, nil},
 		{"none and empty arguments are no relation", recordName, ok, DocumentArgs{Supersedes: []string{"none"}, Related: []string{"", "none"}}, nil},
 		{"None is not none", recordName, front("title: 제목", "supersedes: None"), DocumentArgs{}, []violation{{"supersedes[0]", "not_a_name"}}},
-		{"cross-project name is a name", recordName, front("title: 제목", "supersedes: AGT/a.md"), DocumentArgs{}, nil},
+		{"cross-project name is a name", recordName, front("title: 제목", "supersedes: XYZ/a.md"), DocumentArgs{}, nil},
 		{"every violation at once", "x.md", "본문", DocumentArgs{Supersedes: []string{"뭔가"}}, []violation{{"name", ""}, {"title", "required"}, {"supersedes[0]", "not_a_name"}}},
 		{"too large", recordName, ok + strings.Repeat("a", MaxDocumentBytes), DocumentArgs{}, []violation{{"content", ""}}},
 
@@ -256,7 +256,7 @@ func TestDocumentJSON(t *testing.T) {
 	}
 	d := DocumentResult{Document: Document{
 		Project: "AGB", Name: "a.md", Kind: DocumentDecision, Tags: []string{}, State: StateCurrent,
-		Supersedes: []string{}, SupersededBy: []string{}, Related: []string{"AGT/b.md"}, Issues: []string{"AGB-1"}, UnresolvedRefs: []UnresolvedRef{{RelSupersedes, "x.md"}},
+		Supersedes: []string{}, SupersededBy: []string{}, Related: []string{"XYZ/b.md"}, Issues: []string{"AGB-1"}, UnresolvedRefs: []UnresolvedRef{{RelSupersedes, "x.md"}},
 		SHA256: "9f2c", Size: 6, CreatedAt: at, CreatedBy: "claude", UpdatedAt: at, UpdatedBy: "claude", Location: LocationHistory,
 	}, Warnings: []DocumentWarning{{"supersedes[0]", "unresolved", "없습니다."}}}
 	b, err := json.Marshal(d)
@@ -264,7 +264,7 @@ func TestDocumentJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"project":"AGB","name":"a.md","kind":"decision","date":null,"title":null,"tags":[],"state":"current","archived":false,"imported":false,"path":null,` +
-		`"supersedes":[],"superseded_by":[],"related":["AGT/b.md"],"issues":["AGB-1"],"unresolved_refs":[{"kind":"supersedes","target":"x.md"}],` +
+		`"supersedes":[],"superseded_by":[],"related":["XYZ/b.md"],"issues":["AGB-1"],"unresolved_refs":[{"kind":"supersedes","target":"x.md"}],` +
 		`"sha256":"9f2c","size":6,"created_at":"2026-10-21T02:00:00.000Z","created_by":"claude","updated_at":"2026-10-21T02:00:00.000Z","updated_by":"claude",` +
 		`"location":"history","warnings":[{"field":"supersedes[0]","reason":"unresolved","message":"없습니다."}]}`
 	if string(b) != want {
