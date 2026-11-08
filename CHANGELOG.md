@@ -22,6 +22,7 @@
 
 ### CLI
 
+- `agb project activity <KEY>`를 더한다. 프로젝트와 그 주제, 마일스톤의 생성·수정 기록을 최신 먼저 보이고, 행마다 시각, 행위자, 종류, 대상(`milestone#2`), 바뀐 필드의 이전 값과 새 값이 있다. `--resource`(`project`, `topic`, `milestone`), `--id`, `--limit`, `--offset`을 받는다.
 - 이슈 제목 형식 규칙을 스킬의 "2. 등록할 때"에 더하고 `agb issue create --help`에 요약한다. 형식은 종류별로 `feature` `<사용자>는 <무엇>을 할 수 있다`, `bug` `<위치>에서 <현상> 문제 수정`, `design` `<주제> 결정`, `idea` `<무엇> 검토`, `observation` `<대상>의 <현상> 관찰`이고, 50자 이내이며 이슈 키, 날짜, 내부 용어를 쓰지 않는다. `agb template list`와 템플릿 API의 `title_rule`도 같은 형식으로 바뀐다. 서버는 제목을 전과 같이 1~200자만 검사하고 기존 이슈 제목은 바꾸지 않는다.
 - `agb --version`이 `agb version`과 같은 출력을 낸다. 전에는 "flag provided but not defined: -version"으로 실패했다.
 - `find`, `recall`, `search`, `issue list -q`, `doc search`의 help와 `agb` 사용법이 실제 일치 방식을 적는다. `find`와 `recall`은 키워드 검색(모든 단어 포함, 접두 일치)과 의미 검색(서버가 임베딩 API를 켠 때만)의 순위를 합쳐 정렬한다. 의미 검색은 필터(옵션을 주지 않아도 걸리는 기본 상태 필터 포함)를 걸기 전에 전체에서 고르므로 보태는 결과가 적을 수 있고, 유사도 하한이 없다. 의미 검색을 쓸 수 없으면 키워드 검색만 한다. `search`, `issue list -q`, `doc search`는 키워드 검색만 한다. 검색 동작은 바뀌지 않는다.

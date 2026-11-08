@@ -202,6 +202,28 @@ func (c *Client) PatchProject(ctx context.Context, key string, patch map[string]
 	return c.Request(ctx, http.MethodPatch, "/v1/projects/"+url.PathEscape(key), patch, nil)
 }
 
+// ResourceActivityFilter narrows the activity of a project to one kind of
+// resource and one resource of it. Zero values select all.
+type ResourceActivityFilter struct {
+	Resource string
+	ID       int64
+	Page
+}
+
+// ProjectActivity lists the writes to a project, its topics and its
+// milestones, newest first.
+func (c *Client) ProjectActivity(ctx context.Context, key string, f ResourceActivityFilter) (*Response, error) {
+	v := url.Values{}
+	f.addTo(v)
+	if f.Resource != "" {
+		v.Set("resource", f.Resource)
+	}
+	if f.ID > 0 {
+		v.Set("id", strconv.FormatInt(f.ID, 10))
+	}
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(key)+"/activity", v), nil, nil)
+}
+
 // DeleteProject soft deletes a project.
 func (c *Client) DeleteProject(ctx context.Context, key string) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(key), nil, nil)

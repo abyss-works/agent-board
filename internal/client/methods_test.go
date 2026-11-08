@@ -138,6 +138,9 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		}, "PATCH", "/v1/projects/CLI", "", `{"status":"archived"}`},
 		{"delete project", func() (*Response, error) { return c.DeleteProject(ctx, "CLI") }, "DELETE", "/v1/projects/CLI", "", ""},
 		{"overview", func() (*Response, error) { return c.Overview(ctx, "CLI", 3) }, "GET", "/v1/projects/CLI/overview", "limit=3", ""},
+		{"project activity", func() (*Response, error) {
+			return c.ProjectActivity(ctx, "CLI", ResourceActivityFilter{Resource: "topic", ID: 4, Page: Page{Limit: 10, Offset: 5}})
+		}, "GET", "/v1/projects/CLI/activity", "id=4&limit=10&offset=5&resource=topic", ""},
 		{"list issues", func() (*Response, error) {
 			return c.ListIssues(ctx, IssueFilter{Project: "CLI", Labels: []string{"a", "b"}})
 		}, "GET", "/v1/issues", "label=a&label=b&project=CLI", ""},
