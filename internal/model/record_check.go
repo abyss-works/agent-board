@@ -61,7 +61,7 @@ func CheckRecord(name, content string, template *string) []string {
 		if template != nil {
 			tmplEntries, _ := FrontMatterEntries(*template)
 			for _, en := range tmplEntries {
-				if !have[en.Key] {
+				if !have[en.Key] && !optionalFrontMatterKeys[en.Key] {
 					add("프런트매터에 %s 키가 없습니다.", en.Key)
 				}
 			}
@@ -89,6 +89,13 @@ func CheckRecord(name, content string, template *string) []string {
 		}
 	}
 	return problems
+}
+
+// optionalFrontMatterKeys are the relation keys. A missing key means an empty
+// relation even when the template has it, because a record written before the
+// template gained the key is not edited after it is committed.
+var optionalFrontMatterKeys = map[string]bool{
+	"supersedes": true, "superseded_by": true, "related": true, "issue": true, "issues": true,
 }
 
 var (
