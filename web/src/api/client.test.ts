@@ -93,6 +93,11 @@ describe('issueListQuery', () => {
     expect(issueListQuery({ ...base, acknowledged: 'true' })).toBe('?project=AGB&acknowledged=true')
     expect(issueListQuery(base)).toBe('?project=AGB')
   })
+  it('오래됨 필터는 true일 때만 붙인다', () => {
+    const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
+    expect(issueListQuery({ ...base, dormant: 'true' })).toBe('?project=AGB&dormant=true')
+    expect(issueListQuery(base)).toBe('?project=AGB')
+  })
   it('빈 배열과 전체 프로젝트는 생략한다', () => {
     expect(issueListQuery({ project: null, status: [], type: [], priority: [], label: [], q: '', sort: '' })).toBe('')
   })

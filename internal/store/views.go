@@ -137,7 +137,7 @@ func (s *Store) Queue(ctx context.Context, f QueueFilter) ([]model.QueueItem, in
 	}
 	items := make([]model.QueueItem, len(list))
 	for n, r := range list {
-		items[n] = model.QueueItem{IssueSummary: r.Summary(), Ready: openDeps[n] == 0, BlockedBy: blocked[r.id]}
+		items[n] = model.QueueItem{IssueSummary: s.summary(r), Ready: openDeps[n] == 0, BlockedBy: blocked[r.id]}
 		if items[n].BlockedBy == nil {
 			items[n].BlockedBy = []string{}
 		}
@@ -360,7 +360,9 @@ type Agenda struct {
 
 // AgendaProject is one project of the agenda.
 type AgendaProject struct {
-	Project  model.Project `json:"project"`
+	Project model.Project `json:"project"`
+	// Dormant counts the open issues without activity for model.IssueDormantAfter.
+	Dormant  int `json:"dormant"`
 	UserTurn struct {
 		Review         Section[model.IssueSummary] `json:"review"`
 		Decisions      Section[model.IssueSummary] `json:"decisions"`
@@ -391,6 +393,7 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		}
 	}
 	a := &Agenda{GeneratedAt: s.stamp(), Projects: make([]AgendaProject, 0, len(keys))}
+	dormant := true
 	for _, key := range keys {
 		// ponytail: the overview also counts issues and lists activity the
 		// agenda drops; split Overview into parts if the agenda gets slow.
@@ -406,8 +409,13 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		if err != nil {
 			return nil, err
 		}
+		dormantTotal, err := s.CountIssues(ctx, IssueFilter{Projects: []string{key}, Statuses: model.OpenStatuses, Dormant: &dormant})
+		if err != nil {
+			return nil, err
+		}
 		var p AgendaProject
 		p.Project = o.Project
+		p.Dormant = dormantTotal
 		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unacknowledged = o.Review, o.Decisions, o.Unacknowledged
 		p.UserTurn.Tasks = Section[model.IssueSummary]{Total: taskTotal, Items: tasks}
 		p.Agent.Doing, p.Agent.Next = o.Doing, o.Next

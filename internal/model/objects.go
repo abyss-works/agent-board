@@ -141,6 +141,7 @@ type Issue struct {
 	StatusChangedBy  string      `json:"status_changed_by"`
 	CreatedBy        string      `json:"created_by"`
 	UpdatedBy        string      `json:"updated_by"`
+	Dormant          bool        `json:"dormant"` // derived at read time, see IsDormant
 }
 
 // IssueSummary is an issue without its body, as returned by list views.
@@ -174,6 +175,7 @@ type IssueSummary struct {
 	StatusChangedBy  string      `json:"status_changed_by"`
 	CreatedBy        string      `json:"created_by"`
 	UpdatedBy        string      `json:"updated_by"`
+	Dormant          bool        `json:"dormant"`
 	Snippet          *string     `json:"snippet,omitempty"`
 }
 
@@ -188,7 +190,7 @@ func (i *Issue) Summary() IssueSummary {
 		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
 		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,
-		CreatedBy: i.CreatedBy, UpdatedBy: i.UpdatedBy,
+		CreatedBy: i.CreatedBy, UpdatedBy: i.UpdatedBy, Dormant: i.Dormant,
 	}
 }
 

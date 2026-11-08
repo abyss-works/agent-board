@@ -22,3 +22,16 @@ describe('IssueCardBody의 결정 필요 표시', () => {
     expect(render(null)).not.toContain('결정 필요')
   })
 })
+
+describe('IssueCardBody의 오래됨 표시', () => {
+  const html = (dormant: boolean) =>
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <IssueCardBody issue={issueSummary({ dormant })} />
+      </MemoryRouter>,
+    )
+  it('오래된 이슈에만 표시를 단다', () => {
+    expect(html(true)).toContain('>오래됨</span>')
+    expect(html(false)).not.toContain('오래됨')
+  })
+})

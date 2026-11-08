@@ -31,6 +31,7 @@ export function issueSummary(partial: Partial<IssueSummary> = {}): IssueSummary 
     status_changed_by: 'owner',
     created_by: 'owner',
     updated_by: 'owner',
+    dormant: false,
     ...partial,
   }
 }

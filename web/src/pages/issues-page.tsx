@@ -128,6 +128,7 @@ export function IssuesPage() {
   const milestoneOptions = (milestones.data?.items ?? []).filter((m) => m.status !== 'deleted' || milestone.includes(String(m.id)))
   const acknowledgedParam = params.get('acknowledged')
   const acknowledged = acknowledgedParam === 'false' || acknowledgedParam === 'true' ? acknowledgedParam : undefined
+  const dormant = params.get('dormant') === 'true' ? 'true' : undefined
   const q = params.get('q') ?? ''
   const sort = params.get('sort') ?? ''
 
@@ -162,13 +163,13 @@ export function IssuesPage() {
   }
 
   const filters = useMemo<IssueListFilters>(
-    () => ({ project, status, type, priority, label, topic, milestone, acknowledged, q, sort, limit: LIMIT }),
+    () => ({ project, status, type, priority, label, topic, milestone, acknowledged, dormant, q, sort, limit: LIMIT }),
     // 배열은 URL 문자열에서 매번 새로 만들어지므로 문자열로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, paramsKey],
   )
   const filterKey = `${project ?? '*'}|${paramsKey}`
-  const hasFilter = status.length + type.length + priority.length + label.length + topic.length + milestone.length > 0 || q !== '' || acknowledged !== undefined
+  const hasFilter = status.length + type.length + priority.length + label.length + topic.length + milestone.length > 0 || q !== '' || acknowledged !== undefined || dormant !== undefined
   const statusPreset = status.length === 1 && (status[0] === 'all' || status[0] === 'closed') ? status[0] : status.length === 0 ? '' : null
   const list = useIssues(filters).data
   const total = list?.total
@@ -289,6 +290,9 @@ export function IssuesPage() {
         ) : null}
         <Button variant={acknowledged === 'false' ? 'secondary' : 'ghost'} size="xs" className={cn(acknowledged === 'false' && 'text-sky-300')} onClick={() => update({ acknowledged: acknowledged === 'false' ? null : 'false' })}>
           미확인
+        </Button>
+        <Button variant={dormant ? 'secondary' : 'ghost'} size="xs" onClick={() => update({ dormant: dormant ? null : 'true' })}>
+          오래됨
         </Button>
 
         <div className="ml-auto flex items-center gap-1">

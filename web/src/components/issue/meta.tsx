@@ -133,6 +133,15 @@ export function DecisionBadge({ question }: { question: string }) {
   )
 }
 
+/** 30일 넘게 활동이 없는 열린 이슈에 다는 표시. */
+export function DormantBadge() {
+  return (
+    <Badge variant="outline" title="30일 넘게 활동이 없음">
+      오래됨
+    </Badge>
+  )
+}
+
 export function LabelChip({ label, className, onClick }: { label: string; className?: string; onClick?: () => void }) {
   const Comp = onClick ? 'button' : 'span'
   return (
