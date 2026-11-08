@@ -21,8 +21,9 @@ const (
 	// fusionPool is how many hits of each list take part in the fusion.
 	fusionPool = 50
 	// semanticFloor is the lowest cosine similarity at which a hit found by
-	// meaning is kept.
-	semanticFloor = 0
+	// meaning is kept. Calibrated value; set it again when the embedding model
+	// changes.
+	semanticFloor = 0.45
 	// rrfK is the constant of the reciprocal rank fusion.
 	rrfK = 60
 )

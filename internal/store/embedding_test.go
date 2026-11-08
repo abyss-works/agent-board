@@ -229,6 +229,10 @@ func TestAllowedSourcesAppliesTheSearchFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	doneComment, err := s.AddComment(ctx, trClaude, done.Key, "closed thread", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	putDoc(t, s, trClaude, "XYZ", relOld, "history", docText("decision", "old decision"))
 	putDoc(t, s, trClaude, "XYZ", relNew, "history", docText("decision", "new decision", "supersedes: "+relOld))
 	docID := func(name string) int64 {
@@ -254,19 +258,20 @@ func TestAllowedSourcesAppliesTheSearchFilters(t *testing.T) {
 		return out
 	}
 	oi, di, xi := ref("issue", issueRowID(t, s, open.Key)), ref("issue", issueRowID(t, s, done.Key)), ref("issue", issueRowID(t, s, other.Key))
-	cm1, cm2 := ref("comment", c1.ID), ref("comment", c2.ID)
+	cm1, cm2, cmDone := ref("comment", c1.ID), ref("comment", c2.ID), ref("comment", doneComment.ID)
 	dOld, dNew := ref("document", docID(relOld)), ref("document", docID(relNew))
 	for _, c := range []struct {
 		name string
 		f    SearchFilter
 		want []SourceRef
 	}{
-		{"no filter", SearchFilter{}, []SourceRef{cm1, cm2, dNew, dOld, di, oi, xi}},
+		{"no filter", SearchFilter{}, []SourceRef{cm1, cm2, cmDone, dNew, dOld, di, oi, xi}},
 		{"project", SearchFilter{Projects: []string{"ABC"}}, []SourceRef{xi}},
-		{"type", SearchFilter{Types: []model.SearchType{model.SearchComment}}, []SourceRef{cm1, cm2}},
+		{"type", SearchFilter{Types: []model.SearchType{model.SearchComment}}, []SourceRef{cm1, cm2, cmDone}},
 		{"comment kind", SearchFilter{CommentKinds: []model.CommentKind{model.CommentFinding}}, []SourceRef{cm1, dNew, dOld, di, oi, xi}},
-		{"status", SearchFilter{Statuses: []model.IssueStatus{model.StatusDone}}, []SourceRef{dNew, dOld, di}},
-		{"state", SearchFilter{States: []model.DocumentState{model.StateCurrent}}, []SourceRef{cm1, cm2, dNew, di, oi, xi}},
+		{"status", SearchFilter{Statuses: []model.IssueStatus{model.StatusDone}}, []SourceRef{cmDone, dNew, dOld, di}},
+		{"status excludes the comments of closed issues", SearchFilter{Statuses: []model.IssueStatus{model.StatusBacklog}}, []SourceRef{cm1, cm2, dNew, dOld, oi, xi}},
+		{"state", SearchFilter{States: []model.DocumentState{model.StateCurrent}}, []SourceRef{cm1, cm2, cmDone, dNew, di, oi, xi}},
 	} {
 		slices.SortFunc(c.want, order)
 		if got := allowed(c.f); !slices.Equal(got, c.want) {

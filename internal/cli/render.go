@@ -29,7 +29,6 @@ func decode[T any](resp *client.Response) (T, error) {
 	return v, nil
 }
 
-// footer notes when a list shows only part of the total.
 // searchOf is the answer of the unified search: the hits and the state of the
 // search by meaning (ok, disabled or failed).
 type searchOf struct {
@@ -45,6 +44,7 @@ func semanticNotice(w io.Writer, semantic string) {
 	}
 }
 
+// footer notes when a list shows only part of the total.
 func footer(w io.Writer, shown, total, offset int) {
 	if total > shown || offset > 0 {
 		fmt.Fprintf(w, "%d건 중 %d건 표시 (offset %d)\n", total, shown, offset)
