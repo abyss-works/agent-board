@@ -59,7 +59,8 @@ var docNewCmd = &command{
 
 .agb.json 의 new 설정으로 새 기록 문서 파일을 만들고 그 경로를 출력합니다. 서식은 new.template 에서 {kind} 를
 종류로 바꾼 경로의 파일이고, 파일은 new.output 폴더에 yyyy-mm-dd-HHMM-<종류>-<slug>.md 로 만듭니다.
-종류는 decision, incident, report, implementation 입니다. 서버에 접속하지 않습니다.
+종류는 영문 소문자로 시작하고 영문 소문자, 숫자, _ 로만 이루어진 1~32자이고(other 는 쓸 수 없습니다), 서식
+파일이 있는 종류만 만들 수 있습니다. 어떤 종류를 쓸지는 저장소의 서식이 정합니다. 서버에 접속하지 않습니다.
 
 - 프런트매터의 date 는 지금 시각(yyyy-mm-dd HH:MM)으로 채웁니다. --title 을 주면 title 과 첫 제목(# <...>)도
   채웁니다. new.values 에 적은 키는 프런트매터의 같은 키를 그 값으로 채웁니다.
@@ -87,7 +88,7 @@ var docNewCmd = &command{
 			return err
 		}
 		if kind, ok := model.ParseDocumentKind(kindArg); !ok || kind == model.DocumentOther {
-			return usageErrorf("종류는 decision, incident, report, implementation 중 하나여야 합니다: %s", kindArg)
+			return usageErrorf("종류는 %s여야 하며 other 는 쓸 수 없습니다: %s", model.DocumentKindFormat, kindArg)
 		}
 		if slug == "" {
 			return usageErrorf("--slug 가 필요합니다.")
@@ -109,6 +110,9 @@ var docNewCmd = &command{
 		}
 		tmplPath := filepath.Join(root, filepath.FromSlash(strings.ReplaceAll(cfg.New.Template, "{kind}", kindArg)))
 		tmpl, err := os.ReadFile(tmplPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return usageErrorf("종류 %s 의 서식이 없습니다: %s", kindArg, tmplPath)
+		}
 		if err != nil {
 			return usageErrorf("서식을 읽지 못했습니다: %s", tmplPath)
 		}

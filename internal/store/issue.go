@@ -69,6 +69,7 @@ type IssueFilter struct {
 	UpdatedBy       []string
 	StatusChangedBy []string
 	Acknowledged    *bool // true: acknowledged by the user, false: not yet
+	Dormant         *bool // true: only open issues without activity for model.IssueDormantAfter
 	Topics          []int64
 	TopicNone       bool // also select issues without a topic
 	Milestones      []int64
@@ -89,6 +90,25 @@ type issueRow struct {
 	projectID     int64
 	parentID      sql.NullInt64
 	projectStatus model.ProjectStatus
+	lastActivity  model.Time
+}
+
+// lastActivityExpr is the time of an issue's latest activity: its updated_at,
+// or a later comment, which does not touch updated_at.
+const lastActivityExpr = `max(i.updated_at, coalesce((select max(a.at) from activity a where a.issue_id = i.id), i.updated_at))`
+
+// dormantCond selects open issues whose last activity is before the cutoff.
+const dormantCond = `i.status in ('backlog','doing','review') and ` + lastActivityExpr + ` < ?`
+
+// dormantCutoff is the last-activity time before which an open issue is dormant.
+func (s *Store) dormantCutoff() model.Time {
+	return model.NewTime(s.now().Add(-model.IssueDormantAfter))
+}
+
+// summary converts a scanned row to a summary with its dormant mark set.
+func (s *Store) summary(r *issueRow) model.IssueSummary {
+	r.Dormant = model.IsDormant(r.Status, r.lastActivity, s.stamp())
+	return r.Summary()
 }
 
 // issueJoins attach the project, the parent issue, the topic with its
@@ -109,7 +129,8 @@ func issueCols(withBody bool) string {
 		case when tp.id is null then null when tpp.id is null then tp.name else tpp.name || '/' || tp.name end,
 		i.milestone_id, ms.name,
 		i.status_reason, i.acknowledged_at, i.acknowledged_by, i.version, i.created_at, i.updated_at, i.closed_at,
-		i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by`
+		i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by,
+		` + lastActivityExpr
 }
 
 type rowScanner interface{ Scan(...any) error }
@@ -122,6 +143,7 @@ type issueScan struct {
 	milestoneName, decision              sql.NullString
 	topicID, milestoneID                 sql.NullInt64
 	created, updated, statusChanged      string
+	lastActivity                         string
 }
 
 // scanIssue scans the columns of issueCols followed by the extra
@@ -132,7 +154,7 @@ func scanIssue(sc rowScanner, extra ...any) (*issueRow, error) {
 	dest := []any{&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
 		&r.parentID, &raw.parentKey, &raw.recheck, &raw.decision, &raw.topicID, &raw.topicPath, &raw.milestoneID, &raw.milestoneName,
 		&raw.reason, &raw.ackAt, &raw.ackBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
-		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy}
+		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy, &raw.lastActivity}
 	if err := sc.Scan(append(dest, extra...)...); err != nil {
 		return nil, err
 	}
@@ -186,6 +208,9 @@ func (r *issueRow) finishScan(raw issueScan) error {
 		return err
 	}
 	if r.StatusChangedAt, err = model.ParseTime(raw.statusChanged); err != nil {
+		return err
+	}
+	if r.lastActivity, err = model.ParseTime(raw.lastActivity); err != nil {
 		return err
 	}
 	if raw.closedAt.Valid {
@@ -259,6 +284,7 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*model.Issue, error) 
 	if err != nil {
 		return nil, err
 	}
+	r.Dormant = model.IsDormant(r.Status, r.lastActivity, s.stamp())
 	return &r.Issue, nil
 }
 
@@ -684,12 +710,19 @@ var issueSortCols = map[string][]string{
 	"relevance":  {"issue_fts.rank"},
 }
 
-// ListIssues returns a page of issue summaries and the total count. With a
-// Query it searches the FTS index and attaches snippets.
-func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSummary, int, error) {
+// issueQuery is the from, where and select-list parts shared by listing and
+// counting the issues a filter selects.
+type issueQuery struct {
+	match, from, cols, cond string
+	args                    []any
+}
+
+// buildIssueQuery turns a filter into SQL parts. With a Query the parts search
+// the FTS index.
+func (s *Store) buildIssueQuery(f IssueFilter) (issueQuery, error) {
 	match, err := BuildMatch(f.Query)
 	if err != nil {
-		return nil, 0, err
+		return issueQuery{}, err
 	}
 	var where []string
 	var args []any
@@ -748,6 +781,12 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 			where = append(where, "i.acknowledged_at is null")
 		}
 	}
+	if f.Dormant != nil {
+		if *f.Dormant {
+			where = append(where, dormantCond)
+			args = append(args, s.dormantCutoff().String())
+		}
+	}
 	if f.closedSince != nil {
 		where = append(where, "i.closed_at >= ?")
 		args = append(args, f.closedSince.String())
@@ -759,6 +798,28 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 	if len(where) > 0 {
 		cond = " where " + strings.Join(where, " and ")
 	}
+	return issueQuery{match: match, from: from, cols: cols, cond: cond, args: args}, nil
+}
+
+// CountIssues returns how many issues the filter selects, ignoring paging.
+func (s *Store) CountIssues(ctx context.Context, f IssueFilter) (int, error) {
+	q, err := s.buildIssueQuery(f)
+	if err != nil {
+		return 0, err
+	}
+	var total int
+	err = s.db.QueryRowContext(ctx, `select count(*)`+q.from+q.cond, q.args...).Scan(&total)
+	return total, err
+}
+
+// ListIssues returns a page of issue summaries and the total count. With a
+// Query it searches the FTS index and attaches snippets.
+func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSummary, int, error) {
+	q, err := s.buildIssueQuery(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	match, from, cols, cond, args := q.match, q.from, q.cols, q.cond, q.args
 	var total int
 	if err := s.db.QueryRowContext(ctx, `select count(*)`+from+cond, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -798,7 +859,7 @@ func (s *Store) ListIssues(ctx context.Context, f IssueFilter) ([]model.IssueSum
 	}
 	items := make([]model.IssueSummary, len(list))
 	for n, r := range list {
-		items[n] = r.Summary()
+		items[n] = s.summary(r)
 		if match != "" {
 			sn := snippets[n]
 			items[n].Snippet = &sn

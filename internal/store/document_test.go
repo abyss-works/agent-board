@@ -190,7 +190,7 @@ func TestPutDocumentRules(t *testing.T) {
 		want                 []string
 	}{
 		{"name without the pattern", "priority-model.md", ok, []string{"name"}},
-		{"unknown kind in the name", "2026-10-20-1544-plan-x.md", docText("plan", "본문", "title: 제목"), []string{"name", "kind"}},
+		{"bad kind in the name", "2026-10-20-1544-Plan-x.md", docText("Plan", "본문", "title: 제목"), []string{"name", "kind"}},
 		{"upper case slug", "2026-10-20-1544-decision-Priority.md", ok, []string{"name"}},
 		{"kind of the front matter differs", "2026-10-20-1544-report-x.md", ok, []string{"kind"}},
 		{"no front matter", docPriority, "# 제목\n본문\n", []string{"title"}},

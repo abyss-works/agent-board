@@ -148,7 +148,7 @@ func TestDocumentsAgainstRealHandler(t *testing.T) {
 	if err != nil || resp.Decode(&found) != nil || len(found.Items) != 1 || found.Items[0].Snippet == nil || !strings.Contains(*found.Items[0].Snippet, "[우선순위]") {
 		t.Fatalf("search = %+v, %v", found, err)
 	}
-	if _, err := c.SearchDocuments(ctx, DocumentFilter{Kind: "plan"}); !errors.As(err, &apiErr) || apiErr.Status != 400 {
+	if _, err := c.SearchDocuments(ctx, DocumentFilter{Kind: "Plan"}); !errors.As(err, &apiErr) || apiErr.Status != 400 {
 		t.Errorf("unknown kind err = %v", err)
 	}
 	if _, err := c.GetDocument(ctx, "AGB", "2026-10-21-0900-report-none.md"); !errors.As(err, &apiErr) || apiErr.Status != 404 {

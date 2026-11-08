@@ -1,3 +1,5 @@
+import { DOCUMENT_KINDS } from '@/api/types'
+
 /** 맨 앞의 YAML 프런트매터(`---`로 열고 닫는 블록)와 본문으로 나눈다. 닫히지 않으면 전체가 본문이다. */
 export function splitFrontMatter(content: string): { frontMatter: string; body: string } {
   const lines = content.split('\n')
@@ -12,6 +14,12 @@ export function frontMatterIssueKeys(frontMatter: string): string[] {
   const line = frontMatter.split('\n').find((l) => /^issue\s*:/.test(l))
   if (!line) return []
   return line.slice(line.indexOf(':') + 1).match(/\b[A-Z][A-Z0-9]*-\d+\b/g) ?? []
+}
+
+/** 종류 필터에 보일 종류. 알려진 종류를 순서대로 두고, 그 밖의 종류(불러온 목록에 나온 것)는 이름순으로 뒤에 붙인다. */
+export function documentKindOptions(present: readonly string[]): string[] {
+  const extra = [...new Set(present)].filter((k) => !DOCUMENT_KINDS.includes(k)).sort()
+  return [...DOCUMENT_KINDS, ...extra]
 }
 
 /** 기록 문서 상세 주소 */

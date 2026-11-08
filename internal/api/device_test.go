@@ -151,7 +151,7 @@ func TestDeviceStoreCodesDoNotRepeat(t *testing.T) {
 			t.Fatalf("code repeated at %d: %q %q", i, d.deviceCode, d.userCode)
 		}
 		devices[d.deviceCode], users[d.userCode] = true, true
-		if _, err := s.decide(d.userCode, model.DeviceDenied, "owner"); err != nil { // free the slot
+		if _, err := s.decide(d.userCode, model.DeviceDenied, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); err != nil { // free the slot
 			t.Fatal(err)
 		}
 	}
@@ -208,7 +208,7 @@ func TestDeviceStoreLimitsPendingRequests(t *testing.T) {
 	}
 
 	// A decided request no longer waits, so it frees its place.
-	if _, err := s.decide(codes[0], model.DeviceApproved, "owner"); err != nil {
+	if _, err := s.decide(codes[0], model.DeviceApproved, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.create("codex", "pc"); err != nil {
@@ -217,7 +217,7 @@ func TestDeviceStoreLimitsPendingRequests(t *testing.T) {
 	if _, err := s.create("codex", "pc"); !errors.Is(err, errTooManyDevices) {
 		t.Errorf("full again: err = %v", err)
 	}
-	if _, err := s.decide(codes[1], model.DeviceDenied, "owner"); err != nil {
+	if _, err := s.decide(codes[1], model.DeviceDenied, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.create("codex", "pc"); err != nil {
@@ -248,7 +248,7 @@ func TestDeviceStoreExpiry(t *testing.T) {
 	if _, err := s.take(d.deviceCode); !errors.Is(err, errDeviceNotFound) {
 		t.Errorf("at the expiry, take err = %v, want errDeviceNotFound", err)
 	}
-	if _, err := s.decide(d.userCode, model.DeviceApproved, "owner"); !errors.Is(err, errDeviceNotFound) {
+	if _, err := s.decide(d.userCode, model.DeviceApproved, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); !errors.Is(err, errDeviceNotFound) {
 		t.Errorf("at the expiry, decide err = %v, want errDeviceNotFound", err)
 	}
 	if len(s.byCode) != 0 || len(s.byUser) != 0 {
@@ -259,19 +259,19 @@ func TestDeviceStoreExpiry(t *testing.T) {
 func TestDeviceStoreDecide(t *testing.T) {
 	s, _ := newTestDevices(t)
 	d, _ := s.create("codex", "pc")
-	approved, err := s.decide(d.userCode, model.DeviceApproved, "owner")
+	approved, err := s.decide(d.userCode, model.DeviceApproved, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"})
 	if err != nil || approved.status != model.DeviceApproved || approved.approvedBy != "owner" {
 		t.Fatalf("approve = %+v, %v", approved, err)
 	}
 	for _, status := range []model.DeviceStatus{model.DeviceApproved, model.DeviceDenied} {
-		if _, err := s.decide(d.userCode, status, "boss"); !errors.Is(err, errDeviceNotPending) {
+		if _, err := s.decide(d.userCode, status, model.Trace{Actor: "boss", SessionID: "s", ClientHost: "h"}); !errors.Is(err, errDeviceNotPending) {
 			t.Errorf("deciding an approved request as %s: err = %v, want errDeviceNotPending", status, err)
 		}
 	}
 	if got, _ := s.get(d.userCode); got.status != model.DeviceApproved || got.approvedBy != "owner" {
 		t.Errorf("a rejected decision changed the request: %+v", got)
 	}
-	if _, err := s.decide("BCDF-GHJK", model.DeviceApproved, "owner"); !errors.Is(err, errDeviceNotFound) {
+	if _, err := s.decide("BCDF-GHJK", model.DeviceApproved, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); !errors.Is(err, errDeviceNotFound) {
 		t.Errorf("unknown code: err = %v", err)
 	}
 }
@@ -288,7 +288,7 @@ func TestDeviceStoreTake(t *testing.T) {
 	}
 
 	approved, _ := s.create("claude", "laptop")
-	if _, err := s.decide(approved.userCode, model.DeviceApproved, "owner"); err != nil {
+	if _, err := s.decide(approved.userCode, model.DeviceApproved, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.take(approved.deviceCode)
@@ -303,7 +303,7 @@ func TestDeviceStoreTake(t *testing.T) {
 	}
 
 	denied, _ := s.create("codex", "pc2")
-	if _, err := s.decide(denied.userCode, model.DeviceDenied, "owner"); err != nil {
+	if _, err := s.decide(denied.userCode, model.DeviceDenied, model.Trace{Actor: "owner", SessionID: "s", ClientHost: "h"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.take(denied.deviceCode); !errors.Is(err, errDeviceDenied) {

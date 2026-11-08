@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -10,6 +11,37 @@ import (
 func (h *handler) registerProjects(mux *http.ServeMux) {
 	route(mux, "/v1/projects", methods{"GET": h.listProjects, "POST": h.createProject})
 	route(mux, "/v1/projects/{key}", methods{"GET": h.getProject, "PATCH": h.patchProject, "DELETE": h.deleteProject})
+	route(mux, "/v1/projects/{key}/activity", methods{"GET": h.projectActivity})
+}
+
+// projectActivity lists the writes to a project, its topics and its
+// milestones, newest first. resource and id narrow the list.
+func (h *handler) projectActivity(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	f := store.ResourceActivityFilter{Project: r.PathValue("key"), Limit: q.limit(50, 200), Offset: q.offset()}
+	if v := q.one("resource"); v != "" {
+		kind, ok := model.ParseResourceKind(v)
+		if !ok {
+			q.add("resource", fmt.Sprintf("%q는 허용되지 않는 값입니다.", v))
+		}
+		f.Resource = kind
+	}
+	if q.one("id") != "" {
+		if f.Resource == "" {
+			q.add("id", "resource와 함께 써야 합니다.")
+		}
+		f.ResourceID = int64(q.intRange("id", 0, 1, 1<<31-1))
+	}
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	items, total, err := h.store.ListResourceActivity(r.Context(), f)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) createProject(w http.ResponseWriter, r *http.Request) {

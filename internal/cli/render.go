@@ -57,8 +57,11 @@ func addDecisionColumn(tb *table, questions []*string) {
 // has a milestone, the SNIPPET column only for search results and the
 // DECISION column only when some issue asks for a decision.
 func (a *App) issueTable(items []model.IssueSummary) *table {
-	snippet, milestone := false, false
+	snippet, milestone, dormant := false, false, false
 	for _, it := range items {
+		if it.Dormant {
+			dormant = true
+		}
 		if it.Snippet != nil {
 			snippet = true
 		}
@@ -70,7 +73,11 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 	if milestone {
 		tb.header = append(tb.header, "MILESTONE")
 	}
-	tb.header = append(tb.header, "UPDATED", "TITLE")
+	tb.header = append(tb.header, "UPDATED")
+	if dormant {
+		tb.header = append(tb.header, "DORMANT")
+	}
+	tb.header = append(tb.header, "TITLE")
 	if snippet {
 		tb.header = append(tb.header, "SNIPPET")
 	}
@@ -80,7 +87,11 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 		if milestone {
 			row = append(row, deref(it.MilestoneName, "-"))
 		}
-		row = append(row, formatTime(it.UpdatedAt, a.Location), it.Title)
+		row = append(row, formatTime(it.UpdatedAt, a.Location))
+		if dormant {
+			row = append(row, map[bool]string{true: "dormant", false: "-"}[it.Dormant])
+		}
+		row = append(row, it.Title)
 		if snippet {
 			row = append(row, deref(it.Snippet, ""))
 		}
@@ -527,6 +538,7 @@ type agenda struct {
 	GeneratedAt model.Time `json:"generated_at"`
 	Projects    []struct {
 		Project  model.Project `json:"project"`
+		Dormant  int           `json:"dormant"`
 		UserTurn struct {
 			Review         section[model.IssueSummary] `json:"review"`
 			Decisions      section[model.IssueSummary] `json:"decisions"`
@@ -574,6 +586,9 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 		}
 		if len(wt.External.Items) > 0 {
 			a.issueTable(wt.External.Items).write(w, a.TermWidth)
+		}
+		if p.Dormant > 0 {
+			fmt.Fprintf(w, "\n== 오래됨: %d ==\n", p.Dormant)
 		}
 	}
 	return nil

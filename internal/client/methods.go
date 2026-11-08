@@ -66,6 +66,7 @@ type IssueFilter struct {
 	Topic           string // topic ids and none, comma separated (OR)
 	Milestone       string // milestone ids and none, comma separated (OR)
 	Acknowledged    string // "true" or "false"; empty sends no filter
+	Dormant         bool   // only dormant issues; false sends no filter
 	CreatedBy       string
 	UpdatedBy       string
 	StatusChangedBy string
@@ -92,6 +93,9 @@ func (f IssueFilter) Values() url.Values {
 	set(v, "topic", f.Topic)
 	set(v, "milestone", f.Milestone)
 	set(v, "acknowledged", f.Acknowledged)
+	if f.Dormant {
+		v.Set("dormant", "true")
+	}
 	set(v, "created_by", f.CreatedBy)
 	set(v, "updated_by", f.UpdatedBy)
 	set(v, "status_changed_by", f.StatusChangedBy)
@@ -200,6 +204,28 @@ func (c *Client) GetProject(ctx context.Context, key string) (*Response, error) 
 // PatchProject applies a JSON Merge Patch to a project.
 func (c *Client) PatchProject(ctx context.Context, key string, patch map[string]any) (*Response, error) {
 	return c.Request(ctx, http.MethodPatch, "/v1/projects/"+url.PathEscape(key), patch, nil)
+}
+
+// ResourceActivityFilter narrows the activity of a project to one kind of
+// resource and one resource of it. Zero values select all.
+type ResourceActivityFilter struct {
+	Resource string
+	ID       int64
+	Page
+}
+
+// ProjectActivity lists the writes to a project, its topics and its
+// milestones, newest first.
+func (c *Client) ProjectActivity(ctx context.Context, key string, f ResourceActivityFilter) (*Response, error) {
+	v := url.Values{}
+	f.addTo(v)
+	if f.Resource != "" {
+		v.Set("resource", f.Resource)
+	}
+	if f.ID > 0 {
+		v.Set("id", strconv.FormatInt(f.ID, 10))
+	}
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(key)+"/activity", v), nil, nil)
 }
 
 // DeleteProject soft deletes a project.
@@ -334,6 +360,35 @@ func (c *Client) PatchMilestone(ctx context.Context, id int64, patch map[string]
 // DeleteMilestone soft deletes a milestone.
 func (c *Client) DeleteMilestone(ctx context.Context, id int64) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// PutMessage posts a message to the message space of a project. in holds
+// title and optionally to, body and ttl.
+func (c *Client) PutMessage(ctx context.Context, project string, in map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/messages", in, nil)
+}
+
+// ListMessages lists the messages of a project, newest first. An empty to
+// matches every addressee; all adds the expired and deleted messages. A zero
+// page field is left to the server default.
+func (c *Client) ListMessages(ctx context.Context, project, to string, all bool, page Page) (*Response, error) {
+	v := url.Values{}
+	set(v, "to", to)
+	page.addTo(v)
+	if all {
+		v.Set("all", "true")
+	}
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/messages", v), nil, nil)
+}
+
+// GetMessage fetches one message with its body, whatever its state.
+func (c *Client) GetMessage(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// DeleteMessage soft deletes a message.
+func (c *Client) DeleteMessage(ctx context.Context, id int64) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
 // CreateDeviceAuthorization asks the server to let an agent actor in on a

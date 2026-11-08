@@ -138,11 +138,12 @@ func checkMilestoneName(ctx context.Context, q querier, projectID int64, name st
 	return nil
 }
 
-// CreateMilestone adds an open milestone to a project. A milestone has no
-// activity record; created_by and updated_by name the actor.
+// CreateMilestone adds an open milestone to a project and records it in the
+// resource activity of the project.
 func (s *Store) CreateMilestone(ctx context.Context, tr model.Trace, project string, in MilestoneInput) (*model.Milestone, error) {
 	invalid := model.ValidateMilestone(in.Name, in.Description, in.TargetDate)
-	now := s.stamp().String()
+	at := s.stamp()
+	now := at.String()
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var projectID int64
@@ -168,8 +169,11 @@ func (s *Store) CreateMilestone(ctx context.Context, tr model.Trace, project str
 		if err != nil {
 			return err
 		}
-		id, err = res.LastInsertId()
-		return err
+		if id, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		return insertResourceActivity(ctx, tx, projectID, model.ResourceMilestone, id, model.ResourceCreated, tr, at,
+			resourceChanges(nil, milestoneFields(in.Name, in.Description, in.TargetDate, model.MilestoneOpen, nil)))
 	})
 	if err != nil {
 		return nil, err
@@ -177,12 +181,18 @@ func (s *Store) CreateMilestone(ctx context.Context, tr model.Trace, project str
 	return s.GetMilestone(ctx, id)
 }
 
+// milestoneFields are the fields of a milestone recorded in resource activity.
+func milestoneFields(name, description string, targetDate *string, status model.MilestoneStatus, closedAt *model.Time) map[string]any {
+	return map[string]any{"name": name, "description": description, "target_date": targetDate, "status": status, "closed_at": closedAt}
+}
+
 func sameString(a, b *string) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
-// UpdateMilestone applies a merge patch. A patch that changes nothing leaves
-// updated_at and updated_by untouched. Closing a milestone records closed_at
+// UpdateMilestone applies a merge patch and records what it changed. A patch
+// that changes nothing leaves updated_at and updated_by untouched and records
+// nothing. Closing a milestone records closed_at
 // and reopening it clears the time; a milestone that is deleted keeps whatever
 // closed_at it had.
 func (s *Store) UpdateMilestone(ctx context.Context, tr model.Trace, id int64, patch MilestonePatch) (*model.Milestone, error) {
@@ -230,9 +240,13 @@ func (s *Store) UpdateMilestone(ctx context.Context, tr model.Trace, id int64, p
 		case next.Status == model.MilestoneClosed && cur.Status != model.MilestoneClosed:
 			closedAt = &now
 		}
-		_, err = tx.ExecContext(ctx, `update milestone set name = ?, description = ?, target_date = ?, status = ?, closed_at = ?, updated_at = ?, updated_by = ? where id = ?`,
-			next.Name, next.Description, next.TargetDate, string(next.Status), timePtr(closedAt), now.String(), tr.Actor, cur.ID)
-		return err
+		if _, err = tx.ExecContext(ctx, `update milestone set name = ?, description = ?, target_date = ?, status = ?, closed_at = ?, updated_at = ?, updated_by = ? where id = ?`,
+			next.Name, next.Description, next.TargetDate, string(next.Status), timePtr(closedAt), now.String(), tr.Actor, cur.ID); err != nil {
+			return err
+		}
+		return insertResourceActivity(ctx, tx, cur.projectID, model.ResourceMilestone, cur.ID, model.ResourceUpdated, tr, now,
+			resourceChanges(milestoneFields(cur.Name, cur.Description, cur.TargetDate, cur.Status, cur.ClosedAt),
+				milestoneFields(next.Name, next.Description, next.TargetDate, next.Status, closedAt)))
 	})
 	if err != nil {
 		return nil, err

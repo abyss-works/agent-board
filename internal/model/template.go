@@ -18,7 +18,7 @@ type Template struct {
 // The text is the "이슈 템플릿" section of skills/tool-agb/SKILL.md, which is
 // the source; template_test.go compares the two so they cannot drift apart.
 var Templates = []Template{
-	newTemplate(TypeFeature, "만들거나 바꿀 것을 명사형으로 쓴다.",
+	newTemplate(TypeFeature, "`<사용자>는 <무엇>을 할 수 있다` 형식으로 쓴다.",
 		"## 배경\n"+
 			"왜 필요한지. 요청한 사람과 날짜, 관련 결정이나 이슈.\n"+
 			"\n"+
@@ -28,7 +28,7 @@ var Templates = []Template{
 			"## 완료 조건\n"+
 			"- 확인할 수 있는 조건. 실행할 명령, 볼 화면, 받을 응답.\n",
 	),
-	newTemplate(TypeBug, "잘못된 동작을 쓴다.",
+	newTemplate(TypeBug, "`<위치>에서 <현상> 문제 수정` 형식으로 쓴다.",
 		"## 현상\n"+
 			"기대한 동작과 실제 동작.\n"+
 			"\n"+
@@ -43,7 +43,7 @@ var Templates = []Template{
 			"- 재현 절차에서 기대한 동작이 나온다.\n"+
 			"- 회귀 테스트\n",
 	),
-	newTemplate(TypeDesign, "정할 대상을 쓴다.",
+	newTemplate(TypeDesign, "`<주제> 결정` 형식으로 쓴다.",
 		"## 배경\n"+
 			"왜 지금 정해야 하는지.\n"+
 			"\n"+
@@ -59,7 +59,7 @@ var Templates = []Template{
 			"## 완료 조건\n"+
 			"- 정한 내용이 명세나 원칙 문서에 반영되고 참조(`doc:`)로 연결된다.\n",
 	),
-	newTemplate(TypeIdea, "아이디어를 명사형으로 쓴다.",
+	newTemplate(TypeIdea, "`<무엇> 검토` 형식으로 쓴다.",
 		"## 내용\n"+
 			"아이디어를 한두 문단으로.\n"+
 			"\n"+
@@ -69,7 +69,7 @@ var Templates = []Template{
 			"## 검토할 것\n"+
 			"- 채택 전에 확인할 질문\n",
 	),
-	newTemplate(TypeObservation, "관측한 현상을 쓴다.",
+	newTemplate(TypeObservation, "`<대상>의 <현상> 관찰` 형식으로 쓴다.",
 		"## 현상\n"+
 			"확인한 사실과 근거(명령, 로그, 수치).\n"+
 			"\n"+

@@ -132,16 +132,17 @@ func TestTokenJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"id":7,"actor":"codex","client_host":"DESKTOP-RPLTFHM","created_at":"2026-10-19T01:21:10.000Z","created_by":"owner",` +
-		`"last_used_at":null,"revoked_at":null,"revoked_by":null}`
+		`"last_used_at":null,"revoked_at":null,"revoked_by":null,"revoked_session":null,"revoked_host":null}`
 	if string(b) != want {
 		t.Errorf("token JSON =\n%s\nwant\n%s", b, want)
 	}
 
-	used, revoked, by := created, created, "owner"
-	full := Token{ID: 8, Actor: "claude", ClientHost: "desk", CreatedAt: created, CreatedBy: "owner", LastUsedAt: &used, RevokedAt: &revoked, RevokedBy: &by}
+	used, revoked, by, session, host := created, created, "owner", "s-1", "pc"
+	full := Token{ID: 8, Actor: "claude", ClientHost: "desk", CreatedAt: created, CreatedBy: "owner", LastUsedAt: &used, RevokedAt: &revoked, RevokedBy: &by,
+		RevokedSession: &session, RevokedHost: &host}
 	b, _ = json.Marshal(full)
 	want = `{"id":8,"actor":"claude","client_host":"desk","created_at":"2026-10-19T01:21:10.000Z","created_by":"owner",` +
-		`"last_used_at":"2026-10-19T01:21:10.000Z","revoked_at":"2026-10-19T01:21:10.000Z","revoked_by":"owner"}`
+		`"last_used_at":"2026-10-19T01:21:10.000Z","revoked_at":"2026-10-19T01:21:10.000Z","revoked_by":"owner","revoked_session":"s-1","revoked_host":"pc"}`
 	if string(b) != want {
 		t.Errorf("revoked token JSON =\n%s\nwant\n%s", b, want)
 	}
@@ -149,7 +150,7 @@ func TestTokenJSON(t *testing.T) {
 	// The exchange response is the token followed by its secret, which no other view shows.
 	b, _ = json.Marshal(IssuedToken{Token: fresh, Secret: "agb_secret"})
 	want = `{"id":7,"actor":"codex","client_host":"DESKTOP-RPLTFHM","created_at":"2026-10-19T01:21:10.000Z","created_by":"owner",` +
-		`"last_used_at":null,"revoked_at":null,"revoked_by":null,"token":"agb_secret"}`
+		`"last_used_at":null,"revoked_at":null,"revoked_by":null,"revoked_session":null,"revoked_host":null,"token":"agb_secret"}`
 	if string(b) != want {
 		t.Errorf("issued token JSON =\n%s\nwant\n%s", b, want)
 	}

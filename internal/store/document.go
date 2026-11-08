@@ -69,7 +69,7 @@ type DocumentFilter struct {
 
 // documentState is the SQL expression of the state of the document d.
 const documentState = `case when d.archived = 1 then 'archived'
-	when exists (select 1 from document_relation sr where sr.kind = 'supersedes' and sr.target_document_id = d.id) then 'superseded'
+	when exists (select 1 from document_relation sr where sr.kind = 'supersedes' and sr.target_document_id = d.id and sr.removed_at is null) then 'superseded'
 	else 'current' end`
 
 // documentCols are the columns of a document without its content.
@@ -219,7 +219,7 @@ func (s *Store) PutDocument(ctx context.Context, tr model.Trace, project, name s
 				}
 			}
 			created = true
-			return reresolveRelations(ctx, tx, self)
+			return reresolveRelations(ctx, tx, tr, s.stamp(), self)
 		case stored != hash:
 			return &ImmutableError{SHA256: stored}
 		}
@@ -451,18 +451,24 @@ func loadDocumentRow(ctx context.Context, tx *sql.Tx, project, name string) (doc
 	return r, err
 }
 
-// insertDocumentActivity appends the change of a document to its activity and
-// stamps the document.
-func insertDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) error {
+// appendDocumentActivity appends a record to the activity of a document.
+func appendDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) error {
 	b, err := json.Marshal(changes)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into document_activity(document_id, actor_id, session_id, client_host, at, changes) values (?, ?, ?, ?, ?, ?)`,
-		docID, tr.Actor, tr.SessionID, tr.ClientHost, at.String(), string(b)); err != nil {
+	_, err = tx.ExecContext(ctx, `insert into document_activity(document_id, actor_id, session_id, client_host, at, changes) values (?, ?, ?, ?, ?, ?)`,
+		docID, tr.Actor, tr.SessionID, tr.ClientHost, at.String(), string(b))
+	return err
+}
+
+// insertDocumentActivity appends the change of a document to its activity and
+// stamps the document.
+func insertDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) error {
+	if err := appendDocumentActivity(ctx, tx, docID, tr, at, changes); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `update document set updated_at = ?, updated_by = ? where id = ?`, at.String(), tr.Actor, docID)
+	_, err := tx.ExecContext(ctx, `update document set updated_at = ?, updated_by = ? where id = ?`, at.String(), tr.Actor, docID)
 	return err
 }
 
@@ -495,6 +501,7 @@ func (s *Store) SetDocumentArchived(ctx context.Context, tr model.Trace, project
 // change is recorded in the activity of the document.
 func (s *Store) ChangeDocumentRelation(ctx context.Context, tr model.Trace, project, name string, kind model.RelationKind, target string, add bool) (*model.DocumentResult, error) {
 	var warnings []model.DocumentWarning
+	at := s.stamp()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		row, err := loadDocumentRow(ctx, tx, project, name)
 		if err != nil {
@@ -530,9 +537,10 @@ func (s *Store) ChangeDocumentRelation(ctx context.Context, tr model.Trace, proj
 				return err
 			}
 		} else {
-			if _, err := tx.ExecContext(ctx, `delete from document_relation where document_id = ? and kind = ? and
+			if _, err := tx.ExecContext(ctx, `update document_relation set removed_at = ?, removed_by = ?, removed_session = ?, removed_host = ?
+				where removed_at is null and document_id = ? and kind = ? and
 				((target_document_id is not null and target_document_id = ?) or (target_issue_id is not null and target_issue_id = ?) or target_text = ?)`,
-				row.id, string(kind), t.docID, t.issueID, target); err != nil {
+				at.String(), tr.Actor, tr.SessionID, tr.ClientHost, row.id, string(kind), t.docID, t.issueID, target); err != nil {
 				return err
 			}
 		}
@@ -544,7 +552,7 @@ func (s *Store) ChangeDocumentRelation(ctx context.Context, tr model.Trace, proj
 		if len(changes) == 0 {
 			return nil
 		}
-		return insertDocumentActivity(ctx, tx, row.id, tr, s.stamp(), changes)
+		return insertDocumentActivity(ctx, tx, row.id, tr, at, changes)
 	})
 	if err != nil {
 		return nil, err

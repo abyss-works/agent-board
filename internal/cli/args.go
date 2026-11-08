@@ -28,6 +28,7 @@ type globals struct {
 	clientHost string
 	config     string
 	fields     string
+	text       bool
 }
 
 func (g *globals) addTo(fs *flag.FlagSet) {
@@ -39,6 +40,7 @@ func (g *globals) addTo(fs *flag.FlagSet) {
 	fs.StringVar(&g.clientHost, "client-host", g.clientHost, "")
 	fs.StringVar(&g.config, "config", g.config, "")
 	fs.StringVar(&g.fields, "fields", g.fields, "")
+	fs.BoolVar(&g.text, "text", g.text, "")
 }
 
 // newFlagSet builds a silent flag set; usage and errors are reported by
@@ -75,7 +77,26 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 		pos = append(pos, rest[0])
 		args = rest[1:]
 	}
+	if err := checkTextFlag(fs); err != nil {
+		return nil, err
+	}
 	return pos, nil
+}
+
+// checkTextFlag rejects --text without --fields, and a --fields that names
+// nothing, before the command does any work.
+func checkTextFlag(fs *flag.FlagSet) error {
+	text, fields := fs.Lookup("text"), fs.Lookup("fields")
+	if text == nil || fields == nil {
+		return nil
+	}
+	if v := fields.Value.String(); v != "" && len(parsePaths(v)) == 0 {
+		return usageErrorf("--fields 에 필드 이름이 없습니다. 예: --fields key,title")
+	}
+	if text.Value.String() != "true" || fields.Value.String() != "" {
+		return nil
+	}
+	return usageErrorf("--text 는 --fields 와 함께 씁니다. 예: --fields key,title --text")
 }
 
 // usageError is a mistake in the command line or the configuration. It

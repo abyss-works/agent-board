@@ -23,6 +23,10 @@ type TokenInput struct {
 	ClientHost string
 	Secret     string
 	CreatedBy  string
+	// ApprovedSession and ApprovedHost are the session and device of the
+	// approval; they are kept on the tokens the new one replaces.
+	ApprovedSession string
+	ApprovedHost    string
 }
 
 // hashToken is the SHA-256 of a bearer string in hex, which the token table
@@ -32,13 +36,13 @@ func hashToken(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-const tokenCols = `t.id, t.actor_id, t.client_host, t.created_at, t.created_by, t.last_used_at, t.revoked_at, t.revoked_by`
+const tokenCols = `t.id, t.actor_id, t.client_host, t.created_at, t.created_by, t.last_used_at, t.revoked_at, t.revoked_by, t.revoked_session, t.revoked_host`
 
 func scanToken(sc rowScanner) (*model.Token, error) {
 	var t model.Token
 	var created string
 	var used, revoked, revokedBy sql.NullString
-	if err := sc.Scan(&t.ID, &t.Actor, &t.ClientHost, &created, &t.CreatedBy, &used, &revoked, &revokedBy); err != nil {
+	if err := sc.Scan(&t.ID, &t.Actor, &t.ClientHost, &created, &t.CreatedBy, &used, &revoked, &revokedBy, &t.RevokedSession, &t.RevokedHost); err != nil {
 		return nil, err
 	}
 	var err error
@@ -79,8 +83,8 @@ func (s *Store) CreateToken(ctx context.Context, in TokenInput) (*model.Token, e
 	now := s.stamp().String()
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ? where actor_id = ? and client_host = ? and revoked_at is null`,
-			now, in.CreatedBy, in.Actor, in.ClientHost); err != nil {
+		if _, err := tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ?, revoked_session = ?, revoked_host = ? where actor_id = ? and client_host = ? and revoked_at is null`,
+			now, in.CreatedBy, in.ApprovedSession, in.ApprovedHost, in.Actor, in.ClientHost); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `insert into token(actor_id, client_host, token_hash, created_at, created_by) values (?, ?, ?, ?, ?)`,
@@ -163,9 +167,10 @@ func (s *Store) ListTokens(ctx context.Context, filter model.TokenFilter) ([]mod
 	return items, rows.Err()
 }
 
-// RevokeToken revokes a token in the name of an actor. A token that is already
-// revoked is returned as it is, so repeating the call is harmless.
-func (s *Store) RevokeToken(ctx context.Context, id int64, by string) (*model.Token, error) {
+// RevokeToken revokes a token in the name of the actor, session and device of
+// tr. A token that is already revoked is returned as it is, so repeating the
+// call is harmless.
+func (s *Store) RevokeToken(ctx context.Context, id int64, tr model.Trace) (*model.Token, error) {
 	now := s.stamp().String()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		t, err := getToken(ctx, tx, id)
@@ -175,7 +180,8 @@ func (s *Store) RevokeToken(ctx context.Context, id int64, by string) (*model.To
 		if t.RevokedAt != nil {
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ? where id = ?`, now, by, id)
+		_, err = tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ?, revoked_session = ?, revoked_host = ? where id = ?`,
+			now, tr.Actor, tr.SessionID, tr.ClientHost, id)
 		return err
 	})
 	if err != nil {

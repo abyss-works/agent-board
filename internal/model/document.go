@@ -22,11 +22,14 @@ const (
 	DocumentOther DocumentKind = "other"
 )
 
-// recordKinds are the kinds a record document file name may carry.
-var recordKinds = []DocumentKind{DocumentDecision, DocumentIncident, DocumentReport, DocumentImplementation}
+// MaxDocumentKindLen is the longest kind in bytes.
+const MaxDocumentKindLen = 32
 
-// DocumentKinds lists every document kind.
-var DocumentKinds = append(append([]DocumentKind{}, recordKinds...), DocumentOther)
+// DocumentKindFormat describes a valid kind for messages. A kind holds no
+// hyphen so that a file name splits at the first hyphen after the timestamp.
+const DocumentKindFormat = "영문 소문자로 시작하고 영문 소문자, 숫자, _로만 이루어진 1~32자"
+
+var documentKindRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // DocumentLocation is where a document lay in the management repository. The
 // server no longer stores it: a document response carries the value computed
@@ -45,8 +48,14 @@ const (
 // DocumentLocations lists every location.
 var DocumentLocations = []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}
 
-// ParseDocumentKind returns the document kind named v.
-func ParseDocumentKind(v string) (DocumentKind, bool) { return parseEnum(v, DocumentKinds) }
+// ParseDocumentKind returns the document kind named v. Any kind of a valid
+// format is accepted; which kinds a repository uses is its own choice.
+func ParseDocumentKind(v string) (DocumentKind, bool) {
+	if len(v) > MaxDocumentKindLen || !documentKindRE.MatchString(v) {
+		return "", false
+	}
+	return DocumentKind(v), true
+}
 
 // ParseDocumentLocation returns the document location named v.
 func ParseDocumentLocation(v string) (DocumentLocation, bool) {
@@ -162,9 +171,10 @@ type DocumentActivity struct {
 	Changes    map[string]Change `json:"changes"`
 }
 
-// documentNameRE is the file name yyyy-mm-dd-HHMM-<kind>-<slug>.md. The kind is
-// checked against DocumentKinds.
-var documentNameRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{4}-([a-z]+)-[a-z0-9-]+\.md$`)
+// documentNameRE is the file name yyyy-mm-dd-HHMM-<kind>-<slug>.md. The kind
+// holds no hyphen, so the name splits at the first hyphen after the timestamp;
+// its length is checked by ParseDocumentKind.
+var documentNameRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{4}-([a-z][a-z0-9_]*)-[a-z0-9-]+\.md$`)
 
 // ParseDocumentName returns the kind a record document file name carries, or
 // false when the name does not follow the pattern.
@@ -173,7 +183,11 @@ func ParseDocumentName(name string) (DocumentKind, bool) {
 	if m == nil {
 		return "", false
 	}
-	return parseEnum(m[1], recordKinds)
+	kind, ok := ParseDocumentKind(m[1])
+	if !ok || kind == DocumentOther {
+		return "", false
+	}
+	return kind, true
 }
 
 // ValidDocumentPath reports whether every "/" separated segment of p is
@@ -530,7 +544,7 @@ func ValidateDocument(name, content string, args DocumentArgs) (DocumentMeta, er
 	case imported && !ValidImportedName(name):
 		e.add("name", "/로 나눈 조각이 비지 않고 .으로 시작하지 않는 .md 파일의 상대 경로여야 합니다. _로 시작하거나 .example.md로 끝나는 서식은 받지 않습니다.")
 	case !imported && !nameOK:
-		e.add("name", "yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이어야 합니다. 종류는 %s 중 하나이고 slug는 영문 소문자, 숫자, 하이픈입니다. 이 형식이 아닌 문서는 imported로 올립니다.", joinEnum(recordKinds))
+		e.add("name", "yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이어야 합니다. 종류는 %s이고 slug는 영문 소문자, 숫자, 하이픈입니다. other는 imported 문서에만 쓸 수 있습니다. 이 형식이 아닌 문서는 imported로 올립니다.", DocumentKindFormat)
 	}
 
 	if args.Path != nil {
@@ -559,7 +573,7 @@ func ValidateDocument(name, content string, args DocumentArgs) (DocumentMeta, er
 	case kindText == "":
 		// Only a name that is no record name leaves the kind open; the name is already reported.
 	case !ok:
-		e.add("kind", "%s 중 하나여야 합니다.", joinEnum(DocumentKinds))
+		e.add("kind", "%s여야 합니다.", DocumentKindFormat)
 	case !imported && nameOK && kind != nameKind:
 		e.add("kind", "이름의 종류(%s)와 같아야 합니다. 받은 값은 %q입니다.", nameKind, kindText)
 	case !imported && kind == DocumentOther:

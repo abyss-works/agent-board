@@ -21,7 +21,7 @@ func CheckRecord(name, content string, template *string) []string {
 
 	kind, nameOK := ParseDocumentName(name)
 	if !nameOK {
-		add("파일명이 yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이 아니거나 종류가 %s 중 하나가 아닙니다.", joinEnum(recordKinds))
+		add("파일명이 yyyy-mm-dd-HHMM-<종류>-<slug>.md 형식이 아닙니다. 종류는 %s여야 하며 other일 수 없습니다.", DocumentKindFormat)
 	}
 	entries, fmOK := FrontMatterEntries(content)
 	body := content

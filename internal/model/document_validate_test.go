@@ -130,12 +130,15 @@ func TestValidateDocumentRules(t *testing.T) {
 		{"valid record", recordName, ok, DocumentArgs{}, nil},
 		{"valid record by arguments alone", recordName, "본문", DocumentArgs{Title: ptr("제목")}, nil},
 		{"bad record name", "priority-model.md", ok, DocumentArgs{}, []violation{{"name", ""}}},
-		{"unknown kind in the name", "2026-10-20-1544-plan-x.md", ok, DocumentArgs{}, []violation{{"name", ""}}},
+		{"bad kind format in the name", "2026-10-20-1544-Plan-x.md", ok, DocumentArgs{}, []violation{{"name", ""}}},
+		{"new kind in the name and the front matter", "2026-10-20-1544-lesson-x.md", front("kind: lesson", "title: 제목"), DocumentArgs{}, nil},
+		{"new kind in the name only", "2026-10-20-1544-lesson-x.md", front("title: 제목"), DocumentArgs{}, nil},
 		{"kind other for a record", recordName, ok, DocumentArgs{Kind: ptr("other")}, []violation{{"kind", ""}}},
 		{"kind differs from the name", recordName, front("kind: report", "title: 제목"), DocumentArgs{}, []violation{{"kind", ""}}},
 		{"kind argument differs from the name", recordName, ok, DocumentArgs{Kind: ptr("report")}, []violation{{"kind", ""}}},
 		{"kind argument fixes the front matter", recordName, front("kind: report", "title: 제목"), DocumentArgs{Kind: ptr("decision")}, nil},
-		{"kind not in the enum", recordName, ok, DocumentArgs{Kind: ptr("plan")}, []violation{{"kind", ""}}},
+		{"kind of a bad format", recordName, ok, DocumentArgs{Kind: ptr("Plan")}, []violation{{"kind", ""}}},
+		{"kind with a hyphen", recordName, ok, DocumentArgs{Kind: ptr("a-b")}, []violation{{"kind", ""}}},
 		{"missing title", recordName, front("kind: decision"), DocumentArgs{}, []violation{{"title", "required"}}},
 		{"blank title", recordName, front("kind: decision", "title:   "), DocumentArgs{}, []violation{{"title", "required"}}},
 		{"bad date", recordName, front("title: 제목", "date: 어제"), DocumentArgs{}, []violation{{"date", ""}}},
@@ -171,7 +174,8 @@ func TestValidateDocumentRules(t *testing.T) {
 		{"imported needs no title", "x.md", "본문", imp, nil},
 		{"imported keeps placeholders", "x.md", front("title: <문서 제목>"), imp, nil},
 		{"imported keeps sentences", "x.md", front(`supersedes: a.md의 일부`), imp, nil},
-		{"imported kind in the enum", "x.md", front("kind: plan"), imp, []violation{{"kind", ""}}},
+		{"imported kind of a bad format", "x.md", front("kind: Plan"), imp, []violation{{"kind", ""}}},
+		{"imported kind of a new kind", "x.md", front("kind: lesson"), imp, nil},
 		{"imported kind other", "x.md", front("kind: other"), imp, nil},
 		{"imported bad date", "x.md", front("date: 어제"), imp, []violation{{"date", ""}}},
 		{"imported record name", recordName, "본문", imp, nil},
@@ -280,5 +284,12 @@ func TestValidateDocumentDropsNoRelationValues(t *testing.T) {
 	meta, err = ValidateDocument(recordName, front("title: 제목", "supersedes: a.md"), DocumentArgs{Supersedes: []string{"none"}})
 	if err != nil || len(meta.Supersedes) != 0 {
 		t.Errorf("supersedes = %v, err = %v", meta.Supersedes, err)
+	}
+}
+
+func TestNameWithKindOtherSaysOtherIsForImported(t *testing.T) {
+	_, err := ValidateDocument("2026-11-08-1000-other-x.md", front("title: 제목"), DocumentArgs{})
+	if got := violations(t, err); len(got) != 1 || got[0].field != "name" || !strings.Contains(err.Error(), "other는 imported 문서에만") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -152,7 +152,7 @@ func supersedesReaches(ctx context.Context, q querier, from, to int64) (bool, er
 	var n int
 	err := q.QueryRowContext(ctx, `with recursive r(id) as (
 		select ? union select dr.target_document_id from document_relation dr join r on dr.document_id = r.id
-		where dr.kind = 'supersedes' and dr.target_document_id is not null
+		where dr.kind = 'supersedes' and dr.target_document_id is not null and dr.removed_at is null
 	) select count(*) from r where id = ?`, from, to).Scan(&n)
 	return n > 0, err
 }
@@ -178,17 +178,32 @@ func checkSupersedesCycle(ctx context.Context, q querier, self docSelf, rels []r
 	return nil
 }
 
+// insertRelation adds a relation. A relation of the same target that was
+// removed comes back by clearing its removal marks.
 func insertRelation(ctx context.Context, q querier, docID int64, t relTarget) error {
 	var doc, issue, text any
+	column, value := "target_text", any(t.text)
 	switch {
 	case t.docID != 0:
 		doc = t.docID
+		column, value = "target_document_id", t.docID
 	case t.issueID != 0:
 		issue = t.issueID
+		column, value = "target_issue_id", t.issueID
 	default:
 		text = t.text
 	}
-	_, err := q.ExecContext(ctx, `insert or ignore into document_relation(document_id, kind, target_document_id, target_issue_id, target_text)
+	res, err := q.ExecContext(ctx, `update document_relation set removed_at = null, removed_by = null, removed_session = null, removed_host = null
+		where id = (select min(id) from document_relation where document_id = ? and kind = ? and `+column+` = ? and removed_at is not null)
+		and not exists (select 1 from document_relation where document_id = ? and kind = ? and `+column+` = ? and removed_at is null)`,
+		docID, string(t.kind), value, docID, string(t.kind), value)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	_, err = q.ExecContext(ctx, `insert or ignore into document_relation(document_id, kind, target_document_id, target_issue_id, target_text)
 		values (?, ?, ?, ?, ?)`, docID, string(t.kind), doc, issue, text)
 	return err
 }
@@ -196,10 +211,13 @@ func insertRelation(ctx context.Context, q querier, docID int64, t relTarget) er
 // reresolveRelations resolves the relations of imported documents that were
 // kept as text and name the document that was just stored: the bare name in
 // the same project, or PROJECT/name. A supersedes relation that would close a
-// loop stays as text.
-func reresolveRelations(ctx context.Context, q querier, self docSelf) error {
+// loop stays as text. A relation that duplicates a resolved one is marked
+// removed. Each document whose relations change gets a record in its activity,
+// by the actor that stored the target.
+func reresolveRelations(ctx context.Context, tx *sql.Tx, tr model.Trace, at model.Time, self docSelf) error {
+	q := querier(tx)
 	rows, err := q.QueryContext(ctx, `select r.id, r.document_id, r.kind from document_relation r join document d on d.id = r.document_id
-		where r.target_text is not null and r.kind in ('supersedes', 'related')
+		where r.removed_at is null and r.target_text is not null and r.kind in ('supersedes', 'related')
 		and ((d.project_id = ? and r.target_text = ?) or r.target_text = ?) order by r.id`,
 		self.projectID, self.name, self.projectKey+"/"+self.name)
 	if err != nil {
@@ -222,6 +240,16 @@ func reresolveRelations(ctx context.Context, q querier, self docSelf) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	docs := make([]int64, 0, len(todo))
+	for _, p := range todo {
+		if !slices.Contains(docs, p.doc) {
+			docs = append(docs, p.doc)
+		}
+	}
+	before, err := loadRelations(ctx, q, docs)
+	if err != nil {
+		return err
+	}
 	for _, p := range todo {
 		if p.doc == self.id {
 			continue
@@ -236,17 +264,29 @@ func reresolveRelations(ctx context.Context, q querier, self docSelf) error {
 			}
 		}
 		var exists int
-		if err := q.QueryRowContext(ctx, `select count(*) from document_relation where document_id = ? and kind = ? and target_document_id = ?`,
+		if err := q.QueryRowContext(ctx, `select count(*) from document_relation where document_id = ? and kind = ? and target_document_id = ? and removed_at is null`,
 			p.doc, p.kind, self.id).Scan(&exists); err != nil {
 			return err
 		}
 		if exists > 0 {
-			_, err = q.ExecContext(ctx, `delete from document_relation where id = ?`, p.id)
+			_, err = q.ExecContext(ctx, `update document_relation set removed_at = ?, removed_by = ?, removed_session = ?, removed_host = ? where id = ?`,
+				at.String(), tr.Actor, tr.SessionID, tr.ClientHost, p.id)
 		} else {
 			_, err = q.ExecContext(ctx, `update document_relation set target_document_id = ?, target_text = null where id = ?`, self.id, p.id)
 		}
 		if err != nil {
 			return err
+		}
+	}
+	after, err := loadRelations(ctx, q, docs)
+	if err != nil {
+		return err
+	}
+	for _, id := range docs {
+		if changes := relationChanges(before[id], after[id]); len(changes) > 0 {
+			if err := appendDocumentActivity(ctx, tx, id, tr, at, changes); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -277,7 +317,7 @@ func loadRelations(ctx context.Context, q querier, ids []int64) (map[int64]*docR
 		join document d on d.id = r.document_id join project dp on dp.id = d.project_id
 		left join document td on td.id = r.target_document_id left join project tp on tp.id = td.project_id
 		left join issue ti on ti.id = r.target_issue_id
-		where r.document_id in (`+in+`) order by r.id`, args...)
+		where r.removed_at is null and r.document_id in (`+in+`) order by r.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +356,7 @@ func loadRelations(ctx context.Context, q querier, ids []int64) (map[int64]*docR
 		from document_relation r
 		join document sd on sd.id = r.document_id join project sp on sp.id = sd.project_id
 		join document td on td.id = r.target_document_id join project tp on tp.id = td.project_id
-		where r.kind = 'supersedes' and r.target_document_id in (`+in+`) order by r.id`, args...)
+		where r.removed_at is null and r.kind = 'supersedes' and r.target_document_id in (`+in+`) order by r.id`, args...)
 	if err != nil {
 		return nil, err
 	}

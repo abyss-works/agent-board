@@ -751,6 +751,10 @@ func TestRevokeToken(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `"token":`) {
 		t.Errorf("a revoked token shows no secret: %s", rec.Body.String())
 	}
+	// The session and device of the revoking request are kept.
+	if got.RevokedSession == nil || *got.RevokedSession == "" || got.RevokedHost == nil || *got.RevokedHost == "" {
+		t.Errorf("revoked by session %v on %v", got.RevokedSession, got.RevokedHost)
+	}
 	wantErr(t, e.do(t, "GET", "/v1/actors/me", "", withToken(tok.Secret, "codex")), 401, "unauthorized", "")
 
 	// Revoking again changes nothing and answers the same.
@@ -862,4 +866,27 @@ func TestLoginEndpointsStayOpenWhenTheWebClientIsServed(t *testing.T) {
 	if rec := e.do(t, "GET", "/v1/actors/me", "", withToken(tok.Secret, "claude")); rec.Code != 200 {
 		t.Errorf("the issued token: %d", rec.Code)
 	}
+}
+
+func TestReplacedTokenKeepsTheSessionAndDeviceOfTheApproval(t *testing.T) {
+	e := newEnvWith(t, loginActors, nil)
+	first := e.login(t, "codex", "desk", "owner")
+	g := e.startLogin(t, "codex", "desk")
+	headers := map[string]string{"X-Actor": "boss", "X-Session-Id": "s-approve", "X-Client-Host": "approver-pc"}
+	if rec := e.do(t, "PATCH", "/v1/device-authorizations/"+g.UserCode, `{"status":"approved"}`, headers); rec.Code != 200 {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.exchange(t, g.DeviceCode); rec.Code != 201 {
+		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, tok := range e.listTokens(t, "?status=revoked") {
+		if tok.ID != first.ID {
+			continue
+		}
+		if tok.RevokedBy == nil || *tok.RevokedBy != "boss" || tok.RevokedSession == nil || *tok.RevokedSession != "s-approve" || tok.RevokedHost == nil || *tok.RevokedHost != "approver-pc" {
+			t.Errorf("replaced token = %+v", tok)
+		}
+		return
+	}
+	t.Error("the first token was not revoked")
 }

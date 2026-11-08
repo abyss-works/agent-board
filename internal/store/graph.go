@@ -219,7 +219,7 @@ func (s *Store) buildGraph(ctx context.Context, similarModel string) (*graph, er
 		join document sd on sd.id = r.document_id join project sp on sp.id = sd.project_id
 		left join document td on td.id = r.target_document_id left join project tp on tp.id = td.project_id
 		left join issue ti on ti.id = r.target_issue_id
-		where r.target_text is null order by r.id`)
+		where r.target_text is null and r.removed_at is null order by r.id`)
 	if err != nil {
 		return nil, err
 	}

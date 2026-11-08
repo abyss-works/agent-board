@@ -151,14 +151,15 @@ func checkSiblingName(ctx context.Context, q querier, projectID int64, parent *i
 	return nil
 }
 
-// CreateTopic adds an active topic to a project. A topic has no activity
-// record; created_by and updated_by name the actor.
+// CreateTopic adds an active topic to a project and records it in the
+// resource activity of the project.
 func (s *Store) CreateTopic(ctx context.Context, tr model.Trace, project string, in TopicInput) (*model.Topic, error) {
 	var nameErr error
 	if err := model.ValidateTopicName(in.Name); err != nil {
 		nameErr = err
 	}
-	now := s.stamp().String()
+	at := s.stamp()
+	now := at.String()
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var projectID int64
@@ -188,8 +189,11 @@ func (s *Store) CreateTopic(ctx context.Context, tr model.Trace, project string,
 		if err != nil {
 			return err
 		}
-		id, err = res.LastInsertId()
-		return err
+		if id, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		return insertResourceActivity(ctx, tx, projectID, model.ResourceTopic, id, model.ResourceCreated, tr, at,
+			resourceChanges(nil, topicFields(in.Name, in.Parent, model.TopicActive)))
 	})
 	if err != nil {
 		return nil, err
@@ -197,12 +201,17 @@ func (s *Store) CreateTopic(ctx context.Context, tr model.Trace, project string,
 	return s.GetTopic(ctx, id)
 }
 
+// topicFields are the fields of a topic recorded in resource activity.
+func topicFields(name string, parent *int64, status model.TopicStatus) map[string]any {
+	return map[string]any{"name": name, "parent": parent, "status": status}
+}
+
 func sameParent(a, b *int64) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
-// UpdateTopic applies a merge patch. A patch that changes nothing leaves
-// updated_at and updated_by untouched.
+// UpdateTopic applies a merge patch and records what it changed. A patch that
+// changes nothing leaves updated_at and updated_by untouched and records nothing.
 func (s *Store) UpdateTopic(ctx context.Context, tr model.Trace, id int64, patch TopicPatch) (*model.Topic, error) {
 	var fieldErrs []error
 	if patch.Name != nil {
@@ -276,9 +285,13 @@ func (s *Store) UpdateTopic(ctx context.Context, tr model.Trace, id int64, patch
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, `update topic set name = ?, parent_id = ?, status = ?, updated_at = ?, updated_by = ? where id = ?`,
-			next.Name, next.Parent, string(next.Status), s.stamp().String(), tr.Actor, cur.ID)
-		return err
+		at := s.stamp()
+		if _, err = tx.ExecContext(ctx, `update topic set name = ?, parent_id = ?, status = ?, updated_at = ?, updated_by = ? where id = ?`,
+			next.Name, next.Parent, string(next.Status), at.String(), tr.Actor, cur.ID); err != nil {
+			return err
+		}
+		return insertResourceActivity(ctx, tx, cur.projectID, model.ResourceTopic, cur.ID, model.ResourceUpdated, tr, at,
+			resourceChanges(topicFields(cur.Name, cur.Parent, cur.Status), topicFields(next.Name, next.Parent, next.Status)))
 	})
 	if err != nil {
 		return nil, err
