@@ -310,7 +310,7 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		issue.Status = model.DefaultIssueStatus
 	}
 	if issue.Priority == "" {
-		issue.Priority = model.DefaultPriority(issue.Type, kind)
+		issue.Priority = model.DefaultPriority(issue.Type)
 	}
 	model.NormalizeIssue(&issue)
 	checks := []error{model.ValidateIssue(&issue)}

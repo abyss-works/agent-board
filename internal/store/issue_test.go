@@ -55,10 +55,26 @@ func TestCreateIssueIssuesKeysAndDefaults(t *testing.T) {
 	if a.Type != model.TypeFeature || a.Status != model.StatusBacklog || a.Priority != model.P2 || a.Body != tplBody(model.TypeFeature) || c.Body != "" || a.Version != 1 {
 		t.Errorf("defaults = %+v", a)
 	}
-	// The default priority follows the creator's kind and the issue's type.
-	idea := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "idea", Type: model.TypeIdea})
-	if c.Priority != model.P1 || idea.Priority != model.P3 {
-		t.Errorf("default priority: user %s, idea %s", c.Priority, idea.Priority)
+	// The default priority follows the issue's type, not the creator's kind.
+	for _, tc := range []struct {
+		typ  model.IssueType
+		want model.Priority
+	}{
+		{model.TypeBug, model.P1}, {model.TypeFeature, model.P2}, {model.TypeDesign, model.P2},
+		{model.TypeIdea, model.P3}, {model.TypeObservation, model.P3},
+	} {
+		for _, tr := range []model.Trace{trOwner, trClaude} {
+			in := IssueInput{Title: "typed", Type: tc.typ, Body: tplBody(tc.typ)}
+			if tc.typ == model.TypeObservation {
+				in.RecheckCondition = str("later")
+			}
+			if got := mustIssue(t, s, ctx, tr, in); got.Priority != tc.want {
+				t.Errorf("default priority: %s by %s = %s, want %s", tc.typ, tr.Actor, got.Priority, tc.want)
+			}
+		}
+	}
+	if c.Priority != model.P2 {
+		t.Errorf("user feature default priority = %s, want P2", c.Priority)
 	}
 	if a.Labels == nil || a.DependsOn == nil || a.Refs == nil || len(a.Labels) != 0 {
 		t.Errorf("arrays must be empty, not nil: %+v", a)

@@ -551,7 +551,7 @@ func createIssue(t testing.TB, c caller, in map[string]any) issue {
 // newIssue is createIssue as owner with the project filled in.
 func newIssue(t testing.TB, projectKey, title string, fields map[string]any) issue {
 	t.Helper()
-	// Fixtures name their priority; P2 keeps them apart from the user's default P1.
+	// Fixtures name their priority so the result does not depend on the type default.
 	in := map[string]any{"project": projectKey, "title": title, "priority": "P2"}
 	for k, v := range fields {
 		in[k] = v
