@@ -320,3 +320,26 @@ func TestAboveFloorKeepsScoresAtTheFloor(t *testing.T) {
 		t.Errorf("floor above all kept %d", len(got))
 	}
 }
+
+// The envelope says whether the search by meaning took part: ok when it did,
+// failed when the query could not be embedded and the keywords answered alone,
+// disabled on a server without it.
+func TestSearchReportsTheStateOfTheSearchByMeaning(t *testing.T) {
+	e, emb := hybridEnv(t)
+	if l := e.searchHits(t, "/v1/search?q=잠금"); l.Semantic != "ok" {
+		t.Errorf("semantic = %q, want ok", l.Semantic)
+	}
+	if l := e.searchHits(t, "/v1/search?q=lock&type=comment"); l.Semantic != "ok" || l.Total != 0 {
+		t.Errorf("an empty answer: semantic = %q, total %d", l.Semantic, l.Total)
+	}
+	emb.fail = true
+	if l := e.searchHits(t, "/v1/search?q=잠금"); l.Semantic != "failed" {
+		t.Errorf("semantic = %q, want failed", l.Semantic)
+	}
+	plain := newEnv(t)
+	plain.createProject(t, "XYZ", "plain")
+	plain.createIssue(t, `{"project":"XYZ","title":"잠금 조사"}`)
+	if l := plain.searchHits(t, "/v1/search?q=잠금"); l.Semantic != "disabled" || l.Total != 1 {
+		t.Errorf("semantic = %q, total %d, want disabled", l.Semantic, l.Total)
+	}
+}

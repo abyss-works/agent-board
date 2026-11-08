@@ -14,6 +14,8 @@ type searchList struct {
 	Items []model.SearchHit `json:"items"`
 	Total int               `json:"total"`
 	Limit int               `json:"limit"`
+	// Semantic is the state of the search by meaning: ok, disabled or failed.
+	Semantic string `json:"semantic"`
 }
 
 func TestSearch(t *testing.T) {

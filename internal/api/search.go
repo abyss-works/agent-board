@@ -61,14 +61,16 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
+	state := semanticDisabled
 	if h.opts.Semantic != nil {
+		state = semanticFailed
 		items, total, ok, err := h.hybridSearch(r.Context(), f, matchErr == nil)
 		if err != nil {
 			writeError(w, h.storeError(r, err))
 			return
 		}
 		if ok {
-			writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+			writeJSON(w, http.StatusOK, searchEnvelope(items, total, f, semanticOK))
 			return
 		}
 		if matchErr != nil {
@@ -82,7 +84,22 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.storeError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+	writeJSON(w, http.StatusOK, searchEnvelope(items, total, f, state))
+}
+
+// The states of the search by meaning reported in the envelope: it took part,
+// the server has none, or its query could not be embedded and the keywords
+// answered alone.
+const (
+	semanticOK       = "ok"
+	semanticDisabled = "disabled"
+	semanticFailed   = "failed"
+)
+
+func searchEnvelope(items []model.SearchHit, total int, f store.SearchFilter, semantic string) map[string]any {
+	env := envelope(items, total, f.Limit, f.Offset)
+	env["semantic"] = semantic
+	return env
 }
 
 // hybridSearch fuses the keyword ranking and the ranking by meaning. ok is
