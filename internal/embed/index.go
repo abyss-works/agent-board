@@ -38,9 +38,10 @@ func (x *Index) Load(rows []store.EmbeddingRow) {
 }
 
 // Search returns the n sources whose best chunk is nearest to q, nearest
-// first. Text of a result is that best chunk. Chunks whose vector has another
-// size than q are skipped.
-func (x *Index) Search(q []float32, n int) []store.SourceText {
+// first. Text of a result is that best chunk and Score its cosine similarity
+// to q. Only sources in allowed take part; nil allows every source. Chunks
+// whose vector has another size than q are skipped.
+func (x *Index) Search(q []float32, n int, allowed map[store.SourceRef]struct{}) []store.SourceText {
 	q = normalize(q)
 	type key struct {
 		source string
@@ -57,13 +58,18 @@ func (x *Index) Search(q []float32, n int) []store.SourceText {
 		if len(e.Vector) != len(q) {
 			continue
 		}
+		if allowed != nil {
+			if _, ok := allowed[store.SourceRef{Source: e.Source, ID: e.SourceID}]; !ok {
+				continue
+			}
+		}
 		var dot float32
 		for j, v := range e.Vector {
 			dot += v * q[j]
 		}
 		k := key{e.Source, e.SourceID}
 		if b, ok := best[k]; !ok || dot > b.score {
-			best[k] = scored{store.SourceText{Source: e.Source, ID: e.SourceID, Text: e.Text}, dot}
+			best[k] = scored{store.SourceText{Source: e.Source, ID: e.SourceID, Text: e.Text, Score: float64(dot)}, dot}
 		}
 	}
 	x.mu.RUnlock()
@@ -109,9 +115,10 @@ type Searcher struct {
 	Timeout  time.Duration // bound of one embedding attempt; zero means queryTimeout
 }
 
-// Search embeds the query and returns the n nearest sources. A failed
-// embedding is retried once unless ctx is already done.
-func (s *Searcher) Search(ctx context.Context, query string, n int) ([]store.SourceText, error) {
+// Search embeds the query and returns the n nearest sources among allowed, as
+// Index.Search does. A failed embedding is retried once unless ctx is already
+// done.
+func (s *Searcher) Search(ctx context.Context, query string, n int, allowed map[store.SourceRef]struct{}) ([]store.SourceText, error) {
 	vecs, err := s.embed(ctx, query)
 	if err != nil && ctx.Err() == nil {
 		vecs, err = s.embed(ctx, query)
@@ -119,7 +126,7 @@ func (s *Searcher) Search(ctx context.Context, query string, n int) ([]store.Sou
 	if err != nil {
 		return nil, err
 	}
-	return s.Index.Search(vecs[0], n), nil
+	return s.Index.Search(vecs[0], n, allowed), nil
 }
 
 func (s *Searcher) embed(ctx context.Context, query string) ([][]float32, error) {

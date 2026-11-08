@@ -102,3 +102,25 @@ func TestRecallHelpDescribesOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestRecallTellsWhenTheSearchByMeaningFailed(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/search", canned{body: strings.Replace(recallSearchJSON, `"offset":0}`, `"offset":0,"semantic":"failed"}`, 1)})
+	srv.on("GET", "/v1/graph", canned{body: graphJSON})
+	h := newHarness(t, srv, true)
+	h.app.TermWidth = 0
+	if code := h.run("recall", "잠금"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if !strings.Contains(h.stdout.String(), semanticFailedNotice) {
+		t.Errorf("output lacks the notice:\n%s", h.stdout.String())
+	}
+	h = newHarness(t, srv, false)
+	if code := h.run("recall", "잠금"); code != 0 {
+		t.Fatalf("json: code=%d stderr=%s", code, h.stderr)
+	}
+	var r recallResult
+	if err := json.Unmarshal(h.stdout.Bytes(), &r); err != nil || r.Semantic != "failed" {
+		t.Errorf("json semantic = %q, %v", r.Semantic, err)
+	}
+}

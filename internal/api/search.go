@@ -12,14 +12,18 @@ import (
 )
 
 // Semantic finds the n sources nearest in meaning to a query text, nearest
-// first.
+// first, among the allowed sources.
 type Semantic interface {
-	Search(ctx context.Context, query string, n int) ([]store.SourceText, error)
+	Search(ctx context.Context, query string, n int, allowed map[store.SourceRef]struct{}) ([]store.SourceText, error)
 }
 
 const (
 	// fusionPool is how many hits of each list take part in the fusion.
 	fusionPool = 50
+	// semanticFloor is the lowest cosine similarity at which a hit found by
+	// meaning is kept. Calibrated value; set it again when the embedding model
+	// changes.
+	semanticFloor = 0.45
 	// rrfK is the constant of the reciprocal rank fusion.
 	rrfK = 60
 )
@@ -58,14 +62,16 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
+	state := semanticDisabled
 	if h.opts.Semantic != nil {
+		state = semanticFailed
 		items, total, ok, err := h.hybridSearch(r.Context(), f, matchErr == nil)
 		if err != nil {
 			writeError(w, h.storeError(r, err))
 			return
 		}
 		if ok {
-			writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+			writeJSON(w, http.StatusOK, searchEnvelope(items, total, f, semanticOK))
 			return
 		}
 		if matchErr != nil {
@@ -79,7 +85,22 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.storeError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+	writeJSON(w, http.StatusOK, searchEnvelope(items, total, f, state))
+}
+
+// The states of the search by meaning reported in the envelope: it took part,
+// the server has none, or its query could not be embedded and the keywords
+// answered alone.
+const (
+	semanticOK       = "ok"
+	semanticDisabled = "disabled"
+	semanticFailed   = "failed"
+)
+
+func searchEnvelope(items []model.SearchHit, total int, f store.SearchFilter, semantic string) map[string]any {
+	env := envelope(items, total, f.Limit, f.Offset)
+	env["semantic"] = semantic
+	return env
 }
 
 // hybridSearch fuses the keyword ranking and the ranking by meaning. ok is
@@ -87,7 +108,11 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 // keyword search alone. withKeywords is false for a query the keyword search
 // cannot take, which then ranks by meaning alone.
 func (h *handler) hybridSearch(ctx context.Context, f store.SearchFilter, withKeywords bool) (items []model.SearchHit, total int, ok bool, err error) {
-	refs, err := h.opts.Semantic.Search(ctx, f.Query, fusionPool)
+	allowed, err := h.store.AllowedSources(ctx, f)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	refs, err := h.opts.Semantic.Search(ctx, f.Query, fusionPool, allowed)
 	if err != nil {
 		h.opts.Logger.Warn("semantic search failed, answering with keywords only", "err", err.Error())
 		return nil, 0, false, nil
@@ -100,7 +125,7 @@ func (h *handler) hybridSearch(ctx context.Context, f store.SearchFilter, withKe
 			return nil, 0, false, err
 		}
 	}
-	semantic, err := h.store.SemanticHits(ctx, refs, f)
+	semantic, err := h.store.SemanticHits(ctx, aboveFloor(refs, semanticFloor), f)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -109,6 +134,17 @@ func (h *handler) hybridSearch(ctx context.Context, f store.SearchFilter, withKe
 	fused = fused[min(f.Offset, total):]
 	fused = fused[:min(f.Limit, len(fused))]
 	return fused, total, true, nil
+}
+
+// aboveFloor keeps the refs whose score is at least floor, in order.
+func aboveFloor(refs []store.SourceText, floor float64) []store.SourceText {
+	var out []store.SourceText
+	for _, r := range refs {
+		if r.Score >= floor {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // hitID identifies the source of a hit: an issue by key, a comment by id and a
@@ -125,8 +161,8 @@ func hitID(h model.SearchHit) string {
 
 // fuse merges two ranked lists with reciprocal rank fusion: the score of a hit
 // is the sum of 1/(rrfK+rank) over the lists that hold it. A hit in both lists
-// keeps the keyword hit, which carries the marked snippet. Equal scores order
-// by type and key.
+// keeps the keyword hit, which carries the marked snippet, and takes the
+// semantic score of the other. Equal scores order by type and key.
 func fuse(keyword, semantic []model.SearchHit) []model.SearchHit {
 	score := map[string]float64{}
 	byID := map[string]model.SearchHit{}
@@ -137,6 +173,13 @@ func fuse(keyword, semantic []model.SearchHit) []model.SearchHit {
 			if _, seen := byID[id]; !seen {
 				byID[id] = hit
 			}
+		}
+	}
+	for _, hit := range semantic {
+		if id := hitID(hit); hit.SemanticScore != nil {
+			b := byID[id]
+			b.SemanticScore = hit.SemanticScore
+			byID[id] = b
 		}
 	}
 	out := make([]model.SearchHit, 0, len(byID))
