@@ -75,3 +75,30 @@ func TestFindJSONIsTheServerBody(t *testing.T) {
 		t.Errorf("json: code=%d out=%q", code, h.stdout.String())
 	}
 }
+
+const semanticFailedNotice = "의미 검색을 쓰지 못해 키워드 검색 결과만 나왔습니다."
+
+// A failed search by meaning is told in a footer line of the table, for results
+// and for none; ok and disabled add nothing.
+func TestFindTellsWhenTheSearchByMeaningFailed(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"failed", strings.Replace(findJSON, `"offset":0}`, `"offset":0,"semantic":"failed"}`, 1), true},
+		{"failed, no results", `{"items":[],"total":0,"limit":20,"offset":0,"semantic":"failed"}`, true},
+		{"ok", strings.Replace(findJSON, `"offset":0}`, `"offset":0,"semantic":"ok"}`, 1), false},
+		{"disabled", strings.Replace(findJSON, `"offset":0}`, `"offset":0,"semantic":"disabled"}`, 1), false},
+	} {
+		srv := newFakeServer(t)
+		srv.on("GET", "/v1/search", canned{body: c.body})
+		h := newHarness(t, srv, true)
+		h.app.TermWidth = 0
+		if code := h.run("find", "잠금"); code != 0 {
+			t.Fatalf("%s: code=%d stderr=%s", c.name, code, h.stderr)
+		}
+		if got := strings.Contains(h.stdout.String(), semanticFailedNotice); got != c.want {
+			t.Errorf("%s: notice shown %v, want %v:\n%s", c.name, got, c.want, h.stdout.String())
+		}
+	}
+}

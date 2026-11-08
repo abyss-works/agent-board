@@ -20,11 +20,19 @@ const (
 
 // SourceText is the text of one searchable source. Source is one of the
 // Source* constants and ID the row id of the issue, the activity record or the
-// document. As the result of a semantic query Text is the best matching chunk.
+// document. As the result of a semantic query Text is the best matching chunk
+// and Score its cosine similarity to the query.
 type SourceText struct {
 	Source string
 	ID     int64
 	Text   string
+	Score  float64
+}
+
+// SourceRef identifies one searchable source.
+type SourceRef struct {
+	Source string
+	ID     int64
 }
 
 // EmbeddingRow is one stored chunk of a source. EmbeddingMeta leaves Text and
@@ -146,6 +154,76 @@ func decodeVector(b []byte) []float32 {
 	return v
 }
 
+// sourceCond is the condition on the rows of one source kind that the filter
+// asks for beyond their id, with its arguments. It reads the aliases p for the
+// project, i for the issue, a for the comment and d for the document.
+func (f SearchFilter) sourceCond(source string) (string, []any) {
+	var q string
+	var args []any
+	if source == SourceComment && len(f.CommentKinds) > 0 {
+		q += " and a.comment_kind in (" + placeholders(len(f.CommentKinds)) + ")"
+		for _, k := range f.CommentKinds {
+			args = append(args, string(k))
+		}
+	}
+	if len(f.Projects) > 0 {
+		q += " and p.key in (" + placeholders(len(f.Projects)) + ")"
+		for _, p := range f.Projects {
+			args = append(args, p)
+		}
+	}
+	var cond string
+	var condArgs []any
+	if source == SourceDocument {
+		cond, condArgs = f.documentStateCond()
+	} else {
+		cond, condArgs = f.issueStatusCond()
+	}
+	return q + cond, append(args, condArgs...)
+}
+
+// AllowedSources returns the sources of the kinds, projects, comment kinds,
+// statuses and states of f, read from the current rows. A semantic search
+// ranks among these alone, so a nearer source that the filters exclude cannot
+// take a place from one they let through.
+func (s *Store) AllowedSources(ctx context.Context, f SearchFilter) (map[SourceRef]struct{}, error) {
+	out := map[SourceRef]struct{}{}
+	for _, source := range []string{SourceIssue, SourceComment, SourceDocument} {
+		if len(f.Types) > 0 && !slices.Contains(f.Types, model.SearchType(source)) {
+			continue
+		}
+		var q string
+		switch source {
+		case SourceIssue:
+			q = `select i.id from issue i join project p on p.id = i.project_id where i.status <> 'deleted'`
+		case SourceComment:
+			q = `select a.id from activity a join issue i on i.id = a.issue_id join project p on p.id = i.project_id
+				where a.kind = 'commented' and i.status <> 'deleted'`
+		case SourceDocument:
+			q = `select d.id from document d join project p on p.id = d.project_id where 1 = 1`
+		}
+		cond, args := f.sourceCond(source)
+		rows, err := s.db.QueryContext(ctx, q+cond, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[SourceRef{source, id}] = struct{}{}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // maxSemanticSnippet is the length in runes of the snippet of a hit found by
 // meaning.
 const maxSemanticSnippet = 160
@@ -180,29 +258,11 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 		case SourceComment:
 			q = `select a.id, p.key, i.key, a.id, a.summary, a.comment_kind, i.status, null, a.at from activity a join issue i on i.id = a.issue_id join project p on p.id = i.project_id
 				where a.kind = 'commented' and i.status <> 'deleted' and a.id in (` + in + `)`
-			if len(f.CommentKinds) > 0 {
-				q += " and a.comment_kind in (" + placeholders(len(f.CommentKinds)) + ")"
-				for _, k := range f.CommentKinds {
-					args = append(args, string(k))
-				}
-			}
 		case SourceDocument:
 			q = `select d.id, p.key, d.name, null, d.title, d.kind, null, (` + documentState + `), coalesce(d.date, d.created_at) from document d join project p on p.id = d.project_id
 				where d.id in (` + in + `)`
 		}
-		if len(f.Projects) > 0 {
-			q += " and p.key in (" + placeholders(len(f.Projects)) + ")"
-			for _, p := range f.Projects {
-				args = append(args, p)
-			}
-		}
-		var cond string
-		var condArgs []any
-		if source == SourceDocument {
-			cond, condArgs = f.documentStateCond()
-		} else {
-			cond, condArgs = f.issueStatusCond()
-		}
+		cond, condArgs := f.sourceCond(source)
 		q += cond
 		args = append(args, condArgs...)
 		rows, err := s.db.QueryContext(ctx, q, args...)
@@ -238,6 +298,8 @@ func (s *Store) SemanticHits(ctx context.Context, refs []SourceText, f SearchFil
 			continue
 		}
 		h.Snippet = collapse(r.Text, maxSemanticSnippet)
+		score := r.Score
+		h.SemanticScore = &score
 		if r.Source == SourceDocument {
 			docIDs[len(hits)] = r.ID
 		}

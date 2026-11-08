@@ -23,14 +23,15 @@ var findCmd = &command{
   전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾고, 이때는 접두 일치와 단어 수 상한이 적용되지 않습니다.
 - 의미 검색: 서버가 임베딩 API 를 켜 둔 때만 합니다. 검색어와 뜻이 가까운 것을 단어가 일치하지 않아도 찾으므로, 검색어의
   단어를 모두 담지 않은 항목도 결과에 섞입니다. 올린 지 얼마 안 된 내용은 임베딩 전이라 의미 검색에는 아직 잡히지 않을 수
-  있습니다. 의미 검색은 --project, --type, --comment-kind, --status, --state 로 거르기 전에 전체에서 가까운 것을 고르고
-  나중에 거릅니다. 옵션을 주지 않아도 기본값(열린 이슈, 유효한 문서)이 같은 방식으로 걸리므로, 의미 검색이 보태는
-  결과가 적거나 없을 수 있습니다.
+  있습니다. 의미 검색은 --project, --type, --comment-kind, --status, --state 와 옵션 없이도 걸리는 기본값(열린 이슈,
+  유효한 문서)을 먼저 적용한 뒤 그 안에서 가까운 것을 고릅니다.
 - 합치는 방식: 두 검색의 순위를 합쳐 정렬합니다. 두 검색에 모두 나온 항목이 앞서고, 결과 수에는 상한이 있습니다. 일치 부분을
   [ ] 로 표시하는 snippet 은 키워드 검색에 걸린 항목에만 있고, 의미 검색으로만 찾은 항목은 표시 없이 나옵니다.
-- 유사도 하한이 없습니다. 의미 검색을 켠 서버에서는 관련 없는 검색어에도 가장 가까운 항목이 결과로 나오고 "결과 없음"은
-  거의 나오지 않습니다. 결과가 있다는 것이 관련 있다는 뜻은 아니므로 snippet 과 원문을 읽어 판단합니다.
-- 서버가 의미 검색을 켜지 않았거나 검색어를 임베딩하지 못하면(한 번 다시 시도) 키워드 검색 결과만 나옵니다. 알림은 없습니다.
+- 유사도 하한: 의미 검색 점수가 서버가 정한 하한보다 낮은 항목은 결과에서 빠집니다. 하한을 넘었다는 것이 질문에 답이 된다는
+  뜻은 아니므로 snippet 과 원문을 읽어 판단합니다. 의미 검색으로 찾은 항목의 점수는 JSON 의 semantic_score 에 있고,
+  키워드 검색으로만 찾은 항목은 null 입니다.
+- 서버가 의미 검색을 켜지 않았으면 키워드 검색 결과만 나옵니다. 검색어를 임베딩하지 못하면(한 번 다시 시도) 역시 키워드
+  검색 결과만 나오고, 출력 끝에 그 알림이 한 줄 붙으며 JSON 의 semantic 이 failed 입니다(ok, disabled 도 이 필드에 있습니다).
   다만 단어 수가 키워드 검색의 상한을 넘는 검색어는, 의미 검색을 켠 서버에서 임베딩에 성공했을 때만 의미 검색으로 찾고
   그 밖에는 오류입니다.
 
@@ -84,12 +85,13 @@ var findCmd = &command{
 }
 
 func (a *App) renderSearch(w io.Writer, resp *client.Response) error {
-	l, err := decode[listOf[model.SearchHit]](resp)
+	l, err := decode[searchOf](resp)
 	if err != nil {
 		return err
 	}
 	if len(l.Items) == 0 {
 		fmt.Fprintln(w, "검색 결과가 없습니다.")
+		semanticNotice(w, l.Semantic)
 		return nil
 	}
 	tb := &table{header: []string{"TYPE", "PROJECT", "KEY", "KIND", "STATE", "AT", "TITLE", "SNIPPET"}}
@@ -110,5 +112,6 @@ func (a *App) renderSearch(w io.Writer, resp *client.Response) error {
 	tb.write(w, a.TermWidth)
 	printSupersession(w, rel)
 	footer(w, len(l.Items), l.Total, l.Offset)
+	semanticNotice(w, l.Semantic)
 	return nil
 }

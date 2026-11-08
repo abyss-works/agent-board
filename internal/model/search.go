@@ -47,4 +47,7 @@ type SearchHit struct {
 	SupersededBy []string `json:"superseded_by"`
 	At           string   `json:"at"`
 	Snippet      string   `json:"snippet"`
+	// SemanticScore is the cosine similarity to the query of a hit the search
+	// by meaning found; null for a hit found by keywords alone.
+	SemanticScore *float64 `json:"semantic_score"`
 }
