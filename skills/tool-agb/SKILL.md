@@ -337,7 +337,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
      - 결과나 범위가 합의한 명세와 달라졌다.
    - `review`는 사용자에게 결과를 받아들일지 물을 때만 쓴다. 사용자가 직접 해야 하는 일(메일 수신 확인, 외부 콘솔 설정, 계정 작업)이 남았으면 `review`로 두지 않는다. 그 일을 라벨 `user-task`를 단 별도 이슈로 등록하고, 에이전트 몫이 끝난 원래 이슈는 `done`으로 옮긴다.
      ```
-     agb issue create -p <KEY> -t "<사용자가 할 일>" --label user-task --priority P1 --ref issue:<원래 이슈> --body-file - <<'EOF'
+     agb issue create -p <KEY> -t "<사용자가 할 일>" --label user-task --ref issue:<원래 이슈> --body-file - <<'EOF'
      <종류별 템플릿. "할 일"에는 사용자가 그대로 따라 할 수 있는 단계와 기대 결과를 쓴다>
      EOF
      ```
