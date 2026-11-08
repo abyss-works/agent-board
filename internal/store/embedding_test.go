@@ -1,8 +1,10 @@
 package store
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -203,6 +205,72 @@ func TestSemanticHitsApplyStatusAndState(t *testing.T) {
 		}
 		if !slices.Equal(keys, c.want) {
 			t.Errorf("%+v: hits = %v, want %v", c.f, keys, c.want)
+		}
+	}
+}
+
+// TestAllowedSourcesAppliesTheSearchFilters lists the sources the filters let
+// through, read from the current rows: a closed issue, a deleted issue, a
+// superseded document and another project stay out as the filter says.
+func TestAllowedSourcesAppliesTheSearchFilters(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "XYZ")
+	mustProject(t, s, ctx, "ABC")
+	open := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "XYZ", Title: "open issue"})
+	done := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "XYZ", Title: "done issue", Status: model.StatusDone})
+	mustIssue(t, s, ctx, trOwner, IssueInput{Project: "XYZ", Title: "deleted issue", Status: model.StatusDeleted})
+	other := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "ABC", Title: "other project"})
+	finding := model.CommentFinding
+	c1, err := s.AddComment(ctx, trClaude, open.Key, "cause", str("summary"), &finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := s.AddComment(ctx, trClaude, open.Key, "plain", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putDoc(t, s, trClaude, "XYZ", relOld, "history", docText("decision", "old decision"))
+	putDoc(t, s, trClaude, "XYZ", relNew, "history", docText("decision", "new decision", "supersedes: "+relOld))
+	docID := func(name string) int64 {
+		var id int64
+		if err := s.db.QueryRow(`select id from document where name = ?`, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	ref := func(source string, id int64) SourceRef { return SourceRef{source, id} }
+	order := func(a, b SourceRef) int { return cmp.Or(strings.Compare(a.Source, b.Source), cmp.Compare(a.ID, b.ID)) }
+	allowed := func(f SearchFilter) []SourceRef {
+		t.Helper()
+		m, err := s.AllowedSources(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []SourceRef
+		for r := range m {
+			out = append(out, r)
+		}
+		slices.SortFunc(out, order)
+		return out
+	}
+	oi, di, xi := ref("issue", issueRowID(t, s, open.Key)), ref("issue", issueRowID(t, s, done.Key)), ref("issue", issueRowID(t, s, other.Key))
+	cm1, cm2 := ref("comment", c1.ID), ref("comment", c2.ID)
+	dOld, dNew := ref("document", docID(relOld)), ref("document", docID(relNew))
+	for _, c := range []struct {
+		name string
+		f    SearchFilter
+		want []SourceRef
+	}{
+		{"no filter", SearchFilter{}, []SourceRef{cm1, cm2, dNew, dOld, di, oi, xi}},
+		{"project", SearchFilter{Projects: []string{"ABC"}}, []SourceRef{xi}},
+		{"type", SearchFilter{Types: []model.SearchType{model.SearchComment}}, []SourceRef{cm1, cm2}},
+		{"comment kind", SearchFilter{CommentKinds: []model.CommentKind{model.CommentFinding}}, []SourceRef{cm1, dNew, dOld, di, oi, xi}},
+		{"status", SearchFilter{Statuses: []model.IssueStatus{model.StatusDone}}, []SourceRef{dNew, dOld, di}},
+		{"state", SearchFilter{States: []model.DocumentState{model.StateCurrent}}, []SourceRef{cm1, cm2, dNew, di, oi, xi}},
+	} {
+		slices.SortFunc(c.want, order)
+		if got := allowed(c.f); !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}
 }

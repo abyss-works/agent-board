@@ -107,7 +107,7 @@ func TestRunOnceIndexesAndSkipsWhatIsCurrent(t *testing.T) {
 		t.Fatalf("stored %d rows with %d embedded texts", n, f.texts())
 	}
 	// The index holds what was stored: the issue is the nearest to its own text.
-	if got := r.Index.Search(fakeVector("aaa\nbb"), 1); len(got) != 1 || got[0].Source != "issue" || got[0].Text != "aaa\nbb" {
+	if got := r.Index.Search(fakeVector("aaa\nbb"), 1, nil); len(got) != 1 || got[0].Source != "issue" || got[0].Text != "aaa\nbb" {
 		t.Errorf("index search = %+v", got)
 	}
 
@@ -135,7 +135,7 @@ func TestRunOnceReindexesAnEditedIssueAndAChangedModel(t *testing.T) {
 	if err != nil || res.Sources != 1 || f.texts() != 1 || f.calls[0][0] != "ccc" {
 		t.Fatalf("round after an edit = %+v, %v, calls %v", res, err, f.calls)
 	}
-	if got := r.Index.Search(fakeVector("ccc"), 1); len(got) != 1 || got[0].Text != "ccc" {
+	if got := r.Index.Search(fakeVector("ccc"), 1, nil); len(got) != 1 || got[0].Text != "ccc" {
 		t.Errorf("index after an edit = %+v", got)
 	}
 
@@ -171,7 +171,7 @@ func TestRunOnceRemovesWhatIsNoLongerSearchable(t *testing.T) {
 	if err != nil || res.Removed != 2 || stored(t, st) != 1 || len(f.calls) != 0 {
 		t.Fatalf("round after a delete = %+v, %v, %d rows, %d calls", res, err, stored(t, st), len(f.calls))
 	}
-	if got := r.Index.Search(fakeVector("bbb"), 5); len(got) != 1 || got[0].Text != a.Title {
+	if got := r.Index.Search(fakeVector("bbb"), 5, nil); len(got) != 1 || got[0].Text != a.Title {
 		t.Errorf("index after a delete = %+v", got)
 	}
 }
@@ -195,7 +195,7 @@ func TestRunOnceEndsTheRoundOnAnAPIError(t *testing.T) {
 	if n := stored(t, st); n != batchSize || res.Sources != 1 || len(f.calls) != 1 {
 		t.Errorf("after the error: %d rows, %+v, %d calls", n, res, len(f.calls))
 	}
-	if got := r.Index.Search(fakeVector("aaa"), 5); len(got) != 1 {
+	if got := r.Index.Search(fakeVector("aaa"), 5, nil); len(got) != 1 {
 		t.Errorf("index after the error = %+v", got)
 	}
 	// The next round retries the rest.

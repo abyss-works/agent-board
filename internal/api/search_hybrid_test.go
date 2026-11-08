@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/wsk0715/agent-board/internal/embed"
 	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/wsk0715/agent-board/internal/store"
 )
 
 // conceptEmbedder gives a text one dimension per concept, counting the words of
@@ -232,5 +235,88 @@ func TestHybridSearchTakesLongQuestions(t *testing.T) {
 	}
 	if rec := newEnv(t).do(t, "GET", long, "", nil); rec.Code != 400 {
 		t.Errorf("long question on a keyword server: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// crowdedEnv holds more issues than fusionPool that are nearer to the query
+// "lock" than the one issue the filters ask for, which is far from it. The
+// nearer issues are in project ABC and closed.
+func crowdedEnv(t *testing.T) *env {
+	t.Helper()
+	emb := &conceptEmbedder{}
+	index := &embed.Index{}
+	e := newEnvWith(t, testActors, func(o *Options) {
+		o.Semantic = &embed.Searcher{Embedder: emb, Prefix: "Query: ", Index: index}
+	})
+	e.createProject(t, "ABC", "crowd")
+	e.createProject(t, "XYZ", "target")
+	for i := 0; i < fusionPool+5; i++ {
+		e.createIssue(t, fmt.Sprintf(`{"project":"ABC","title":"lock %d","status":"done"}`, i))
+	}
+	e.createIssue(t, `{"project":"XYZ","title":"잠금 큐","status":"backlog"}`)
+	r := &embed.Runner{Store: e.st, Embedder: emb, Model: "m", Interval: 1, Index: index, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if _, err := r.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// The filters choose the sources before the nearest ones are taken: nearer
+// sources that a filter excludes do not fill the pool.
+func TestHybridSearchFiltersBeforeRanking(t *testing.T) {
+	e := crowdedEnv(t)
+	for _, target := range []string{
+		"/v1/search?q=lock&project=XYZ&type=issue",
+		"/v1/search?q=lock&status=open&type=issue",
+	} {
+		l := e.searchHits(t, target)
+		if l.Total != 1 || l.Items[0].Project != "XYZ" {
+			t.Errorf("%s = %v", target, hitKeys(l))
+		}
+	}
+}
+
+// A hit found by meaning carries its cosine similarity to the query; a hit that
+// only the keyword search found has none.
+func TestHybridSearchReportsTheSemanticScore(t *testing.T) {
+	e, _ := hybridEnv(t)
+	l := e.searchHits(t, "/v1/search?q=락&type=issue&project=AGB")
+	if len(l.Items) != 1 || l.Items[0].SemanticScore == nil || *l.Items[0].SemanticScore < 0.99 || *l.Items[0].SemanticScore > 1.0001 {
+		t.Fatalf("score of a semantic hit = %+v", l.Items)
+	}
+	rec := e.do(t, "GET", "/v1/search?q=락&type=document&project=AGB", "", nil)
+	if !strings.Contains(rec.Body.String(), `"semantic_score":`) {
+		t.Errorf("body lacks semantic_score: %s", rec.Body.String())
+	}
+	e.createIssue(t, `{"project":"AGB","title":"새 잠금 이슈"}`)
+	l = e.searchHits(t, "/v1/search?q=새+잠금&type=issue&project=AGB")
+	found := false
+	for _, h := range l.Items {
+		if h.Title != nil && *h.Title == "새 잠금 이슈" {
+			found = true
+			if h.SemanticScore != nil {
+				t.Errorf("a keyword only hit has score %v", *h.SemanticScore)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the issue created after indexing is missing: %v", hitKeys(l))
+	}
+}
+
+func TestAboveFloorKeepsScoresAtTheFloor(t *testing.T) {
+	refs := []store.SourceText{{ID: 1, Score: 0.9}, {ID: 2, Score: 0.7}, {ID: 3, Score: 0.6999}, {ID: 4, Score: 0.2}}
+	var ids []int64
+	for _, r := range aboveFloor(refs, 0.7) {
+		ids = append(ids, r.ID)
+	}
+	if !slices.Equal(ids, []int64{1, 2}) {
+		t.Errorf("kept = %v", ids)
+	}
+	if got := aboveFloor(refs, 0); len(got) != 4 {
+		t.Errorf("floor 0 kept %d of 4", len(got))
+	}
+	if got := aboveFloor(refs, 0.95); len(got) != 0 {
+		t.Errorf("floor above all kept %d", len(got))
 	}
 }
