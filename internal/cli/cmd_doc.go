@@ -119,12 +119,13 @@ func (a *App) renderDocumentSearch(w io.Writer, resp *client.Response) error {
 }
 
 var docSearchCmd = &command{
-	name: "search", summary: "기록 문서 전문 검색 (관련도 순)",
+	name: "search", summary: "기록 문서 키워드 검색 (모든 단어 포함, 관련도 순)",
 	usage: `사용법: agb doc search <검색어...> [옵션]
 
 기록 문서의 이름, 제목, 태그, 원문을 검색합니다. 프로젝트를 주지 않으면 모든 프로젝트를 찾습니다.
-여러 단어는 모두 포함(AND)이고, 전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾습니다. 관련도 순이고
-결과에 snippet 이 붙습니다. 원문은 agb doc get <KEY> <파일명> --content 로 읽습니다.
+키워드 검색이라 여러 단어는 모두 포함(AND)이고, 각 단어는 앞부분이 같으면 일치합니다(접두 일치). 단어는 최대 10개이고,
+전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾습니다. 의미 검색은 하지 않습니다. 뜻으로 찾으려면 agb find 나 agb recall 을
+씁니다. 결과는 키워드 관련도(FTS5 bm25) 순이고 snippet 이 붙습니다. 원문은 agb doc get <KEY> <파일명> --content 로 읽습니다.
 
 기본은 유효한(current) 문서만 찾습니다. 대체됨·아카이브 문서는 --state 로 넓힙니다. 결과의 STATE 열은
 문서의 상태이고, 다른 문서를 대체하거나 대체되었으면 표 아래에 이름을 보입니다.

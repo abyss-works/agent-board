@@ -59,7 +59,8 @@ var issueListCmd = &command{
 	usage: `사용법: agb issue list [옵션]
 
 옵션:
-` + issueFilterUsage + `  -q <검색어>             전문 검색. 결과에 snippet 이 붙습니다
+` + issueFilterUsage + `  -q <검색어>             이슈 키, 제목, 본문의 키워드 검색(모든 단어 포함 AND, 접두 일치, 큰따옴표는 구).
+                          의미 검색은 하지 않음. 결과에 snippet 이 붙고 정렬 기본은 관련도 순. 자세한 규칙은 agb search --help
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue list", g)
@@ -98,11 +99,14 @@ var issueListCmd = &command{
 }
 
 var searchCmd = &command{
-	name: "search", summary: "전문 검색",
+	name: "search", summary: "이슈 키워드 검색 (모든 단어 포함, 관련도 순)",
 	usage: `사용법: agb search <검색어...> [옵션]
 
-이슈의 키, 제목, 본문을 검색합니다. 여러 단어는 모두 포함(AND)이고, 전체를 큰따옴표로
-감싸면 구(phrase) 하나로 찾습니다. agb issue list -q 와 같습니다. 상태 기본값은 open 이므로
+이슈의 키, 제목, 본문을 키워드로 검색합니다. 여러 단어는 모두 포함(AND)이고, 각 단어는 앞부분이 같으면
+일치합니다(접두 일치). 단어는 최대 10개이고, 전체를 큰따옴표로 감싸면 구(phrase) 하나로 찾습니다.
+의미 검색은 하지 않으므로 단어가 일치하지 않는 이슈는 나오지 않고, 댓글과 기록 문서도 찾지 않습니다.
+뜻으로 찾거나 댓글·문서까지 찾으려면 agb find 나 agb recall 을 씁니다.
+agb issue list -q 와 같고, 결과는 키워드 관련도(FTS5 bm25) 순입니다. 상태 기본값은 open 이므로
 닫힌 이슈까지 찾으려면 --status all 을 줍니다.
 
 옵션:

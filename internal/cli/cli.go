@@ -169,7 +169,7 @@ const Usage = `사용법: agb <명령> [옵션]
 
 서버:
   serve             API 서버 실행 (AGB_* 환경변수로 설정)
-  version           바이너리 버전 출력
+  version           바이너리 버전 출력 (--version 도 같음)
 
 설정:
   config            설정 파일 경로, 표시, 수정 (url, actor, session_id, client_host, 토큰)
@@ -199,10 +199,10 @@ const Usage = `사용법: agb <명령> [옵션]
   board             상태별 보드
   queue             우선순위 큐
   labels            라벨과 사용 개수
-  search <검색어>   전문 검색 (issue list -q 와 같음)
-  find <검색어>     이슈·댓글·기록 문서 통합 검색
+  search <검색어>   이슈 키워드 검색: 모든 단어 포함(AND), 접두 일치 (issue list -q 와 같음)
+  find <검색어>     이슈·댓글·기록 문서 통합 검색: 키워드 + 의미 검색(서버가 켠 경우), 관련도 순
   graph <노드>      이슈·기록 문서에 연결된 이슈와 문서
-  recall <질문>     질문 하나로 관련 결정·사고·이슈와 그 연결
+  recall <질문>     find 와 같은 검색으로 관련 결정·사고·이슈를 찾고 그 연결을 붙임
 
 주제 (agb help <주제>):
   repo-config       저장소 설정 .agb.json 의 키, 규칙, 예시
