@@ -100,7 +100,7 @@ func TestCreateTokenRevokesTheActiveTokensOfTheSameActorAndHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fresh, err := s.CreateToken(ctx, TokenInput{Actor: "claude", ClientHost: "pc", Secret: "agb_fresh", CreatedBy: "owner"})
+	fresh, err := s.CreateToken(ctx, TokenInput{Actor: "claude", ClientHost: "pc", Secret: "agb_fresh", CreatedBy: "owner", ApprovedSession: "s-approve", ApprovedHost: "approver-pc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +119,9 @@ func TestCreateTokenRevokesTheActiveTokensOfTheSameActorAndHost(t *testing.T) {
 	o := byID[older.ID]
 	if o.RevokedAt == nil || o.RevokedBy == nil || *o.RevokedBy != "owner" || *o.RevokedAt != fresh.CreatedAt {
 		t.Errorf("the older token of the same device = %+v, want revoked by the approver at the time of the new token (%v)", o, fresh.CreatedAt)
+	}
+	if o.RevokedSession == nil || *o.RevokedSession != "s-approve" || o.RevokedHost == nil || *o.RevokedHost != "approver-pc" {
+		t.Errorf("the older token was revoked by session %v on %v, want the approver's", o.RevokedSession, o.RevokedHost)
 	}
 	if byID[otherHost.ID].RevokedAt != nil || byID[otherActor.ID].RevokedAt != nil {
 		t.Errorf("tokens of another device or actor were revoked: %+v %+v", byID[otherHost.ID], byID[otherActor.ID])

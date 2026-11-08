@@ -230,6 +230,9 @@ var projectActivityCmd = &command{
 		if err != nil {
 			return err
 		}
+		if f.ID != 0 && f.Resource == "" {
+			return usageErrorf("--id 는 --resource 와 함께 써야 합니다.")
+		}
 		c, err := a.client(g, true)
 		if err != nil {
 			return err

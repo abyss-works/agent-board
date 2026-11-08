@@ -6,8 +6,8 @@
 
 ### 서버와 API
 
-- 프로젝트, 주제, 마일스톤의 생성, 수정, 삭제 표시(`status`), 마일스톤의 닫기와 다시 열기를 기록한다. 기록은 행위자, 세션, 기기, 시각, 종류(`created`, `updated`)와 바뀐 필드의 이전 값과 새 값(`changes`, 이슈 활동 기록과 같은 `from`·`to` 형식)을 담고, 쓰기와 같은 트랜잭션에서 남긴다. 만들 때는 `from`이 `null`이다. 바뀐 것이 없는 수정은 기록하지 않는다. 이 기록 전에 만든 항목에는 생성 기록이 없다. `GET /v1/projects/{key}/activity`가 그 프로젝트와 주제, 마일스톤의 기록을 최신 순으로 돌려준다(`resource`는 `project`, `topic`, `milestone`, `id`는 주제나 마일스톤의 id, `limit`, `offset`).
-- 토큰을 폐기하면 폐기한 요청의 세션과 기기를 `revoked_session`, `revoked_host`로 남기고 토큰 응답에 담는다. 이 기록 전에 폐기한 토큰은 둘 다 `null`이다.
+- 프로젝트, 주제, 마일스톤의 생성, 수정, 삭제 표시(`status`), 마일스톤의 닫기와 다시 열기를 기록한다. 기록은 행위자, 세션, 기기, 시각, 종류(`created`, `updated`)와 바뀐 필드의 이전 값과 새 값(`changes`, 이슈 활동 기록과 같은 `from`·`to` 형식)을 담고, 쓰기와 같은 트랜잭션에서 남긴다. 만들 때는 `from`이 `null`이다. 바뀐 것이 없는 수정은 기록하지 않는다. 이 기록 전에 만든 항목에는 생성 기록이 없다. `GET /v1/projects/{key}/activity`가 그 프로젝트와 주제, 마일스톤의 기록을 최신 순으로 돌려준다(`resource`는 `project`, `topic`, `milestone`, `id`는 주제나 마일스톤의 id이며 `resource` 없이 주면 400, `limit`, `offset`).
+- 토큰을 폐기하면(기기 승인이 같은 행위자·기기의 이전 토큰을 폐기할 때는 승인한 요청) 폐기한 요청의 세션과 기기를 `revoked_session`, `revoked_host`로 남기고 토큰 응답에 담는다. 이 기록 전에 폐기한 토큰은 둘 다 `null`이다.
 - 마이그레이션 18: `resource_activity` 표와 `(project_id, id)`, `(resource, resource_id, id)` 인덱스를 더하고, `token`에 `revoked_session`, `revoked_host` 열을 더한다. 변경 지문이 이 기록을 포함한다.
 - 문서 관계를 제거해도 행을 지우지 않는다. `document_relation` 행에 제거 시각, 제거한 행위자, 세션, 기기를 적고, 조회, 그래프, 문서 상태, 유일성 검사에는 제거되지 않은 관계만 쓴다. 같은 관계를 다시 더하면 제거 표시를 풀어 되살린다. 문서를 올릴 때 이미 풀린 관계와 겹쳐 지워지던 가져온 문서의 풀리지 않은 관계도 같은 방식으로 제거 표시를 하고, 그때 풀리거나 제거된 관계의 이전 값과 새 값을 해당 문서의 활동 기록에 남긴다(전에는 풀리는 관계는 기록이 없었다). 마이그레이션 17: `document_relation`에 `removed_at`, `removed_by`, `removed_session`, `removed_host` 열을 더하고 다섯 인덱스를 제거되지 않은 행에만 걸리게 다시 만든다.
 - 프로젝트별 메시지 공간을 더한다. 다른 호스트·세션·에이전트에 짧은 작업 맥락을 넘기는 임시 쪽지이고, 이슈나 기록 문서와 별개다. `POST`·`GET /v1/projects/{key}/messages`(목록은 `to`, `all`, `limit`, `offset`), `GET`·`DELETE /v1/messages/{id}`. 메시지는 받는 쪽 라벨(`to`, 공백 없는 1~64자, 선택), 제목(1~200자), 본문(64KiB 이하), 만료 시각을 가진다. 만료 기간(`ttl`)은 `24h`, `30m`, `3d` 형식이고 1분 이상 90일 이하이며 기본은 7일이다. 보낸 행위자, 세션, 기기를 함께 남긴다.
@@ -22,7 +22,7 @@
 
 ### CLI
 
-- `agb project activity <KEY>`를 더한다. 프로젝트와 그 주제, 마일스톤의 생성·수정 기록을 최신 먼저 보이고, 행마다 시각, 행위자, 종류, 대상(`milestone#2`), 바뀐 필드의 이전 값과 새 값이 있다. `--resource`(`project`, `topic`, `milestone`), `--id`, `--limit`, `--offset`을 받는다.
+- `agb project activity <KEY>`를 더한다. 프로젝트와 그 주제, 마일스톤의 생성·수정 기록을 최신 먼저 보이고, 행마다 시각, 행위자, 종류, 대상(`milestone#2`), 바뀐 필드의 이전 값과 새 값이 있다. `--resource`(`project`, `topic`, `milestone`), `--id`(`--resource`와 함께만), `--limit`, `--offset`을 받는다.
 - 이슈 제목 형식 규칙을 스킬의 "2. 등록할 때"에 더하고 `agb issue create --help`에 요약한다. 형식은 종류별로 `feature` `<사용자>는 <무엇>을 할 수 있다`, `bug` `<위치>에서 <현상> 문제 수정`, `design` `<주제> 결정`, `idea` `<무엇> 검토`, `observation` `<대상>의 <현상> 관찰`이고, 50자 이내이며 이슈 키, 날짜, 내부 용어를 쓰지 않는다. `agb template list`와 템플릿 API의 `title_rule`도 같은 형식으로 바뀐다. 서버는 제목을 전과 같이 1~200자만 검사하고 기존 이슈 제목은 바꾸지 않는다.
 - `agb --version`이 `agb version`과 같은 출력을 낸다. 전에는 "flag provided but not defined: -version"으로 실패했다.
 - `find`, `recall`, `search`, `issue list -q`, `doc search`의 help와 `agb` 사용법이 실제 일치 방식을 적는다. `find`와 `recall`은 키워드 검색(모든 단어 포함, 접두 일치)과 의미 검색(서버가 임베딩 API를 켠 때만)의 순위를 합쳐 정렬한다. 의미 검색은 필터(옵션을 주지 않아도 걸리는 기본 상태 필터 포함)를 걸기 전에 전체에서 고르므로 보태는 결과가 적을 수 있고, 유사도 하한이 없다. 의미 검색을 쓸 수 없으면 키워드 검색만 한다. `search`, `issue list -q`, `doc search`는 키워드 검색만 한다. 검색 동작은 바뀌지 않는다.

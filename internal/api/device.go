@@ -30,8 +30,10 @@ type deviceRequest struct {
 	clientHost string
 	status     model.DeviceStatus
 	approvedBy string
-	createdAt  time.Time
-	expiresAt  time.Time
+	// approvedSession and approvedHost are the session and device of the approving request.
+	approvedSession, approvedHost string
+	createdAt                     time.Time
+	expiresAt                     time.Time
 }
 
 func (d deviceRequest) view() model.DeviceAuthorization {
@@ -159,7 +161,7 @@ func (s *deviceStore) get(userCode string) (deviceRequest, error) {
 }
 
 // decide approves or denies a pending request in the name of the user.
-func (s *deviceStore) decide(userCode string, status model.DeviceStatus, by string) (deviceRequest, error) {
+func (s *deviceStore) decide(userCode string, status model.DeviceStatus, by model.Trace) (deviceRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweep(s.now())
@@ -172,7 +174,7 @@ func (s *deviceStore) decide(userCode string, status model.DeviceStatus, by stri
 	}
 	d.status = status
 	if status == model.DeviceApproved {
-		d.approvedBy = by
+		d.approvedBy, d.approvedSession, d.approvedHost = by.Actor, by.SessionID, by.ClientHost
 	}
 	return *d, nil
 }
@@ -302,7 +304,7 @@ func (h *handler) patchDeviceAuthorization(w http.ResponseWriter, r *http.Reques
 		writeError(w, validationFailed([]Detail{{Field: "status", Message: "approved, denied 중 하나여야 합니다."}}))
 		return
 	}
-	d, err := h.devices.decide(code, status, TraceFrom(r.Context()).Actor)
+	d, err := h.devices.decide(code, status, TraceFrom(r.Context()))
 	if err != nil {
 		writeError(w, h.deviceError(r, err))
 		return

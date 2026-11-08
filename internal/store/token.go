@@ -23,6 +23,10 @@ type TokenInput struct {
 	ClientHost string
 	Secret     string
 	CreatedBy  string
+	// ApprovedSession and ApprovedHost are the session and device of the
+	// approval; they are kept on the tokens the new one replaces.
+	ApprovedSession string
+	ApprovedHost    string
 }
 
 // hashToken is the SHA-256 of a bearer string in hex, which the token table
@@ -79,8 +83,8 @@ func (s *Store) CreateToken(ctx context.Context, in TokenInput) (*model.Token, e
 	now := s.stamp().String()
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ? where actor_id = ? and client_host = ? and revoked_at is null`,
-			now, in.CreatedBy, in.Actor, in.ClientHost); err != nil {
+		if _, err := tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ?, revoked_session = ?, revoked_host = ? where actor_id = ? and client_host = ? and revoked_at is null`,
+			now, in.CreatedBy, in.ApprovedSession, in.ApprovedHost, in.Actor, in.ClientHost); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `insert into token(actor_id, client_host, token_hash, created_at, created_by) values (?, ?, ?, ?, ?)`,

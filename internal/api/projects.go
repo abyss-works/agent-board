@@ -27,6 +27,9 @@ func (h *handler) projectActivity(w http.ResponseWriter, r *http.Request) {
 		f.Resource = kind
 	}
 	if q.one("id") != "" {
+		if f.Resource == "" {
+			q.add("id", "resource와 함께 써야 합니다.")
+		}
 		f.ResourceID = int64(q.intRange("id", 0, 1, 1<<31-1))
 	}
 	if aerr := q.finish(); aerr != nil {

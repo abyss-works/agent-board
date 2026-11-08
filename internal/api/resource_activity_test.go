@@ -50,7 +50,7 @@ func TestProjectActivity(t *testing.T) {
 	}
 
 	// Bad input and a missing project.
-	for _, q := range []string{"?resource=issue", "?id=x", "?id=0", "?limit=0", "?bogus=1"} {
+	for _, q := range []string{"?resource=issue", "?id=3", "?id=x", "?id=0", "?limit=0", "?bogus=1"} {
 		if rec := e.do(t, "GET", "/v1/projects/AGB/activity"+q, "", nil); rec.Code != 400 {
 			t.Errorf("%s: %d %s", q, rec.Code, rec.Body.String())
 		}

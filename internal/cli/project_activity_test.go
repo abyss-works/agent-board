@@ -42,6 +42,10 @@ func TestProjectActivity(t *testing.T) {
 	if code := h.run("project", "activity", "AGB"); code != 0 || !strings.Contains(h.stdout.String(), "활동 기록이 없습니다.") {
 		t.Errorf("empty: code=%d out=%q", code, h.stdout.String())
 	}
+	n := len(srv.reqs)
+	if code := h.run("project", "activity", "AGB", "--id", "2"); code != 2 || len(srv.reqs) != n {
+		t.Errorf("--id without --resource: code=%d requests=%d", code, len(srv.reqs)-n)
+	}
 	if code := h.run("project", "activity"); code != 2 {
 		t.Errorf("no key: code=%d", code)
 	}
