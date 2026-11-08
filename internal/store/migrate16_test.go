@@ -52,12 +52,6 @@ func TestMigration16AddsMessageTable(t *testing.T) {
 	}
 	defer s.Close()
 
-	if SchemaVersion != 16 {
-		t.Errorf("SchemaVersion = %d", SchemaVersion)
-	}
-	if v := queryStrings(t, s, `pragma user_version`); v[0] != "16" {
-		t.Errorf("user_version = %v", v)
-	}
 	if n := queryStrings(t, s, `select count(*) from project`); n[0] != "1" {
 		t.Errorf("projects = %v", n)
 	}

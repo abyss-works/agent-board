@@ -635,3 +635,23 @@ func TestSearch(t *testing.T) {
 		t.Errorf("blank query = %q", m)
 	}
 }
+
+// An update rewrites the label, dependency and reference rows; the activity
+// keeps what they were.
+func TestUpdateIssueRecordsPreviousLinks(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	dep1 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "d1"})
+	dep2 := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "d2"})
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Title: "t", Labels: []string{"api"}, DependsOn: []string{dep1.Key}, Refs: []string{"file:a.md"}})
+
+	if _, _, err := s.UpdateIssue(ctx, trClaude, i.Key, IssuePatch{Labels: &[]string{"cli"}, DependsOn: &[]string{dep2.Key}, Refs: &[]string{"file:b.md"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	acts, _, _ := s.ListActivity(ctx, ActivityFilter{Issues: []string{i.Key}, Limit: 10})
+	ch := acts[0].Changes
+	if string(ch["labels"].From) != `["api"]` || string(ch["depends_on"].From) != `["`+dep1.Key+`"]` || string(ch["depends_on"].To) != `["`+dep2.Key+`"]` ||
+		string(ch["refs"].From) != `["file:a.md"]` || string(ch["refs"].To) != `["file:b.md"]` {
+		t.Errorf("changes = %+v", ch)
+	}
+}

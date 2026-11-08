@@ -73,7 +73,11 @@ func dumpTables(t *testing.T, db *sql.DB) map[string][]string {
 	t.Helper()
 	out := map[string][]string{}
 	for _, table := range []string{"document", "document_relation", "document_activity", "issue_ref", "embedding"} {
-		rows, err := db.Query(`select * from ` + table)
+		sel := "*"
+		if table == "document_relation" { // later migrations add columns
+			sel = "id, document_id, kind, target_document_id, target_issue_id, target_text"
+		}
+		rows, err := db.Query(`select ` + sel + ` from ` + table)
 		if err != nil {
 			t.Fatal(err)
 		}
