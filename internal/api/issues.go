@@ -395,6 +395,14 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 	default:
 		q.add("acknowledged", "true 또는 false여야 합니다.")
 	}
+	switch v := q.one("stale"); v {
+	case "":
+	case "true":
+		stale := true
+		f.Stale = &stale
+	default:
+		q.add("stale", "true여야 합니다.")
+	}
 	if p := q.one("parent"); p != "" {
 		if _, _, ok := model.ParseIssueKey(p); !ok && p != "none" {
 			q.add("parent", "이슈 키 또는 none이어야 합니다.")
