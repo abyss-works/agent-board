@@ -127,7 +127,7 @@ func TestTemplatesSerializeAsTheAPIDescribes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"type":"feature","title_rule":"만들거나 바꿀 것을 명사형으로 쓴다.","headings":["배경","할 일","완료 조건"],` +
+	want := `{"type":"feature","title_rule":"` + "`\\u003c사용자\\u003e는 \\u003c무엇\\u003e을 할 수 있다` 형식으로 쓴다." + `","headings":["배경","할 일","완료 조건"],` +
 		`"body":"## 배경\n왜 필요한지. 요청한 사람과 날짜, 관련 결정이나 이슈.\n\n## 할 일\n- 작업 단위 하나씩\n\n## 완료 조건\n- 확인할 수 있는 조건. 실행할 명령, 볼 화면, 받을 응답.\n"}`
 	if string(b) != want {
 		t.Errorf("feature template JSON:\n%s\nwant\n%s", b, want)
