@@ -278,7 +278,7 @@ tags: [queue]
 author: claude
 status: 채택
 supersedes: 2026-10-10-1000-decision-old.md
-related: [AGT/2026-10-11-1000-report-other.md, 2026-10-12-1000-report-local.md]
+related: [XYZ/2026-10-11-1000-report-other.md, 2026-10-12-1000-report-local.md]
 issue: AGB-7
 ---
 
@@ -301,7 +301,7 @@ func TestDocCheckAsksTheServerForTheRelations(t *testing.T) {
 	})
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/projects/CLI/documents/2026-10-10-1000-decision-old.md", canned{body: serverDoc("CLI", "2026-10-10-1000-decision-old.md", "history", "x")})
-	srv.on("GET", "/v1/projects/AGT/documents/2026-10-11-1000-report-other.md", canned{body: serverDoc("AGT", "2026-10-11-1000-report-other.md", "history", "x")})
+	srv.on("GET", "/v1/projects/XYZ/documents/2026-10-11-1000-report-other.md", canned{body: serverDoc("XYZ", "2026-10-11-1000-report-other.md", "history", "x")})
 	srv.on("GET", "/v1/issues/AGB-7", canned{body: issueJSON})
 	h := newHarness(t, srv, false)
 	if code := h.run("doc", "check", "--root", root, filepath.Join(root, "history", goodNewName)); code != 0 {
@@ -313,7 +313,7 @@ func TestDocCheckAsksTheServerForTheRelations(t *testing.T) {
 		paths = append(paths, r.Path)
 	}
 	joined := strings.Join(paths, " ")
-	for _, want := range []string{"/v1/projects/CLI/documents/2026-10-10-1000-decision-old.md", "/v1/projects/AGT/documents/2026-10-11-1000-report-other.md", "/v1/issues/AGB-7"} {
+	for _, want := range []string{"/v1/projects/CLI/documents/2026-10-10-1000-decision-old.md", "/v1/projects/XYZ/documents/2026-10-11-1000-report-other.md", "/v1/issues/AGB-7"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("requests lack %s: %v", want, paths)
 		}
@@ -328,7 +328,7 @@ func TestDocCheckAsksTheServerForTheRelations(t *testing.T) {
 	if code := h.run("doc", "check", "--root", root, filepath.Join(root, "history", goodNewName)); code != 1 {
 		t.Fatalf("missing targets: code=%d out=%s", code, h.stdout)
 	}
-	for _, want := range []string{"supersedes 의 문서 2026-10-10-1000-decision-old.md", "related 의 문서 AGT/2026-10-11-1000-report-other.md", "issue 의 이슈 AGB-7"} {
+	for _, want := range []string{"supersedes 의 문서 2026-10-10-1000-decision-old.md", "related 의 문서 XYZ/2026-10-11-1000-report-other.md", "issue 의 이슈 AGB-7"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, h.stdout)
 		}

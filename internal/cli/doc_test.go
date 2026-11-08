@@ -138,7 +138,7 @@ func (s *fakeServer) puts() []string {
 
 const docSearchJSON = `{"items":[` +
 	`{"project":"AGB","name":"2026-10-20-1544-decision-priority-model.md","kind":"decision","date":"2026-10-20 15:44","title":"우선순위 큐 모델은 등급과 서버 계산 순서로 한다","tags":["priority","queue"],"state":"current","archived":false,"imported":false,"path":null,"supersedes":["2026-10-18-0900-decision-queue-draft.md"],"superseded_by":[],"related":[],"issues":["AGB-21"],"unresolved_refs":[],"sha256":"a","size":10,"created_at":"2026-10-21T02:00:00.000Z","created_by":"claude","updated_at":"2026-10-21T02:00:00.000Z","updated_by":"claude","location":"history","snippet":"...[우선순위] 큐는 등급으로..."},` +
-	`{"project":"AGT","name":"2026-10-18-1000-decision-no-meta.md","kind":"decision","date":null,"title":null,"tags":[],"state":"archived","archived":true,"imported":false,"path":null,"supersedes":[],"superseded_by":["2026-11-01-1000-decision-meta.md"],"related":[],"issues":[],"unresolved_refs":[],"sha256":"b","size":10,"created_at":"2026-10-21T02:00:00.000Z","created_by":"claude","updated_at":"2026-10-21T02:00:00.000Z","updated_by":"claude","location":"archive","snippet":"메타데이터가 없는 [우선순위] 기록"}` +
+	`{"project":"XYZ","name":"2026-10-18-1000-decision-no-meta.md","kind":"decision","date":null,"title":null,"tags":[],"state":"archived","archived":true,"imported":false,"path":null,"supersedes":[],"superseded_by":["2026-11-01-1000-decision-meta.md"],"related":[],"issues":[],"unresolved_refs":[],"sha256":"b","size":10,"created_at":"2026-10-21T02:00:00.000Z","created_by":"claude","updated_at":"2026-10-21T02:00:00.000Z","updated_by":"claude","location":"archive","snippet":"메타데이터가 없는 [우선순위] 기록"}` +
 	`],"total":7,"limit":2,"offset":0}`
 
 func TestDocSearch(t *testing.T) {
@@ -159,7 +159,7 @@ func TestDocSearch(t *testing.T) {
 	}
 	for i, want := range [][]string{
 		{"AGB", "2026-10-20-1544-decision-priority-model.md", "current", "decision", "2026-10-20", "15:44"},
-		{"AGT", "2026-10-18-1000-decision-no-meta.md", "archived", "decision", "-", "-"},
+		{"XYZ", "2026-10-18-1000-decision-no-meta.md", "archived", "decision", "-", "-"},
 	} {
 		if got := strings.Fields(lines[i+1]); !equalStrings(got[:len(want)], want) {
 			t.Errorf("row %d = %v, want it to start with %v", i+1, got, want)
@@ -170,17 +170,17 @@ func TestDocSearch(t *testing.T) {
 		t.Errorf("title and snippet:\n%s", h.stdout)
 	}
 	for _, want := range []string{"AGB/2026-10-20-1544-decision-priority-model.md", "supersedes: 2026-10-18-0900-decision-queue-draft.md",
-		"AGT/2026-10-18-1000-decision-no-meta.md", "superseded_by: 2026-11-01-1000-decision-meta.md", "7건 중 2건 표시"} {
+		"XYZ/2026-10-18-1000-decision-no-meta.md", "superseded_by: 2026-11-01-1000-decision-meta.md", "7건 중 2건 표시"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, h.stdout)
 		}
 	}
 
 	// The words may be separate arguments; the filters are passed on.
-	if code := h.run("doc", "search", "-p", "AGB,AGT", "--kind", "decision,report", "--limit", "5", "우선순위", "큐"); code != 0 {
+	if code := h.run("doc", "search", "-p", "AGB,XYZ", "--kind", "decision,report", "--limit", "5", "우선순위", "큐"); code != 0 {
 		t.Fatalf("filters: code=%d stderr=%s", code, h.stderr)
 	}
-	want := "kind=decision%2Creport&limit=5&project=AGB%2CAGT&q=%EC%9A%B0%EC%84%A0%EC%88%9C%EC%9C%84+%ED%81%90"
+	want := "kind=decision%2Creport&limit=5&project=AGB%2CXYZ&q=%EC%9A%B0%EC%84%A0%EC%88%9C%EC%9C%84+%ED%81%90"
 	if got := srv.last().Query.Encode(); got != want {
 		t.Errorf("query = %s, want %s", got, want)
 	}

@@ -78,21 +78,21 @@ func insertOldDoc(t *testing.T, db *sql.DB, id, project int, name, location, kin
 
 func seed13(t *testing.T, db *sql.DB) {
 	mustExec(t, db, `insert into actor(id, kind, created_at) values ('claude', 'agent', 'x')`)
-	for i, k := range []string{"AGB", "AGT"} {
+	for i, k := range []string{"AGB", "XYZ"} {
 		mustExec(t, db, `insert into project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
 			values (?, ?, ?, 'active', 10, 'x', 'x', 'claude', 'claude')`, i+1, k, k)
 	}
 	for _, i := range []struct {
 		id, project int
 		key, status string
-	}{{1, 1, "AGB-1", "doing"}, {2, 1, "AGB-2", "deleted"}, {3, 2, "AGT-1", "backlog"}} {
+	}{{1, 1, "AGB-1", "doing"}, {2, 1, "AGB-2", "deleted"}, {3, 2, "XYZ-1", "backlog"}} {
 		mustExec(t, db, `insert into issue(id, project_id, number, key, title, body, type, status, priority, version, created_at, updated_at, status_changed_at, status_changed_by, created_by, updated_by)
 			values (?, ?, ?, ?, 't', '', 'feature', ?, 'P2', 1, 'x', 'x', 'x', 'claude', 'claude', 'claude')`, i.id, i.project, i.id, i.key, i.status)
 	}
 	insertOldDoc(t, db, 1, 1, mA, "history", "decision", fm("kind: decision", "title: a"))
 	insertOldDoc(t, db, 2, 1, mB, "history", "decision", fm("kind: decision", "supersedes: "+mA, "issue: AGB-1"))
 	insertOldDoc(t, db, 3, 1, mC, "history", "report", fm("kind: report", `supersedes: `+mA+`의 결론 중 "x"`))
-	insertOldDoc(t, db, 4, 1, mD, "archive", "report", fm("kind: report", "related: [missing.md, "+mA+"]", "issues: [AGB-1, AGB-9, AGT-1]"))
+	insertOldDoc(t, db, 4, 1, mD, "archive", "report", fm("kind: report", "related: [missing.md, "+mA+"]", "issues: [AGB-1, AGB-9, XYZ-1]"))
 	insertOldDoc(t, db, 5, 1, "decisions/2026-10-17-14-30-scope.md", "legacy", "decision", "# 범위\n\n본문 related: x.md\n")
 	insertOldDoc(t, db, 6, 1, "archive/2026-06-x/notes.md", "legacy", "other", fm("title: 조사", "supersedes: none", "related: <없으면 생략>"))
 	insertOldDoc(t, db, 7, 1, mE, "history", "decision", fm("kind: decision", "supersedes: "+mE))
@@ -219,7 +219,7 @@ func TestMigration14BackfillsRelations(t *testing.T) {
 		"4|related|" + mA + "|NULL|NULL",
 		"4|about|NULL|AGB-1|NULL",
 		"4|about|NULL|NULL|AGB-9",
-		"4|about|NULL|AGT-1|NULL",
+		"4|about|NULL|XYZ-1|NULL",
 		// E names itself: a self reference cannot be stored.
 		// F supersedes G; G would close the loop, so it is related.
 		"8|supersedes|" + mG + "|NULL|NULL",
