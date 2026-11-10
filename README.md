@@ -123,12 +123,12 @@ agb version
 
 - 실행 파일은 `$GOBIN`(기본값 `$(go env GOPATH)/bin`)에 생깁니다. 이 폴더를 `PATH`에 추가합니다.
 - 모듈 경로 `github.com/wsk0715/agent-board`는 이 저장소의 이전 주소입니다. GitHub이 이 주소를 `abyss-works/agent-board`로 연결하므로 그대로 설치할 수 있습니다.
-- `main`은 릴리즈 브랜치이므로 `<버전>`에는 `CHANGELOG.md` 맨 위의 릴리즈 이름(`vX.Y.Z`)을 넣습니다.
+- `main`은 릴리즈 브랜치이므로 `<버전>`에는 `CHANGELOG.md`에서 가장 위에 있는 `vX.Y.Z` 제목의 릴리즈 이름을 넣습니다.
 
 저장소를 받아 직접 빌드할 수도 있습니다.
 
 ```bash
-git clone https://github.com/abyss-works/agent-board.git
+git clone --branch main https://github.com/abyss-works/agent-board.git
 cd agent-board
 go build -o agb ./cmd/agb
 # 버전 문자열을 넣으려면
@@ -146,7 +146,9 @@ export AGB_ACTORS=owner:user,claude:agent
 AGB_WEB_DIR=web/dist ./agb serve
 ```
 
-`AGB_WEB_DIR`을 지정하지 않으면 웹 화면이 없어서 에이전트 로그인의 `/device` 승인을 할 수 없습니다.
+`./agb`와 `web/`은 저장소를 clone한 폴더 기준입니다.
+
+`AGB_WEB_DIR`을 지정하지 않으면 웹 화면이 없어서 에이전트 로그인(`/device`)을 웹 화면으로 승인할 수 없습니다.
 
 기본 주소는 `127.0.0.1:8420`, 기본 데이터 폴더는 `./data`입니다. 로그는 표준 오류에 JSON 한 줄씩 남습니다. 웹 클라이언트는 사용자 행위자를 `owner`로 보내므로, 웹을 쓰려면 `owner:user`를 선언합니다.
 
@@ -181,8 +183,7 @@ curl http://127.0.0.1:8420/v1/health
 | `AGB_EMBEDDING_API_KEY` | | 지정하면 의미 검색을 켬 |
 | `AGB_EMBEDDING_URL` | 의미 검색 시 | OpenAI 호환 임베딩 엔드포인트의 전체 URL |
 | `AGB_EMBEDDING_MODEL` | 의미 검색 시 | 임베딩 모델 이름 |
-| `AGB_EMBEDDING_QUERY_PREFIX` | | 검색어에만 앞에 붙이는 문자열. 값에 적은 `
-` 두 글자는 줄바꿈으로 읽음 |
+| `AGB_EMBEDDING_QUERY_PREFIX` | | 검색어에만 앞에 붙이는 문자열. 값에 적은 `\n` 두 글자는 줄바꿈으로 읽음 |
 | `AGB_EMBEDDING_INTERVAL` | | 색인 주기. Go duration 형식, 기본 `1m` |
 
 의미 검색의 유사도 하한은 특정 임베딩 모델에 맞춘 값입니다. 다른 모델을 쓰면 검색 결과의 범위가 달라질 수 있습니다. 검색 응답의 `semantic` 필드(`ok`, `disabled`, `failed`)로 의미 검색이 실제로 쓰였는지 알 수 있습니다.
