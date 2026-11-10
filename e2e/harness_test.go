@@ -27,7 +27,6 @@ const (
 	envToken        = "AGB_E2E_TOKEN"
 	envPersistKey   = "AGB_E2E_PERSIST_KEY"
 	envPersistPhase = "AGB_E2E_PERSIST_PHASE"
-	envPass         = "AGB_E2E_PASS" // the parent pid, set in the child processes of a -count run
 
 	defaultHost = "e2e-host"
 	jsonType    = "application/json; charset=utf-8"
@@ -55,7 +54,7 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	flag.Parse()
-	if n, _ := strconv.Atoi(flag.Lookup("test.count").Value.String()); n > 1 && !isChild(os.Getenv(envPass), os.Getppid()) {
+	if n, _ := strconv.Atoi(flag.Lookup("test.count").Value.String()); n > 1 {
 		os.Exit(repeat(n))
 	}
 	runID = randomID(5)
@@ -112,77 +111,42 @@ func loginAgents() error {
 // repeat runs the test binary n times, each in its own process. -count would
 // run the tests again inside this process, where runID, and with it every
 // project key, label and search word, is the same as in the pass before.
-// Each child draws its own runID. It returns the exit code: the first
-// failing pass's code, or 0.
+// Each child draws its own runID; childArgs sets -test.count=1 for it, so a
+// child never repeats. It returns the exit code: the first failing pass's
+// code, or 0.
 //
-// The children share this process's deadline, taken from -test.timeout.
-// go test kills only this process, a minute after the timeout, and on
-// Windows that leaves the children running against the server. Killing them
-// at the timeout, before go test acts, leaves none behind. The children keep
-// their own copy of the timeout; it never fires before this deadline does.
+// go test kills only this process, at -test.timeout plus a minute (plus a
+// tenth of the timeout beyond ten minutes). A child outlives that kill and
+// keeps sending requests to the server. So this process ends its children
+// itself, 30 seconds after the timeout: a child whose own timer fired at the
+// timeout has by then printed its "test timed out" report and the goroutine
+// dump, and only a child that still runs is killed.
 func repeat(n int) int {
 	ctx := context.Background()
 	if d, _ := flag.Lookup("test.timeout").Value.(flag.Getter).Get().(time.Duration); d > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, d)
+		ctx, cancel = context.WithTimeout(ctx, d+30*time.Second)
 		defer cancel()
 	}
 	args := childArgs(os.Args[1:])
 	failfast, _ := strconv.ParseBool(flag.Lookup("test.failfast").Value.String())
-	return runPasses(n, failfast, func(pass int) int {
+	return runPasses(n, failfast, func(pass int) (int, bool) {
 		cmd := exec.CommandContext(ctx, os.Args[0], args...)
-		cmd.Env = append(os.Environ(), envPass+"="+strconv.Itoa(os.Getpid()))
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		err := cmd.Run()
-		if err == nil {
-			return 0
+		if ctx.Err() != nil {
+			fmt.Fprintf(os.Stderr, "e2e: timed out in pass %d; the remaining passes are not run\n", pass)
+			return 1, true
 		}
-		if ee, ok := err.(*exec.ExitError); ok && ctx.Err() == nil {
-			return ee.ExitCode()
+		if err == nil {
+			return 0, false
+		}
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode(), false
 		}
 		fmt.Fprintf(os.Stderr, "e2e: pass %d: %v\n", pass, err)
-		return 1
+		return 1, false
 	})
-}
-
-// runPasses calls run for passes 1..n and returns the first nonzero code, or
-// 0. With failfast it stops after the first failing pass.
-func runPasses(n int, failfast bool, run func(pass int) int) int {
-	code := 0
-	for pass := 1; pass <= n; pass++ {
-		c := run(pass)
-		if c != 0 && code == 0 {
-			code = c
-		}
-		if c != 0 && failfast {
-			break
-		}
-	}
-	return code
-}
-
-// childArgs returns args with -test.count set to 1, leaving args unchanged.
-// go test always writes the flag as -test.count=N; the "-test.count N" form
-// is handled too.
-func childArgs(args []string) []string {
-	out := append([]string(nil), args...)
-	for i, a := range out {
-		a = strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-")
-		switch {
-		case strings.HasPrefix(a, "test.count="):
-			out[i] = "-test.count=1"
-		case a == "test.count" && i+1 < len(out):
-			out[i+1] = "1"
-		}
-	}
-	return out
-}
-
-// isChild reports whether the process was started by repeat. The parent
-// passes its own pid, which a value left over in the user's environment
-// cannot match.
-func isChild(pass string, ppid int) bool {
-	return pass == strconv.Itoa(ppid)
 }
 
 func randomID(n int) string {
