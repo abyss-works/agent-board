@@ -243,6 +243,9 @@ func TestTraceHeadersRequiredOnEveryRequest(t *testing.T) {
 	}
 	for _, c := range cases {
 		for _, target := range []string{"/v1/actors", "/v1/actors/me", "/v1/nope"} {
+			if c.name == "missing actor" && target == "/v1/actors" {
+				continue // the shared token may list the actors without X-Actor
+			}
 			rec := e.do(t, "GET", target, "", c.hdr)
 			if rec.Code != 400 {
 				t.Errorf("%s %s: status = %d: %s", c.name, target, rec.Code, rec.Body.String())
@@ -352,5 +355,43 @@ func TestNotFoundAndMethodNotAllowed(t *testing.T) {
 	rec = e.do(t, "DELETE", "/v1/health", "", nil)
 	if rec.Code != 405 {
 		t.Errorf("DELETE /v1/health: %d", rec.Code)
+	}
+}
+
+// The web client does not know a user actor before it has read the list, so
+// the shared token may list the actors without X-Actor. Nothing else opens up.
+func TestActorListWithoutActorHeader(t *testing.T) {
+	e := newEnvWith(t, loginActors, nil)
+	shared := map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "-"}
+
+	rec := e.do(t, "GET", "/v1/actors", "", shared)
+	if rec.Code != 200 {
+		t.Fatalf("shared token without X-Actor: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var list struct {
+		Items []model.Actor `json:"items"`
+	}
+	decodeJSON(t, rec, &list)
+	if len(list.Items) != len(loginActors) {
+		t.Errorf("items = %+v", list.Items)
+	}
+
+	for name, tc := range map[string]struct {
+		method, target string
+		hdr            map[string]string
+		status         int
+	}{
+		"other path":      {"GET", "/v1/actors/me", shared, 400},
+		"other method":    {"POST", "/v1/actors", shared, 400},
+		"agent token":     {"GET", "/v1/actors", map[string]string{"Authorization": "Bearer " + e.bearer(t, "claude"), "X-Actor": "-"}, 400},
+		"wrong token":     {"GET", "/v1/actors", map[string]string{"Authorization": "Bearer wrong-token-0123456789abcdef0123456789", "X-Actor": "-"}, 401},
+		"agent X-Actor":   {"GET", "/v1/actors", map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "claude"}, 403},
+		"unknown X-Actor": {"GET", "/v1/actors", map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "nobody"}, 400},
+		"user X-Actor":    {"GET", "/v1/actors", map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "boss"}, 200},
+		"agent mismatch":  {"GET", "/v1/actors", map[string]string{"Authorization": "Bearer " + e.bearer(t, "claude"), "X-Actor": "codex"}, 403},
+	} {
+		if rec := e.do(t, tc.method, tc.target, "", tc.hdr); rec.Code != tc.status {
+			t.Errorf("%s: status = %d, want %d", name, rec.Code, tc.status)
+		}
 	}
 }

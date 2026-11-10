@@ -184,6 +184,23 @@ func (h *handler) bind(next http.Handler) http.Handler {
 	})
 }
 
+// listActorsUnnamed answers GET /v1/actors for the shared token when the
+// request names no actor. A client learns which actors of kind user exist
+// before it can name one, so this is the only request that skips the trace
+// headers. An actor token, any other path, and a request that sends X-Actor
+// continue to trace and bind.
+func (h *handler) listActorsUnnamed(next http.Handler) http.Handler {
+	list := methods{"GET": h.listActors}.serve()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/actors" && len(r.Header.Values(headerActor)) == 0 && credentialFrom(r.Context()).shared {
+			setPattern(r, "/v1/actors")
+			list(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // userOnly lets a request through only when it authenticated with the shared
 // token, which bind has tied to an actor of kind user.
 func (h *handler) userOnly(fn http.HandlerFunc) http.HandlerFunc {
