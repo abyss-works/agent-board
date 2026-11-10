@@ -608,3 +608,33 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 	}
 	return nil
 }
+
+func (a *App) renderStats(w io.Writer, resp *client.Response) error {
+	s, err := decode[struct {
+		StartedAt string `json:"started_at"`
+		DBBytes   int64  `json:"db_bytes"`
+		Routes    []struct {
+			Method   string  `json:"method"`
+			Route    string  `json:"route"`
+			Requests int64   `json:"requests"`
+			Errors   int64   `json:"errors"`
+			TotalMS  float64 `json:"total_ms"`
+			MaxMS    float64 `json:"max_ms"`
+		} `json:"routes"`
+	}](resp)
+	if err != nil {
+		return err
+	}
+	fields(w, [][2]string{{"started_at", s.StartedAt}, {"db_bytes", strconv.FormatInt(s.DBBytes, 10)}})
+	if len(s.Routes) == 0 {
+		return nil
+	}
+	fmt.Fprintln(w)
+	tb := &table{header: []string{"METHOD", "ROUTE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
+	for _, r := range s.Routes {
+		tb.add(r.Method, r.Route, strconv.FormatInt(r.Requests, 10), strconv.FormatInt(r.Errors, 10),
+			strconv.FormatFloat(r.TotalMS/float64(r.Requests), 'f', 1, 64), strconv.FormatFloat(r.MaxMS, 'f', -1, 64))
+	}
+	tb.write(w, a.TermWidth)
+	return nil
+}

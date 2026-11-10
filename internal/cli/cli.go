@@ -181,6 +181,7 @@ const Usage = `사용법: agb <명령> [옵션]
   health            서버 상태 (인증 없음)
   whoami            현재 행위자
   actors            선언된 행위자 목록
+  stats             서버 성능 지표
 
 프로젝트와 이슈:
   project           프로젝트 목록·단건·생성·수정·삭제·현황·활동
@@ -251,7 +252,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb hel
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
 	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 

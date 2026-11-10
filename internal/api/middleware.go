@@ -34,11 +34,20 @@ const (
 type reqInfo struct {
 	reject  string
 	tokenID int64
+	// pattern is the route pattern that handled the request; empty when no
+	// route did.
+	pattern string
 }
 
 func setReject(r *http.Request, reason string) {
 	if info, ok := r.Context().Value(ctxReqInfo).(*reqInfo); ok {
 		info.reject = reason
+	}
+}
+
+func setPattern(r *http.Request, pattern string) {
+	if info, ok := r.Context().Value(ctxReqInfo).(*reqInfo); ok {
+		info.pattern = pattern
 	}
 }
 
@@ -91,9 +100,9 @@ func truncate(s string) string {
 	return s
 }
 
-// logging writes one JSON line per request, rejected or not. The
-// Authorization header is never logged.
-func logging(logger *slog.Logger, next http.Handler) http.Handler {
+// logging writes one JSON line per request, rejected or not, and records the
+// request in stats. The Authorization header is never logged.
+func logging(logger *slog.Logger, stats *statsCollector, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		info := &reqInfo{}
@@ -102,6 +111,12 @@ func logging(logger *slog.Logger, next http.Handler) http.Handler {
 		if sw.status == 0 {
 			sw.status = http.StatusOK
 		}
+		elapsed := time.Since(start)
+		pattern := info.pattern
+		if pattern == "" {
+			pattern = unroutedPattern
+		}
+		stats.record(r.Method, pattern, sw.status, elapsed)
 		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
@@ -111,7 +126,7 @@ func logging(logger *slog.Logger, next http.Handler) http.Handler {
 			slog.String("session_id", truncate(r.Header.Get(headerSessionID))),
 			slog.String("client_host", truncate(r.Header.Get(headerClientHost))),
 			slog.String("remote", r.RemoteAddr),
-			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+			slog.Int64("duration_ms", elapsed.Milliseconds()),
 		}
 		if info.reject != "" {
 			attrs = append(attrs, slog.String("reject", info.reject))

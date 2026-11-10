@@ -9,6 +9,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -53,6 +54,7 @@ func (e *RefError) Error() string { return fmt.Sprintf("%s: issue %s not found",
 // Store is the SQLite-backed persistence layer. One Store per database file.
 type Store struct {
 	db      *sql.DB
+	path    string
 	writeMu sync.Mutex
 	now     func() time.Time
 }
@@ -70,12 +72,22 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, now: time.Now}
+	s := &Store{db: db, path: path, now: time.Now}
 	if err := s.migrate(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// FileSize returns the size of the database file in bytes. The write-ahead
+// log beside it is not counted.
+func (s *Store) FileSize() (int64, error) {
+	fi, err := os.Stat(s.path)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
 }
 
 // Close closes the database.
