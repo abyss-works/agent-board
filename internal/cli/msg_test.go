@@ -247,6 +247,15 @@ func TestMsgHelp(t *testing.T) {
 			t.Errorf("group help lacks %q:\n%s", want, h.stdout)
 		}
 	}
+	if !strings.Contains(h.stdout.String(), "되돌릴 수 없습니다") {
+		t.Errorf("group help lacks the irreversible deletion note:\n%s", h.stdout)
+	}
+	if code := h.run("msg", "rm", "--help"); code != 0 {
+		t.Fatalf("rm help: code=%d", code)
+	}
+	if !strings.Contains(h.stdout.String(), "되돌릴 수 없습니다") {
+		t.Errorf("rm help lacks the irreversible deletion note:\n%s", h.stdout)
+	}
 	if code := h.run("msg", "put", "--help"); code != 0 {
 		t.Fatalf("put help: code=%d", code)
 	}

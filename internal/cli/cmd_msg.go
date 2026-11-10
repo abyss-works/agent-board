@@ -17,6 +17,7 @@ var msgCmd = &command{name: "msg", summary: "프로젝트별 메시지 공간 (�
 }, note: `메시지는 다른 호스트·세션·에이전트에 짧은 맥락을 넘기는 곳입니다. 보내는 쪽은 넣고 자기 일로 돌아가고,
 받는 쪽은 읽고 처리한 뒤 지웁니다. 이슈나 기록 문서가 아닙니다. 기간이 지난 메시지와 지운 메시지는 기본
 목록에서 빠질 뿐 서버에 남고, agb msg list --all 과 agb msg get 으로 볼 수 있습니다.
+지운 메시지를 되돌릴 수 없습니다.
 `}
 
 // msgList is the response of the message list endpoint.
@@ -257,7 +258,8 @@ var msgRmCmd = &command{
 	usage: `사용법: agb msg rm <ID>
 
 받은 내용을 처리한 뒤 메시지를 지웁니다. 지운 메시지는 기본 목록에서 빠지지만 서버에 남아
-agb msg list --all 과 agb msg get 으로 볼 수 있습니다. 이미 지운 메시지를 다시 지워도 같은 결과입니다.
+agb msg list --all 과 agb msg get 으로 볼 수 있습니다.
+지운 메시지를 되돌릴 수 없습니다. 이미 지운 메시지를 다시 지워도 같은 결과입니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		pos, err := parseArgs(leafFlags("msg rm", g), args)
