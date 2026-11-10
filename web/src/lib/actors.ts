@@ -16,6 +16,11 @@ export function userActorIds(items: Actor[]): string[] {
   return items.filter((a) => a.kind === 'user').map((a) => a.id)
 }
 
+/** 사용자 행위자가 둘 이상이어야 화면에서 바꿀 곳이 있다. */
+export function canSwitchActor(users: string[]): boolean {
+  return users.length >= 2
+}
+
 /**
  * 서버에 선언된 사용자 행위자 가운데 쓸 것을 정한다. 하나뿐이면 그것을 쓰고, 여럿이면 `preferred`를
  * 앞에서부터 보아 목록에 있는 첫 값을 쓰며 하나도 없으면 고르게 한다. 사용자 행위자가 없으면 none이다.

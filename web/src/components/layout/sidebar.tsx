@@ -1,7 +1,7 @@
 import { ActivityIcon, BookOpenIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
-import { useProjects } from '@/api/queries'
+import { useActors, useProjects } from '@/api/queries'
 import type { Project } from '@/api/types'
 import { useConnection } from '@/app/connection'
 import { POLL_MS, useAppState } from '@/app/state'
@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
+import { canSwitchActor, userActorIds } from '@/lib/actors'
 import { PROJECT_STATUS_LABEL } from '@/lib/labels'
 import { MENU_SHORTCUTS } from '@/lib/shortcuts'
 import { formatKstTime } from '@/lib/time'
@@ -136,6 +137,42 @@ function ProjectSwitcher({
   )
 }
 
+/** 현재 행위자. 사용자 행위자가 둘 이상이면 눌러서 바꿀 수 있다. */
+function ActorSwitcher() {
+  const { actor, selectActor } = useAppState()
+  const actors = useActors()
+  const users = actors.data ? userActorIds(actors.data.items) : []
+  const name = <span className="font-mono text-foreground/80">{actor}</span>
+  // 목록이 도착해도 폭이 바뀌지 않도록, 바꿀 수 없을 때도 아이콘 자리를 비워 둔다.
+  if (!actor || !canSwitchActor(users))
+    return (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate">행위자 {name}</span>
+        <span className="size-3 shrink-0" />
+      </span>
+    )
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="flex min-w-0 cursor-pointer items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" title="행위자 바꾸기">
+          <span className="truncate">행위자 {name}</span>
+          <ChevronsUpDownIcon className="size-3 shrink-0" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top">
+        <DropdownMenuLabel>행위자</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={actor} onValueChange={selectActor}>
+          {users.map((u) => (
+            <DropdownMenuRadioItem key={u} value={u} className="font-mono">
+              {u}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function ConnectionStatus() {
   const status = useConnection()
   if (status.error) {
@@ -159,7 +196,7 @@ function ConnectionStatus() {
 }
 
 export function Sidebar() {
-  const { actor, logout, project, selectProject } = useAppState()
+  const { logout, project, selectProject } = useAppState()
   const [newIssue, setNewIssue] = useState(false)
   const [createProject, setCreateProject] = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
@@ -204,7 +241,7 @@ export function Sidebar() {
         <ConnectionStatus />
         <div className="flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
           <span className="size-2 rounded-full bg-sky-400" />
-          행위자 <span className="font-mono text-foreground/80">{actor}</span>
+          <ActorSwitcher />
           <Button variant="ghost" size="xs" className="ml-auto" onClick={logout} title="토큰을 지우고 로그인 화면으로">
             <LogOutIcon />
             로그아웃
