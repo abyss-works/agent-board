@@ -201,8 +201,18 @@ func TestActivity(t *testing.T) {
 		if n := count("issue=" + iss.Key + "&until=" + iss.CreatedAt); n != 0 {
 			t.Errorf("until created (exclusive) = %d", n)
 		}
-		if n := count("issue=" + iss.Key + "&since=" + upd.UpdatedAt + "&until=" + cmt.At); n != 1 {
-			t.Errorf("since update until comment = %d", n)
+		// Times are truncated to the millisecond, so the update and the
+		// comment can share a timestamp. Derive the expectation from the
+		// returned times: since is inclusive, until is exclusive.
+		all := decodeAs[list[activity]](t, owner.do(t, "GET", "/v1/activity?issue="+iss.Key, nil), 200)
+		want := 0
+		for _, a := range all.Items {
+			if a.At >= upd.UpdatedAt && a.At < cmt.At {
+				want++
+			}
+		}
+		if n := count("issue=" + iss.Key + "&since=" + upd.UpdatedAt + "&until=" + cmt.At); n != want {
+			t.Errorf("since update until comment = %d, want %d", n, want)
 		}
 	})
 	t.Run("sort at and -at", func(t *testing.T) {
