@@ -37,6 +37,8 @@ describe('AppStorage', () => {
     expect(s.getActor()).toBeNull()
     s.setActor('me')
     expect(new AppStorage(store).getActor()).toBe('me')
+    s.setActor('boss')
+    expect(new AppStorage(store).getActor()).toBe('boss')
     s.clearActor()
     expect(s.getActor()).toBeNull()
   })

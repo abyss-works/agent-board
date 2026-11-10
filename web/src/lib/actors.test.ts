@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveActor, userActorIds } from './actors'
+import { canSwitchActor, resolveActor, userActorIds } from './actors'
 
 describe('userActorIds', () => {
   it('kind가 user인 행위자의 ID만 선언 순서대로 돌려준다', () => {
@@ -39,5 +39,13 @@ describe('resolveActor', () => {
   })
   it('선호값이 모두 목록에 없으면 고르게 한다', () => {
     expect(resolveActor(['me', 'boss'], ['owner'])).toEqual({ kind: 'choose', users: ['me', 'boss'] })
+  })
+})
+
+describe('canSwitchActor', () => {
+  it('사용자 행위자가 둘 이상일 때만 바꿀 수 있다', () => {
+    expect(canSwitchActor([])).toBe(false)
+    expect(canSwitchActor(['me'])).toBe(false)
+    expect(canSwitchActor(['me', 'boss'])).toBe(true)
   })
 })
