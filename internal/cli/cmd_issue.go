@@ -641,12 +641,13 @@ var issueCommentCmd = &command{
   --location              본문 끝에 이 호스트의 작업 위치를 붙임: 호스트, 저장소별 브랜치·HEAD·원격과의 차이·
                           커밋하지 않은 파일 이름·워크트리. 파일 내용은 올리지 않음
   --repo <폴더>           작업 위치를 모을 저장소. 반복 가능. 주면 --location 을 뜻함.
-                          기본은 현재 폴더의 저장소와, 있으면 그 아래 project/ 저장소
+                          기본은 저장소 설정 .agb.json 의 location.repos(agb help repo-config), 없으면
+                          현재 폴더의 저장소 하나
 ` + bodyUsage + `
 --status done 은 두 가지를 더 합니다.
   - 이슈의 작업 위치 댓글에 남은 저장소와 브랜치로, 현재 브랜치의 first-parent 이력에서 그 작업을 들인
     병합 커밋을 찾습니다. 찾으면 참조(commit:)로 붙이고 병합과 커밋 목록을 본문 끝에 붙입니다.
-    찾는 저장소는 --repo 로 준 것, 없으면 --repo 의 기본값과 같습니다.
+    찾는 저장소는 --repo 로 준 것, 없으면 --location 의 기본 저장소와 같습니다.
   - agb agenda 처럼 .agb.json 에 auto_sync 를 켠 저장소의 커밋한 기록 문서 중 서버에 없는 것을 올립니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
@@ -691,9 +692,9 @@ var issueCommentCmd = &command{
 			return err
 		}
 		c := a.newClient(s)
-		dirs := []string(repos)
-		if len(dirs) == 0 {
-			dirs = defaultLocationRepos()
+		dirs, err := locationRepos(repos)
+		if err != nil {
+			return err
 		}
 		if location || len(repos) > 0 {
 			loc, err := workLocation(s.ClientHost, dirs)

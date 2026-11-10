@@ -72,3 +72,60 @@ func TestIssueGetShowsLatestLocationOfDoingIssue(t *testing.T) {
 		t.Errorf("json mode: code=%d out=%s", code, h.stdout)
 	}
 }
+
+func TestLocationReposDefaultsToCurrentRepository(t *testing.T) {
+	repo := gitRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "project", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	got, err := locationRepos(nil)
+	if err != nil || len(got) != 1 || got[0] != "." {
+		t.Fatalf("got %v, %v; want [.]", got, err)
+	}
+}
+
+func TestLocationReposFromRepoConfig(t *testing.T) {
+	repo := gitRepo(t)
+	cfg := `{"project":"CLI","location":{"repos":[".","sub"]}}`
+	if err := os.WriteFile(filepath.Join(repo, ".agb.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(repo, "deep"))
+	got, err := locationRepos(nil)
+	if err != nil || len(got) != 2 || !strings.HasSuffix(filepath.ToSlash(got[1]), "/sub") || filepath.Base(got[0]) != filepath.Base(repo) {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestLocationReposFlagWinsOverConfig(t *testing.T) {
+	repo := gitRepo(t)
+	cfg := `{"project":"CLI","location":{"repos":["sub"]}}`
+	if err := os.WriteFile(filepath.Join(repo, ".agb.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	got, err := locationRepos([]string{"other"})
+	if err != nil || len(got) != 1 || got[0] != "other" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestRepoConfigLocationValidation(t *testing.T) {
+	for _, bad := range []string{
+		`{"project":"CLI","location":{"repos":[]}}`,
+		`{"project":"CLI","location":{"repos":[""]}}`,
+		`{"project":"CLI","location":{"repos":["/abs"]}}`,
+		`{"project":"CLI","location":{"dirs":["a"]}}`,
+	} {
+		if _, err := parseRepoConfig([]byte(bad)); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+	if _, err := parseRepoConfig([]byte(`{"project":"CLI","location":{"repos":[".","project"]}}`)); err != nil {
+		t.Error(err)
+	}
+}

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -19,15 +18,29 @@ const locationHeading = "## 작업 위치"
 // maxLocationFiles caps the uncommitted file names listed per repository.
 const maxLocationFiles = 50
 
-// defaultLocationRepos are the repositories recorded when --repo is not
-// given: the one holding the current folder, and project/ under it when that
-// is a repository of its own (the management repository layout).
-func defaultLocationRepos() []string {
-	repos := []string{"."}
-	if _, err := os.Stat(filepath.Join("project", ".git")); err == nil {
-		repos = append(repos, "project")
+// locationRepos are the repositories a location records: the ones given with
+// --repo, else the location.repos of the .agb.json at the top of the current
+// repository (relative to that folder), else the current folder's repository.
+func locationRepos(flagged []string) ([]string, error) {
+	if len(flagged) > 0 {
+		return flagged, nil
 	}
-	return repos
+	top, err := git(".", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return []string{"."}, nil
+	}
+	cfg, err := loadRepoConfig(top)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil || cfg.Location == nil {
+		return []string{"."}, nil
+	}
+	repos := make([]string, len(cfg.Location.Repos))
+	for i, r := range cfg.Location.Repos {
+		repos[i] = filepath.Join(top, filepath.FromSlash(r))
+	}
+	return repos, nil
 }
 
 // workLocation renders the location part of a comment: the host and, per
