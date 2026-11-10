@@ -75,7 +75,7 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if matchErr != nil {
-			q.add("q", "의미 검색이 실패했고 키워드 검색은 최대 10항까지 받습니다. 검색어를 10항 이내로 줄여 다시 찾으세요.")
+			q.add("q", "의미 검색이 실패했고 키워드 검색은 최대 10항까지 받습니다. 핵심어 10개 이내로 다시 찾거나, 잠시 뒤 같은 질문으로 다시 시도하세요.")
 			writeError(w, q.finish())
 			return
 		}
