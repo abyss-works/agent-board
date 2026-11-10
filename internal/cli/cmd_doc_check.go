@@ -258,7 +258,8 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 - .agb.json 에 new 가 있으면 그 종류의 서식(new.template 의 {kind} 를 종류로 바꾼 파일)이 있는지. 저장소가
   쓰는 종류는 서식이 있는 종류입니다
 - 닫힌 프런트매터가 있고 kind 가 파일명의 종류와 같으며 title 이 있는지
-- 서식(.agb.json 의 new.template)의 프런트매터 키가 모두 있고 값이 자리표시자(<...>)가 아닌지
+- 서식(.agb.json 의 new.template)의 프런트매터 키가 모두 있고 값이 자리표시자(<...>)가 아닌지. 관계 키
+  (supersedes, superseded_by, related, issue)는 서식에 있어도 없으면 빈 값으로 보므로 생략할 수 있습니다
 - 서식의 ## 절이 같은 순서로 모두 있는지 (다른 절을 더해도 됩니다)
 - supersedes, related 의 값이 문서 이름 하나씩인지 (문장이면 부분 대체이므로 related 로 씁니다)
 - 코드 블록 밖에 HTML 주석(<!-- ... -->)이 남지 않았는지

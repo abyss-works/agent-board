@@ -106,6 +106,29 @@ func TestCheckRecordTitleAndRelationNames(t *testing.T) {
 	}
 }
 
+func TestCheckRecordOptionalRelationKeys(t *testing.T) {
+	tmpl := "---\nkind: decision\ndate: <yyyy-mm-dd HH:MM>\ntitle: <문서 제목>\nscope: <범위>\nsupersedes: <이전 기록 | none>\nsuperseded_by: <none>\nrelated: <관련 기록 | none>\nissue: <XYZ-1 | none>\n---\n\n## 배경\n"
+	base := "---\nkind: decision\ndate: 2026-10-20 15:44\ntitle: 큐 선택\nscope: 큐\n%s---\n\n## 배경\n\n이유.\n"
+	with := func(extra string) string { return strings.Replace(base, "%s", extra, 1) }
+	for _, c := range []struct {
+		label, content string
+		want           []string
+		count          int
+	}{
+		{"relation keys may be absent", with(""), nil, 0},
+		{"only superseded_by", with("superseded_by: 2026-10-21-1000-decision-new.md\n"), nil, 0},
+		{"issue key may be absent but scope may not", strings.Replace(with(""), "scope: 큐\n", "", 1), []string{"scope"}, 1},
+		{"a wrong related value still fails", with("related: 설명 문장\n"), []string{"related", "설명 문장"}, 1},
+		{"a placeholder relation value still fails", with("issue: <XYZ-1 | none>\n"), []string{"issue"}, 1},
+	} {
+		got := CheckRecord(checkName, c.content, &tmpl)
+		if len(got) != c.count {
+			t.Errorf("%s: %d problems, want %d:\n%s", c.label, len(got), c.count, strings.Join(got, "\n"))
+		}
+		containsAll(t, c.label, got, c.want...)
+	}
+}
+
 func TestStripHTMLComments(t *testing.T) {
 	for _, c := range []struct{ label, in, want string }{
 		{"none", "# 제목\n\n본문\n", "# 제목\n\n본문\n"},
