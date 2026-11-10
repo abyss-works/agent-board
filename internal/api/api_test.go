@@ -376,6 +376,26 @@ func TestActorListWithoutActorHeader(t *testing.T) {
 		t.Errorf("items = %+v", list.Items)
 	}
 
+	// The other two trace headers stay required and are logged.
+	for name, hdr := range map[string]map[string]string{
+		"missing session": {"X-Session-Id": "-"},
+		"missing host":    {"X-Client-Host": "-"},
+		"bad session":     {"X-Session-Id": "a b"},
+		"bad host":        {"X-Client-Host": "-host"},
+	} {
+		h := map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "-"}
+		for k, v := range hdr {
+			h[k] = v
+		}
+		if rec := e.do(t, "GET", "/v1/actors", "", h); rec.Code != 400 {
+			t.Errorf("%s: status = %d, want 400", name, rec.Code)
+		}
+	}
+	e.do(t, "GET", "/v1/actors", "", map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "-", "X-Session-Id": "sess-7", "X-Client-Host": "web"})
+	if lg := e.lastLog(t); lg["session_id"] != "sess-7" || lg["client_host"] != "web" {
+		t.Errorf("log = %v", lg)
+	}
+
 	for name, tc := range map[string]struct {
 		method, target string
 		hdr            map[string]string
