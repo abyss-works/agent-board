@@ -153,3 +153,22 @@ func TestStatsEndpointAccess(t *testing.T) {
 		t.Errorf("POST status = %d, want 405", rec.Code)
 	}
 }
+
+func TestStatsGroupsUnknownMethods(t *testing.T) {
+	c := newStatsCollector()
+	for _, m := range []string{"X0001", "X0002", "BREW", "get"} {
+		c.record(m, "/v1/health", 200, 0)
+	}
+	c.record("GET", "/v1/health", 200, 0)
+	c.record("TRACE", "/v1/health", 200, 0)
+	got := c.snapshot()
+	if len(got) != 3 {
+		t.Fatalf("entries = %+v, want GET, TRACE and OTHER only", got)
+	}
+	if n := findRoute(t, got, otherMethod, "/v1/health").Requests; n != 4 {
+		t.Errorf("OTHER requests = %d, want 4", n)
+	}
+	if n := findRoute(t, got, "GET", "/v1/health").Requests; n != 1 {
+		t.Errorf("GET requests = %d, want 1", n)
+	}
+}

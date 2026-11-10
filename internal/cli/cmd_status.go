@@ -91,6 +91,7 @@ GET /v1/stats. 서버가 메모리에 모은 지표를 그대로 보입니다.
   started_at   집계를 시작한 시각(UTC). 서버를 다시 시작하면 이 시각부터 0에서 다시 셉니다.
   db_bytes     DB 파일 크기(바이트). WAL 파일은 포함하지 않습니다.
   routes       라우트 패턴(예: /v1/issues/{key})과 메서드별 항목.
+               표준 메서드 밖의 메서드는 OTHER 하나로 묶습니다.
     requests   요청 수
     errors     5xx로 응답한 요청 수
     total_ms   처리 시간 합계(밀리초)

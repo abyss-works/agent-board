@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -34,6 +35,19 @@ type RouteStats struct {
 	Buckets  []Bucket `json:"buckets"`
 }
 
+// otherMethod stands for every method outside the standard set, so a client
+// cannot grow the tallies by sending made-up methods.
+const otherMethod = "OTHER"
+
+func normalizeMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace:
+		return m
+	}
+	return otherMethod
+}
+
 type routeKey struct{ method, route string }
 
 type routeTally struct {
@@ -56,7 +70,7 @@ func newStatsCollector() *statsCollector {
 func (c *statsCollector) record(method, route string, status int, d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	k := routeKey{method, route}
+	k := routeKey{normalizeMethod(method), route}
 	t := c.routes[k]
 	if t == nil {
 		t = &routeTally{}

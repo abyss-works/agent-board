@@ -222,7 +222,7 @@ curl -H "Authorization: Bearer $AGB_TOKEN" \
 - `started_at`: 집계를 시작한 시각(UTC). 서버 시작 시각이다.
 - `db_bytes`: DB 파일(`agb.db`)의 바이트 크기. WAL 파일은 포함하지 않는다.
 - `routes`: 라우트 패턴(예: `/v1/issues/{key}`)과 메서드별 항목의 배열. 라우트, 메서드 순으로 정렬한다. 어떤 라우트도 처리하지 않은 요청(인증·헤더 거부, 없는 경로, 웹 클라이언트)은 라우트 `(unrouted)`로 묶는다.
-  - `method`, `route`: 메서드와 라우트 패턴.
+  - `method`, `route`: 메서드와 라우트 패턴. 표준 메서드(GET, HEAD, POST, PUT, PATCH, DELETE, CONNECT, OPTIONS, TRACE) 밖의 메서드는 `OTHER` 하나로 묶는다.
   - `requests`: 요청 수. `errors`: 5xx로 응답한 요청 수.
   - `total_ms`, `max_ms`: 처리 시간의 합계와 최댓값(밀리초).
   - `buckets`: 처리 시간 구간별 요청 수. 항목은 `le_ms`(구간 상한, 포함)와 `count`이고 구간이 겹치지 않는다. 상한은 1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000이며, 마지막 항목은 5000ms를 넘은 요청으로 `le_ms`가 `null`이다.
