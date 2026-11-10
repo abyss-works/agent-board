@@ -1,4 +1,4 @@
-// agent-board REST API 응답 타입. 기준은 spec/api.md다.
+// agent-board REST API 응답 타입. 기준은 서버의 `internal/api`와 `internal/model`이다.
 
 export type IssueType = 'feature' | 'bug' | 'design' | 'idea' | 'observation'
 export type IssueStatus = 'backlog' | 'doing' | 'review' | 'done' | 'cancelled' | 'deleted'

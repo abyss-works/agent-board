@@ -76,7 +76,7 @@ func TestComments(t *testing.T) {
 func TestActivity(t *testing.T) {
 	p := createProject(t, "AC")
 	creator := caller{actor: "claude", session: sessionID + "-ac", host: "desk-win10"}
-	editor := caller{actor: "codex", session: sessionID + "-ac2", host: "ab"}
+	editor := caller{actor: "codex", session: sessionID + "-ac2", host: "desk"}
 	iss := createIssue(t, creator, map[string]any{"project": p.Key, "title": "활동 기록", "labels": strs("api"), "priority": "P1", "body": templateBody(t, "feature")})
 	tick()
 	upd := patchIssue(t, editor, iss.Key, map[string]any{"status": "doing", "labels": strs("api", "cli"), "title": "활동 기록"})
@@ -134,7 +134,7 @@ func TestActivity(t *testing.T) {
 			t.Fatalf("updated records = %d", got.Total)
 		}
 		a := got.Items[0]
-		if a.Actor != "codex" || a.SessionID != sessionID+"-ac2" || a.ClientHost != "ab" || a.At != upd.UpdatedAt {
+		if a.Actor != "codex" || a.SessionID != sessionID+"-ac2" || a.ClientHost != "desk" || a.At != upd.UpdatedAt {
 			t.Errorf("updated = %+v", a)
 		}
 		ch := *a.Changes
@@ -177,7 +177,7 @@ func TestActivity(t *testing.T) {
 		if n := count("issue=" + iss.Key + "&actor=codex,owner"); n != 2 {
 			t.Errorf("actor OR = %d", n)
 		}
-		if n := count("issue=" + iss.Key + "&client_host=ab"); n != 1 {
+		if n := count("issue=" + iss.Key + "&client_host=desk"); n != 1 {
 			t.Errorf("client_host = %d", n)
 		}
 		if n := count("issue=" + iss.Key + "&kind=commented"); n != 1 {
@@ -201,8 +201,18 @@ func TestActivity(t *testing.T) {
 		if n := count("issue=" + iss.Key + "&until=" + iss.CreatedAt); n != 0 {
 			t.Errorf("until created (exclusive) = %d", n)
 		}
-		if n := count("issue=" + iss.Key + "&since=" + upd.UpdatedAt + "&until=" + cmt.At); n != 1 {
-			t.Errorf("since update until comment = %d", n)
+		// Times are truncated to the millisecond, so the update and the
+		// comment can share a timestamp. Derive the expectation from the
+		// returned times: since is inclusive, until is exclusive.
+		all := decodeAs[list[activity]](t, owner.do(t, "GET", "/v1/activity?issue="+iss.Key, nil), 200)
+		want := 0
+		for _, a := range all.Items {
+			if a.At >= upd.UpdatedAt && a.At < cmt.At {
+				want++
+			}
+		}
+		if n := count("issue=" + iss.Key + "&since=" + upd.UpdatedAt + "&until=" + cmt.At); n != want {
+			t.Errorf("since update until comment = %d, want %d", n, want)
 		}
 	})
 	t.Run("sort at and -at", func(t *testing.T) {

@@ -96,7 +96,7 @@ func TestRecallHelpDescribesOutput(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 	out := h.stdout.String()
-	for _, want := range []string{"←", "→", "supersedes:", "superseded_by:", "items[].links[]", "edge", "direction", "node"} {
+	for _, want := range []string{"←", "→", "supersedes:", "superseded_by:", "items[].links[]", "edge", "direction", "node", "이슈 about"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("recall --help lacks %q:\n%s", want, out)
 		}

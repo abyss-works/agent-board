@@ -113,6 +113,12 @@ func TestTraceHeaders(t *testing.T) {
 			expect(t, c.do(t, "GET", "/v1/actors/me", nil), 200)
 		}
 	})
+	t.Run("shared token lists the actors without X-Actor", func(t *testing.T) {
+		h := owner.headers(false)
+		h.Del("X-Actor")
+		expect(t, send(t, "GET", "/v1/actors", nil, h), 200)
+		wantError(t, send(t, "GET", "/v1/actors/me", nil, h), 400, "bad_request")
+	})
 	t.Run("bad headers on an unknown path give 400 not 404", func(t *testing.T) {
 		h := owner.headers(false)
 		h.Del("X-Actor")

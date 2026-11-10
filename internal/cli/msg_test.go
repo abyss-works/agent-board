@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	msgJSON = `{"id":3,"project":"CLI","to":"framework","title":"배포 끝","body":"## 결과\n\n배포했습니다.\n","state":"active","age":"2h","created_at":"2026-10-18T09:00:00.000Z","created_by":"claude","created_session":"sess-1","created_host":"desk","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":null,"deleted_by":null}`
+	msgJSON = `{"id":3,"project":"CLI","to":"reviewer","title":"배포 끝","body":"## 결과\n\n배포했습니다.\n","state":"active","age":"2h","created_at":"2026-10-18T09:00:00.000Z","created_by":"claude","created_session":"sess-1","created_host":"desk","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":null,"deleted_by":null}`
 
 	msgListJSON = `{"items":[` +
 		`{"id":5,"project":"CLI","to":null,"title":"수신자 없음","state":"active","age":"5m","created_at":"2026-10-18T09:00:00.000Z","created_by":"codex","created_session":"s","created_host":"h","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":null,"deleted_by":null},` +
-		`{"id":3,"project":"CLI","to":"framework","title":"배포 끝","state":"expired","age":"9d","created_at":"2026-10-08T09:00:00.000Z","created_by":"claude","created_session":"s","created_host":"h","expires_at":"2026-10-15T09:00:00.000Z","deleted_at":null,"deleted_by":null}],` +
+		`{"id":3,"project":"CLI","to":"reviewer","title":"배포 끝","state":"expired","age":"9d","created_at":"2026-10-08T09:00:00.000Z","created_by":"claude","created_session":"s","created_host":"h","expires_at":"2026-10-15T09:00:00.000Z","deleted_at":null,"deleted_by":null}],` +
 		`"total":2,"limit":50,"offset":0}`
 )
 
@@ -40,10 +40,10 @@ func TestMsgPutSendsGivenFields(t *testing.T) {
 		t.Errorf("stdout = %q", h.stdout.String())
 	}
 
-	if code := h.run("msg", "put", "--project", "CLI", "--title", "t", "--to", "ab", "--ttl", "3d", "--body", "짧은 본문"); code != 0 {
+	if code := h.run("msg", "put", "--project", "CLI", "--title", "t", "--to", "desk", "--ttl", "3d", "--body", "짧은 본문"); code != 0 {
 		t.Fatalf("all flags: code=%d stderr=%s", code, h.stderr)
 	}
-	want := `{"body":"짧은 본문","title":"t","to":"ab","ttl":"3d"}`
+	want := `{"body":"짧은 본문","title":"t","to":"desk","ttl":"3d"}`
 	if got := strings.TrimSpace(srv.last().Body); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -142,10 +142,10 @@ func TestMsgListTable(t *testing.T) {
 		t.Errorf("row 1 = %v", got)
 	}
 
-	if code := h.run("msg", "list", "-p", "CLI", "--to", "framework", "--all"); code != 0 {
+	if code := h.run("msg", "list", "-p", "CLI", "--to", "reviewer", "--all"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	if q := srv.last().Query; q.Get("to") != "framework" || q.Get("all") != "true" {
+	if q := srv.last().Query; q.Get("to") != "reviewer" || q.Get("all") != "true" {
 		t.Errorf("query = %v", q)
 	}
 	lines = strings.Split(strings.TrimRight(h.stdout.String(), "\n"), "\n")
@@ -170,7 +170,7 @@ func TestMsgListFieldsText(t *testing.T) {
 	if code := h.run("msg", "list", "-p", "CLI", "--fields", "id,to,title,created_by,age", "--text"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	want := "5\t\t수신자 없음\tcodex\t5m\n3\tframework\t배포 끝\tclaude\t9d\n"
+	want := "5\t\t수신자 없음\tcodex\t5m\n3\treviewer\t배포 끝\tclaude\t9d\n"
 	if h.stdout.String() != want {
 		t.Errorf("text = %q, want %q", h.stdout.String(), want)
 	}
@@ -185,7 +185,7 @@ func TestMsgGet(t *testing.T) {
 		t.Errorf("request = %s %s", req.Method, req.Path)
 	}
 	out := h.stdout.String()
-	for _, want := range []string{"title:", "배포 끝", "framework", "active", "2h", "claude", "desk", "2026-10-25 18:00"} {
+	for _, want := range []string{"title:", "배포 끝", "reviewer", "active", "2h", "claude", "desk", "2026-10-25 18:00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
@@ -246,6 +246,15 @@ func TestMsgHelp(t *testing.T) {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("group help lacks %q:\n%s", want, h.stdout)
 		}
+	}
+	if !strings.Contains(h.stdout.String(), "되돌릴 수 없습니다") {
+		t.Errorf("group help lacks the irreversible deletion note:\n%s", h.stdout)
+	}
+	if code := h.run("msg", "rm", "--help"); code != 0 {
+		t.Fatalf("rm help: code=%d", code)
+	}
+	if !strings.Contains(h.stdout.String(), "되돌릴 수 없습니다") {
+		t.Errorf("rm help lacks the irreversible deletion note:\n%s", h.stdout)
 	}
 	if code := h.run("msg", "put", "--help"); code != 0 {
 		t.Fatalf("put help: code=%d", code)

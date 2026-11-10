@@ -95,7 +95,7 @@ func New(o Options) http.Handler {
 
 	root := http.NewServeMux()
 	route(root, "/v1/health", methods{"GET": h.health})
-	authenticated := h.auth(trace(h.actors, h.bind(protected)))
+	authenticated := h.auth(h.listActorsUnnamed(trace(h.actors, h.bind(protected))))
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if startsLogin(r) {
 			protected.ServeHTTP(w, r)

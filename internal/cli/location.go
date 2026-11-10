@@ -19,15 +19,30 @@ const locationHeading = "## 작업 위치"
 // maxLocationFiles caps the uncommitted file names listed per repository.
 const maxLocationFiles = 50
 
-// defaultLocationRepos are the repositories recorded when --repo is not
-// given: the one holding the current folder, and project/ under it when that
-// is a repository of its own (the management repository layout).
-func defaultLocationRepos() []string {
-	repos := []string{"."}
-	if _, err := os.Stat(filepath.Join("project", ".git")); err == nil {
-		repos = append(repos, "project")
+// locationRepos are the repositories a location records: the ones given with
+// --repo, else the location.repos of the nearest .agb.json above the current
+// folder (relative to the folder that holds it), else the current folder's
+// repository.
+func locationRepos(flagged []string) ([]string, error) {
+	if len(flagged) > 0 {
+		return flagged, nil
 	}
-	return repos
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	root, cfg, err := fileRepo(wd)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil || cfg.Location == nil {
+		return []string{"."}, nil
+	}
+	repos := make([]string, len(cfg.Location.Repos))
+	for i, r := range cfg.Location.Repos {
+		repos[i] = filepath.Join(root, filepath.FromSlash(r))
+	}
+	return repos, nil
 }
 
 // workLocation renders the location part of a comment: the host and, per

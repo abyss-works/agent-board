@@ -48,7 +48,7 @@ func fieldsOf(err error) []string {
 }
 
 func TestValidateMessage(t *testing.T) {
-	if err := ValidateMessage("framework", "제목", "", "3d"); err != nil {
+	if err := ValidateMessage("reviewer", "제목", "", "3d"); err != nil {
 		t.Errorf("valid message: %v", err)
 	}
 	if err := ValidateMessage("", "제목", "", ""); err != nil {

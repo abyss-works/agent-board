@@ -13,7 +13,7 @@ func TestFingerprintAndSnapshotCoverMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := putMessage(t, s, "AGB", "ab", "지문", "")
+	m := putMessage(t, s, "AGB", "desk", "지문", "")
 	posted, _ := s.FingerprintNow(ctx)
 	if posted == last {
 		t.Errorf("posting a message left the fingerprint %q", last)

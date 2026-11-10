@@ -8,7 +8,7 @@ services:
         VERSION: ${AGB_VERSION:-dev}
     restart: unless-stopped
     ports:
-      # Bind to a single host address (loopback locally, the Tailscale address on the server).
+      # Bind to a single host address (loopback for local use, the address of the network interface the clients reach on a server).
       - "${AGB_BIND:-127.0.0.1}:${AGB_PORT:-8420}:8420"
     environment:
       AGB_TOKEN: ${AGB_TOKEN:?AGB_TOKEN is required}

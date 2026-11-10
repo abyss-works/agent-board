@@ -184,6 +184,25 @@ func (h *handler) bind(next http.Handler) http.Handler {
 	})
 }
 
+// listActorsUnnamed answers GET /v1/actors for the shared token when the
+// request sends no X-Actor. A client learns which actors of kind user exist
+// before it can name one. X-Session-Id and X-Client-Host are still required.
+// An actor token, any other path, and a request that sends X-Actor continue to
+// trace and bind.
+func (h *handler) listActorsUnnamed(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/actors" && len(r.Header.Values(headerActor)) == 0 && credentialFrom(r.Context()).shared {
+			if _, ok := readTrace(w, r, false); !ok {
+				return
+			}
+			setPattern(r, "/v1/actors")
+			h.listActors(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // userOnly lets a request through only when it authenticated with the shared
 // token, which bind has tied to an actor of kind user.
 func (h *handler) userOnly(fn http.HandlerFunc) http.HandlerFunc {
@@ -200,30 +219,9 @@ func (h *handler) userOnly(fn http.HandlerFunc) http.HandlerFunc {
 // formed, and the actor to be declared. Any violation is a 400.
 func trace(actors map[string]model.Actor, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var t model.Trace
-		fields := []struct {
-			name  string
-			dst   *string
-			valid func(string) bool
-		}{
-			{headerActor, &t.Actor, model.ValidActorID},
-			{headerSessionID, &t.SessionID, model.ValidSessionID},
-			{headerClientHost, &t.ClientHost, model.ValidClientHost},
-		}
-		for _, f := range fields {
-			values := r.Header.Values(f.name)
-			switch {
-			case len(values) == 0 || (len(values) == 1 && values[0] == ""):
-				reject(w, r, "missing_header", f.name, f.name+" 헤더가 필요합니다.")
-				return
-			case len(values) > 1:
-				reject(w, r, "duplicate_header", f.name, f.name+" 헤더는 하나여야 합니다.")
-				return
-			case !f.valid(values[0]):
-				reject(w, r, "invalid_header", f.name, f.name+" 헤더 값이 규칙에 맞지 않습니다.")
-				return
-			}
-			*f.dst = values[0]
+		t, ok := readTrace(w, r, true)
+		if !ok {
+			return
 		}
 		if _, ok := actors[t.Actor]; !ok {
 			setReject(r, "unknown_actor")
@@ -232,6 +230,44 @@ func trace(actors map[string]model.Actor, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxTrace, t)))
 	})
+}
+
+// readTrace reads the tracking headers and writes the 400 for the first one
+// that is missing, repeated or malformed. With withActor false, X-Actor is not
+// read, and the result carries no actor.
+func readTrace(w http.ResponseWriter, r *http.Request, withActor bool) (model.Trace, bool) {
+	var t model.Trace
+	fields := []struct {
+		name  string
+		dst   *string
+		valid func(string) bool
+	}{
+		{headerSessionID, &t.SessionID, model.ValidSessionID},
+		{headerClientHost, &t.ClientHost, model.ValidClientHost},
+	}
+	if withActor {
+		fields = append([]struct {
+			name  string
+			dst   *string
+			valid func(string) bool
+		}{{headerActor, &t.Actor, model.ValidActorID}}, fields...)
+	}
+	for _, f := range fields {
+		values := r.Header.Values(f.name)
+		switch {
+		case len(values) == 0 || (len(values) == 1 && values[0] == ""):
+			reject(w, r, "missing_header", f.name, f.name+" 헤더가 필요합니다.")
+			return t, false
+		case len(values) > 1:
+			reject(w, r, "duplicate_header", f.name, f.name+" 헤더는 하나여야 합니다.")
+			return t, false
+		case !f.valid(values[0]):
+			reject(w, r, "invalid_header", f.name, f.name+" 헤더 값이 규칙에 맞지 않습니다.")
+			return t, false
+		}
+		*f.dst = values[0]
+	}
+	return t, true
 }
 
 func reject(w http.ResponseWriter, r *http.Request, reason, field, msg string) {

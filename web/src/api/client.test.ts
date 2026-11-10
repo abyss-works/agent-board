@@ -5,7 +5,9 @@ import {
   NetworkError,
   ServerUnavailableError,
   buildQuery,
+  fetchUserActorIds,
   headersFor,
+  isActorRejected,
   isNotFound,
   isNotPending,
   isPreconditionFailed,
@@ -270,5 +272,42 @@ describe('기기 승인 오류 분류', () => {
       expect(isNotFound(value)).toBe(false)
       expect(isNotPending(value)).toBe(false)
     }
+  })
+})
+
+describe('fetchUserActorIds', () => {
+  it('X-Actor 없이 /v1/actors를 불러 사용자 행위자 ID만 돌려준다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, {
+      items: [
+        { id: 'me', kind: 'user' },
+        { id: 'claude', kind: 'agent' },
+      ],
+    })
+    const ids = await fetchUserActorIds({ baseUrl: '', token: config.token, sessionId: config.sessionId, clientHost: 'web' }, fetchFn)
+    expect(ids).toEqual(['me'])
+    expect(calls[0].url).toBe('/v1/actors')
+    const headers = calls[0].init.headers as Record<string, string>
+    expect(headers).not.toHaveProperty('X-Actor')
+    expect(headers.Authorization).toBe(`Bearer ${config.token}`)
+    expect(headers['X-Session-Id']).toBe(config.sessionId)
+  })
+  it('401이면 ApiError를 던진다', async () => {
+    const { fetchFn } = fakeFetch(401, { error: { code: 'unauthorized', message: 'x' } })
+    await expect(fetchUserActorIds({ baseUrl: '', token: 't', sessionId: 's', clientHost: 'web' }, fetchFn)).rejects.toSatisfy(isUnauthorized)
+  })
+})
+
+describe('isActorRejected', () => {
+  const apiError = (status: number, code: string, reason: string) =>
+    new ApiError(status, code, 'x', [{ field: 'X-Actor', reason, message: 'x' }])
+  it('선언되지 않은 행위자(400)와 토큰·행위자 불일치(403)만 참이다', () => {
+    expect(isActorRejected(apiError(400, 'bad_request', 'unknown_actor'))).toBe(true)
+    expect(isActorRejected(apiError(403, 'forbidden', 'actor_mismatch'))).toBe(true)
+  })
+  it('다른 오류는 거짓이다', () => {
+    expect(isActorRejected(apiError(400, 'bad_request', 'missing_header'))).toBe(false)
+    expect(isActorRejected(apiError(403, 'forbidden', 'user_only'))).toBe(false)
+    expect(isActorRejected(new ApiError(401, 'unauthorized', 'x'))).toBe(false)
+    expect(isActorRejected(new Error('x'))).toBe(false)
   })
 })

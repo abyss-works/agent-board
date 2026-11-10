@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
@@ -312,17 +313,21 @@ func TestListIssues(t *testing.T) {
 
 func TestCommentsAndActivity(t *testing.T) {
 	e := newEnv(t)
+	// A clock that advances one second per stamp keeps the times of the records apart,
+	// so the since and until boundaries do not depend on the millisecond the test runs in.
+	base, ticks := time.Date(2026, 10, 21, 2, 0, 0, 0, time.UTC), 0
+	e.st.SetClock(func() time.Time { ticks++; return base.Add(time.Duration(ticks) * time.Second) })
 	e.createProject(t, "AGB", "agent-board")
 	e.createIssue(t, `{"project":"AGB","title":"a"}`)
 	e.createIssue(t, `{"project":"AGB","title":"b"}`)
 
-	rec := e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"착수한다."}`, map[string]string{"X-Session-Id": "sess-9", "X-Client-Host": "ab"})
+	rec := e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"착수한다."}`, map[string]string{"X-Session-Id": "sess-9", "X-Client-Host": "desk"})
 	if rec.Code != 201 {
 		t.Fatalf("comment: %d %s", rec.Code, rec.Body.String())
 	}
 	var a model.Activity
 	decodeJSON(t, rec, &a)
-	if a.Kind != model.ActivityCommented || *a.Body != "착수한다." || a.SessionID != "sess-9" || a.ClientHost != "ab" || a.Actor != "claude" || a.Issue != "AGB-1" || a.Changes != nil {
+	if a.Kind != model.ActivityCommented || *a.Body != "착수한다." || a.SessionID != "sess-9" || a.ClientHost != "desk" || a.Actor != "claude" || a.Issue != "AGB-1" || a.Changes != nil {
 		t.Errorf("comment = %+v", a)
 	}
 	if !strings.Contains(rec.Body.String(), `"changes":null`) {
@@ -373,7 +378,7 @@ func TestCommentsAndActivity(t *testing.T) {
 	if l := get("issue=AGB-1,AGB-2&sort=at&limit=2"); len(l.Items) != 2 || l.Items[0].Kind != model.ActivityCreated || l.Total != 4 {
 		t.Errorf("sort at = %+v", l)
 	}
-	if l := get("client_host=ab"); l.Total != 1 {
+	if l := get("client_host=desk"); l.Total != 1 {
 		t.Errorf("client_host = %d", l.Total)
 	}
 	since := acts.Items[0].At.String()

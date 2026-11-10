@@ -50,21 +50,21 @@ func TestCreateGetAndDeleteMessage(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
 
-	rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"to":"framework","title":"배포 끝","body":"본문","ttl":"3d"}`, nil)
+	rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"to":"reviewer","title":"배포 끝","body":"본문","ttl":"3d"}`, nil)
 	var m model.Message
 	decodeJSON(t, rec, &m)
 	path := fmt.Sprintf("/v1/messages/%d", m.ID)
 	if rec.Code != 201 || rec.Header().Get("Location") != path {
 		t.Fatalf("create: %d %s %q", rec.Code, rec.Body.String(), rec.Header().Get("Location"))
 	}
-	if m.Project != "AGB" || m.To == nil || *m.To != "framework" || m.Title != "배포 끝" || m.Body == nil || *m.Body != "본문" || m.State != "active" ||
+	if m.Project != "AGB" || m.To == nil || *m.To != "reviewer" || m.Title != "배포 끝" || m.Body == nil || *m.Body != "본문" || m.State != "active" ||
 		m.CreatedBy != "claude" || m.CreatedSession != "sess-1" || m.CreatedHost != "desk-win10" || m.DeletedAt != nil {
 		t.Errorf("message = %+v", m)
 	}
 	if d := m.ExpiresAt.Time().Sub(m.CreatedAt.Time()).Hours(); d != 72 {
 		t.Errorf("ttl 3d gave %v hours", d)
 	}
-	for _, want := range []string{`"to":"framework"`, `"deleted_at":null`, `"state":"active"`, `"age":"0m"`} {
+	for _, want := range []string{`"to":"reviewer"`, `"deleted_at":null`, `"state":"active"`, `"age":"0m"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("JSON shape lacks %s: %s", want, rec.Body.String())
 		}
@@ -99,7 +99,7 @@ func TestListMessages(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
 	e.createProject(t, "OTH", "other")
-	a := e.putMessage(t, "AGB", `{"to":"ab","title":"a"}`)
+	a := e.putMessage(t, "AGB", `{"to":"desk","title":"a"}`)
 	e.putMessage(t, "AGB", `{"to":"codex","title":"b"}`)
 	e.putMessage(t, "OTH", `{"title":"other"}`)
 	if rec := e.do(t, "DELETE", fmt.Sprintf("/v1/messages/%d", a.ID), "", nil); rec.Code != 200 {
@@ -116,8 +116,8 @@ func TestListMessages(t *testing.T) {
 	if l = e.listMessages(t, "AGB", "?to=codex"); messageTitles(l.Items) != "b" {
 		t.Errorf("to filter = %+v", l)
 	}
-	if l = e.listMessages(t, "AGB", "?to=ab"); len(l.Items) != 0 || l.Total != 0 {
-		t.Errorf("to=ab = %+v", l)
+	if l = e.listMessages(t, "AGB", "?to=desk"); len(l.Items) != 0 || l.Total != 0 {
+		t.Errorf("to=desk = %+v", l)
 	}
 	if l = e.listMessages(t, "AGB", "?all=true&limit=1&offset=1"); messageTitles(l.Items) != "a" || l.Total != 2 || l.Limit != 1 || l.Offset != 1 {
 		t.Errorf("paging = %+v", l)
@@ -138,7 +138,7 @@ func TestMessageErrors(t *testing.T) {
 		code       int
 		field      string
 	}{
-		{"missing title", `{"to":"ab"}`, 422, "title"},
+		{"missing title", `{"to":"desk"}`, 422, "title"},
 		{"empty title", `{"title":""}`, 422, "title"},
 		{"bad ttl", `{"title":"t","ttl":"soon"}`, 422, "ttl"},
 		{"ttl over max", `{"title":"t","ttl":"91d"}`, 422, "ttl"},

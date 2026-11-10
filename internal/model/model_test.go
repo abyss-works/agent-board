@@ -92,7 +92,7 @@ func TestValidators(t *testing.T) {
 		{"actor id", ValidActorID, []string{"claude", "owner1", "a"}, []string{"", "Claude", "a_b", "a-b", "abcdefghijklmnopqrstuvwxyz0123456"}},
 		{"label", ValidLabel, []string{"api", "cli-v2", "a.b_c", "0x"}, []string{"", "API", "-api", "a b", "abcdefghijklmnopqrstuvwxyz0123456"}},
 		{"session id", ValidSessionID, []string{"c1d2e3f4", "550e8400-e29b-41d4-a716-446655440000", "s.1_2-3", "A"}, []string{"", "-abc", ".abc", "a b", "a/b", "한글", string(make([]byte, 129))}},
-		{"client host", ValidClientHost, []string{"desk-win10", "ab", "host.example.com", "A1"}, []string{"", "-host", "host-", "ho st", "host..x", ".host", "host.", "a_b", string(make([]byte, 65)), "한글"}},
+		{"client host", ValidClientHost, []string{"desk-win10", "box", "host.example.com", "A1"}, []string{"", "-host", "host-", "ho st", "host..x", ".host", "host.", "a_b", string(make([]byte, 65)), "한글"}},
 	}
 	for _, c := range cases {
 		for _, v := range c.ok {

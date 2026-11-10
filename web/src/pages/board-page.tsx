@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, PlusIcon } from 'lucide-react'
 import { useState } from 'react'
-import { useBoard, usePatchIssue } from '@/api/queries'
+import { QUERY_ROOT, useBoard, usePatchIssue } from '@/api/queries'
 import type { Board, BoardColumn, IssueStatus, IssueSummary } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -62,7 +62,6 @@ function Column({ column, flash, onAdd }: { column: BoardColumn; flash: Set<stri
 }
 
 function BoardView({ projectKey }: { projectKey: string | null }) {
-  const { instance } = useAppState()
   const qc = useQueryClient()
   const board = useBoard(projectKey)
   const patch = usePatchIssue()
@@ -90,7 +89,7 @@ function BoardView({ projectKey }: { projectKey: string | null }) {
   }
 
   const move = (issue: IssueSummary, to: IssueStatus, reason?: string) => {
-    const key = [instance.id, 'board', projectKey]
+    const key = [QUERY_ROOT, 'board', projectKey]
     // 낙관적으로 카드를 옮기고, 실패하면 onSettled의 invalidate가 서버 상태로 되돌린다.
     qc.setQueryData<Board>(key, (cur) => (cur ? moveIssue(cur, issue.key, to) : cur))
     patch.mutate(

@@ -39,8 +39,8 @@ func TestCreateAndGetMessage(t *testing.T) {
 	start := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
 	msgClock(s, start)
 
-	m := putMessage(t, s, "AGB", "framework", "배포 끝", "")
-	if m.ID < 1 || m.Project != "AGB" || m.To == nil || *m.To != "framework" || m.Title != "배포 끝" || m.Body == nil || *m.Body != "본문 배포 끝" ||
+	m := putMessage(t, s, "AGB", "reviewer", "배포 끝", "")
+	if m.ID < 1 || m.Project != "AGB" || m.To == nil || *m.To != "reviewer" || m.Title != "배포 끝" || m.Body == nil || *m.Body != "본문 배포 끝" ||
 		m.State != model.MessageActive || m.Age != "0m" || m.CreatedBy != "claude" || m.CreatedSession != "s-claude" || m.CreatedHost != "laptop" ||
 		m.DeletedAt != nil || m.DeletedBy != nil {
 		t.Errorf("message = %+v", m)
@@ -89,15 +89,15 @@ func TestListMessagesDefaultHidesExpiredAndDeleted(t *testing.T) {
 	mustProject(t, s, ctx, "OTH")
 	advance := msgClock(s, time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC))
 
-	putMessage(t, s, "AGB", "ab", "짧음", "1h")
+	putMessage(t, s, "AGB", "desk", "짧음", "1h")
 	advance(time.Minute)
-	removed := putMessage(t, s, "AGB", "ab", "지움", "")
+	removed := putMessage(t, s, "AGB", "desk", "지움", "")
 	advance(time.Minute)
 	putMessage(t, s, "AGB", "codex", "코덱스", "")
 	advance(time.Minute)
 	putMessage(t, s, "AGB", "", "수신자 없음", "")
 	advance(time.Minute)
-	putMessage(t, s, "OTH", "ab", "다른 프로젝트", "")
+	putMessage(t, s, "OTH", "desk", "다른 프로젝트", "")
 	if _, err := s.DeleteMessage(ctx, trClaude, removed.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -119,9 +119,9 @@ func TestListMessagesDefaultHidesExpiredAndDeleted(t *testing.T) {
 		t.Errorf("after expiry: %s total %d", titles(items), total)
 	}
 
-	f.To = "ab"
+	f.To = "desk"
 	if items, total, _ = s.ListMessages(ctx, f); total != 0 || len(items) != 0 {
-		t.Errorf("to=ab: %s", titles(items))
+		t.Errorf("to=desk: %s", titles(items))
 	}
 	f.To = "codex"
 	if items, total, _ = s.ListMessages(ctx, f); titles(items) != "코덱스" || total != 1 {
@@ -140,9 +140,9 @@ func TestListMessagesDefaultHidesExpiredAndDeleted(t *testing.T) {
 	if states["짧음"] != model.MessageExpired || states["지움"] != model.MessageDeleted || states["코덱스"] != model.MessageActive {
 		t.Errorf("states = %v", states)
 	}
-	f.To = "ab"
+	f.To = "desk"
 	if items, total, _ = s.ListMessages(ctx, f); total != 2 || titles(items) != "지움,짧음" {
-		t.Errorf("all with to=ab: %s", titles(items))
+		t.Errorf("all with to=desk: %s", titles(items))
 	}
 
 	if _, _, err := s.ListMessages(ctx, MessageFilter{Project: "NOPE", Limit: 50}); !errors.Is(err, ErrNotFound) {
@@ -171,7 +171,7 @@ func TestDeleteMessageIsSoft(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	advance := msgClock(s, time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC))
-	m := putMessage(t, s, "AGB", "ab", "지울 것", "")
+	m := putMessage(t, s, "AGB", "desk", "지울 것", "")
 	advance(5 * time.Minute)
 
 	d, err := s.DeleteMessage(ctx, trOwner, m.ID)
