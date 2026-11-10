@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
@@ -312,6 +313,10 @@ func TestListIssues(t *testing.T) {
 
 func TestCommentsAndActivity(t *testing.T) {
 	e := newEnv(t)
+	// A clock that advances one second per stamp keeps the times of the records apart,
+	// so the since and until boundaries do not depend on the millisecond the test runs in.
+	base, ticks := time.Date(2026, 10, 21, 2, 0, 0, 0, time.UTC), 0
+	e.st.SetClock(func() time.Time { ticks++; return base.Add(time.Duration(ticks) * time.Second) })
 	e.createProject(t, "AGB", "agent-board")
 	e.createIssue(t, `{"project":"AGB","title":"a"}`)
 	e.createIssue(t, `{"project":"AGB","title":"b"}`)
