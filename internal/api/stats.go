@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// unroutedPattern stands for the requests that no route handled: rejected
+// before routing, unknown paths, and the web client.
+const unroutedPattern = "(unrouted)"
+
 // latencyBoundsMS are the inclusive upper bounds of the latency buckets in
 // milliseconds. A request slower than the last bound falls into one more
 // bucket that has no upper bound.

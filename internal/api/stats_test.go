@@ -94,3 +94,62 @@ func TestStatsCollectorConcurrent(t *testing.T) {
 		t.Errorf("requests = %d, want 5000", n)
 	}
 }
+
+type statsResponse struct {
+	StartedAt string       `json:"started_at"`
+	DBBytes   int64        `json:"db_bytes"`
+	Routes    []RouteStats `json:"routes"`
+}
+
+func TestStatsEndpoint(t *testing.T) {
+	e := newEnvWith(t, testActors, func(o *Options) {
+		o.Now = func() time.Time { return time.Date(2026, 11, 9, 12, 30, 0, 0, time.FixedZone("KST", 9*3600)) }
+	})
+	e.do(t, "GET", "/v1/actors", "", nil)
+	e.do(t, "GET", "/v1/issues/AGB-1", "", nil)
+	e.do(t, "GET", "/v1/issues/AGB-2", "", nil)
+	e.do(t, "GET", "/v1/no-such-path", "", nil)
+	e.do(t, "GET", "/v1/actors", "", map[string]string{"Authorization": "Bearer wrong"})
+
+	rec := e.do(t, "GET", "/v1/stats", "", nil)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var got statsResponse
+	decodeJSON(t, rec, &got)
+	if got.StartedAt != "2026-11-09T03:30:00.000Z" {
+		t.Errorf("started_at = %q, want UTC", got.StartedAt)
+	}
+	if got.DBBytes <= 0 {
+		t.Errorf("db_bytes = %d", got.DBBytes)
+	}
+	if n := findRoute(t, got.Routes, "GET", "/v1/actors").Requests; n != 1 {
+		t.Errorf("/v1/actors requests = %d, want 1 (the rejected one is not routed)", n)
+	}
+	// Two different keys are one route pattern.
+	if n := findRoute(t, got.Routes, "GET", "/v1/issues/{key}").Requests; n != 2 {
+		t.Errorf("/v1/issues/{key} requests = %d, want 2", n)
+	}
+	// Requests no route handled are counted together, not by their path.
+	if n := findRoute(t, got.Routes, "GET", unroutedPattern).Requests; n < 2 {
+		t.Errorf("unrouted requests = %d, want at least 2", n)
+	}
+	for _, r := range got.Routes {
+		if r.Route == "/v1/no-such-path" || r.Route == "/v1/issues/AGB-1" {
+			t.Errorf("raw path used as route: %q", r.Route)
+		}
+	}
+}
+
+func TestStatsEndpointAccess(t *testing.T) {
+	e := newEnv(t)
+	if rec := e.do(t, "GET", "/v1/stats", "", map[string]string{"Authorization": "Bearer wrong"}); rec.Code != 401 {
+		t.Errorf("wrong token status = %d, want 401", rec.Code)
+	}
+	if rec := e.do(t, "GET", "/v1/stats", "", map[string]string{"X-Actor": "-"}); rec.Code != 400 {
+		t.Errorf("missing actor status = %d, want 400", rec.Code)
+	}
+	if rec := e.do(t, "POST", "/v1/stats", "", nil); rec.Code != 405 {
+		t.Errorf("POST status = %d, want 405", rec.Code)
+	}
+}
