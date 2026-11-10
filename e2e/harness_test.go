@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"flag"
@@ -26,7 +27,6 @@ const (
 	envToken        = "AGB_E2E_TOKEN"
 	envPersistKey   = "AGB_E2E_PERSIST_KEY"
 	envPersistPhase = "AGB_E2E_PERSIST_PHASE"
-	envPass         = "AGB_E2E_PASS" // set in the child processes of a -count run
 
 	defaultHost = "e2e-host"
 	jsonType    = "application/json; charset=utf-8"
@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	flag.Parse()
-	if n, _ := strconv.Atoi(flag.Lookup("test.count").Value.String()); n > 1 && os.Getenv(envPass) == "" {
+	if n, _ := strconv.Atoi(flag.Lookup("test.count").Value.String()); n > 1 {
 		os.Exit(repeat(n))
 	}
 	runID = randomID(5)
@@ -111,28 +111,57 @@ func loginAgents() error {
 // repeat runs the test binary n times, each in its own process. -count would
 // run the tests again inside this process, where runID, and with it every
 // project key, label and search word, is the same as in the pass before.
-// Each child draws its own runID. It returns the exit code: the first
-// failing pass's code, or 0.
+// Each child draws its own runID; childArgs sets -test.count=1 for it, so a
+// child never repeats. It returns the exit code: the first failing pass's
+// code, or 0.
+//
+// go test kills only this process, at -test.timeout plus the larger of a
+// minute and a tenth of the timeout. A child outlives that kill and keeps
+// sending requests to the server. So each child gets, as its own
+// -test.timeout, the time left until this process's deadline, which is the
+// timeout counted from this process's start. A child that runs out of time
+// prints its "test timed out" report and the goroutine dump itself. As a
+// backstop, this process kills a child still running 30 seconds after the
+// deadline. Once no time is left, it starts no further pass.
 func repeat(n int) int {
-	args := append([]string(nil), os.Args[1:]...)
-	for i, a := range args {
-		if strings.HasPrefix(a, "-test.count=") {
-			args[i] = "-test.count=1"
-		}
+	ctx := context.Background()
+	var timeout time.Duration
+	deadline := time.Now()
+	if d, _ := flag.Lookup("test.timeout").Value.(flag.Getter).Get().(time.Duration); d > 0 {
+		timeout = d
+		deadline = deadline.Add(d)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d+30*time.Second)
+		defer cancel()
 	}
-	code := 0
-	for pass := 1; pass <= n; pass++ {
-		cmd := exec.Command(os.Args[0], args...)
-		cmd.Env = append(os.Environ(), envPass+"="+strconv.Itoa(pass))
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil && code == 0 {
-			code = 1
-			if ee, ok := err.(*exec.ExitError); ok {
-				code = ee.ExitCode()
+	args := childArgs(os.Args[1:])
+	failfast, _ := strconv.ParseBool(flag.Lookup("test.failfast").Value.String())
+	return runPasses(n, failfast, func(pass int) (int, bool) {
+		passArgs := args
+		if timeout > 0 {
+			left := time.Until(deadline).Truncate(time.Millisecond)
+			if left <= 0 {
+				fmt.Fprintf(os.Stderr, "e2e: timed out before pass %d; the remaining passes are not run\n", pass)
+				return 1, true
 			}
+			passArgs = withTimeout(args, left)
 		}
-	}
-	return code
+		cmd := exec.CommandContext(ctx, os.Args[0], passArgs...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		err := cmd.Run()
+		if err == nil {
+			return 0, false
+		}
+		if ctx.Err() != nil {
+			fmt.Fprintf(os.Stderr, "e2e: timed out in pass %d; the remaining passes are not run\n", pass)
+			return 1, true
+		}
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode(), false
+		}
+		fmt.Fprintf(os.Stderr, "e2e: pass %d: %v\n", pass, err)
+		return 1, false
+	})
 }
 
 func randomID(n int) string {
