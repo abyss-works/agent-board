@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/skills"
+	"github.com/abyss-works/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/skills"
 )
 
 // errCheckMismatch is returned by skill check when the CLI or the skill is
@@ -129,7 +129,7 @@ func (a *App) compareWithServer(release string) bool {
 	switch compareRelease(cli, srv) {
 	case -1:
 		fmt.Fprintf(a.Stdout, "CLI %s, 서버 %s: CLI가 서버보다 오래됐습니다. 스킬에 적힌 명령이 이 CLI에 없을 수 있습니다.\n", a.Version, release)
-		fmt.Fprintf(a.Stdout, "갱신: go install -trimpath -ldflags \"-X main.version=%s\" github.com/wsk0715/agent-board/cmd/agb@main\n", release)
+		fmt.Fprintf(a.Stdout, "갱신: go install -trimpath -ldflags \"-X main.version=%s\" github.com/abyss-works/agent-board/cmd/agb@main\n", release)
 		return false
 	case 1:
 		fmt.Fprintf(a.Stdout, "CLI %s, 서버 %s: 서버가 CLI보다 오래됐습니다. 서버 배포를 기다리는 중일 수 있습니다.\n", a.Version, release)

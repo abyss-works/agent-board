@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/api"
-	"github.com/wsk0715/agent-board/internal/backup"
-	"github.com/wsk0715/agent-board/internal/config"
-	"github.com/wsk0715/agent-board/internal/embed"
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/api"
+	"github.com/abyss-works/agent-board/internal/backup"
+	"github.com/abyss-works/agent-board/internal/config"
+	"github.com/abyss-works/agent-board/internal/embed"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 // Options are the process level settings not read from the environment.

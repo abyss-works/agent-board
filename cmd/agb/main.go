@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/backup"
-	"github.com/wsk0715/agent-board/internal/cli"
-	"github.com/wsk0715/agent-board/internal/config"
-	"github.com/wsk0715/agent-board/internal/server"
+	"github.com/abyss-works/agent-board/internal/backup"
+	"github.com/abyss-works/agent-board/internal/cli"
+	"github.com/abyss-works/agent-board/internal/config"
+	"github.com/abyss-works/agent-board/internal/server"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

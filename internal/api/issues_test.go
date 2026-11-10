@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // withTemplateBody adds the template body of the request's type to a create

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // Embedding sources, the values of embedding.source.

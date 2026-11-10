@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // loginActors declare two users and two agents, so a token can be told apart

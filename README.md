@@ -117,12 +117,12 @@ deploy/           운영용 compose 파일과 Kubernetes Ingress 구성
 모듈 경로로 바로 설치합니다.
 
 ```bash
-go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main
+go install -trimpath -ldflags "-X main.version=<버전>" github.com/abyss-works/agent-board/cmd/agb@main
 agb version
 ```
 
 - 실행 파일은 `$GOBIN`(기본값 `$(go env GOPATH)/bin`)에 생깁니다. 이 폴더를 `PATH`에 추가합니다.
-- 모듈 경로 `github.com/wsk0715/agent-board`는 이 저장소의 이전 주소입니다. GitHub이 이 주소를 `abyss-works/agent-board`로 연결하므로 그대로 설치할 수 있습니다.
+- 모듈 경로는 저장소 주소와 같은 `github.com/abyss-works/agent-board`입니다. 이전 경로 `github.com/wsk0715/agent-board`는 이 경로를 선언한 판부터 설치되지 않습니다.
 - `main`은 릴리즈 브랜치이므로 `<버전>`에는 `CHANGELOG.md`에서 가장 위에 있는 `vX.Y.Z` 제목의 릴리즈 이름을 넣습니다.
 
 저장소를 받아 직접 빌드할 수도 있습니다.

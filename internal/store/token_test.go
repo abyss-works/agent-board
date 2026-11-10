@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // tokenStore is seeded with owner (user) and claude, codex (agents).

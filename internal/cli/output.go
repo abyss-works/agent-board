@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // jsonOutput decides between JSON and tables: flags first, then whether

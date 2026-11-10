@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/client"
 )
 
 // App holds everything a command needs from its environment so tests can

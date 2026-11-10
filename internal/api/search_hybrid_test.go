@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/embed"
-	"github.com/wsk0715/agent-board/internal/model"
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/embed"
+	"github.com/abyss-works/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 // conceptEmbedder gives a text one dimension per concept, counting the words of

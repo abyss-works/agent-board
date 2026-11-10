@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wsk0715/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/client"
 )
 
 // fileRepo finds the repository of a file: the nearest folder above it that

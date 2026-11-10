@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*command{

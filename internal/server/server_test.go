@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/config"
-	"github.com/wsk0715/agent-board/internal/model"
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/config"
+	"github.com/abyss-works/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 const testToken = "test-token-0123456789abcdef0123456789" // dummy

@@ -49,7 +49,7 @@ func TestSkillCheckCLIOlderThanServer(t *testing.T) {
 		t.Fatalf("code=%d, want 1; out=%s", code, h.stdout)
 	}
 	out := h.stdout.String()
-	if !strings.Contains(out, "CLI가 서버보다 오래됐습니다") || !strings.Contains(out, `go install -trimpath -ldflags "-X main.version=v0.8.1" github.com/wsk0715/agent-board/cmd/agb@main`) {
+	if !strings.Contains(out, "CLI가 서버보다 오래됐습니다") || !strings.Contains(out, `go install -trimpath -ldflags "-X main.version=v0.8.1" github.com/abyss-works/agent-board/cmd/agb@main`) {
 		t.Errorf("output = %s", out)
 	}
 }

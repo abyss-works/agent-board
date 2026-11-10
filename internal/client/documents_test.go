@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wsk0715/agent-board/internal/api"
-	"github.com/wsk0715/agent-board/internal/model"
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/api"
+	"github.com/abyss-works/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 func TestDocumentMethodsBuildRequests(t *testing.T) {

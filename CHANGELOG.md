@@ -6,6 +6,7 @@
 
 ### 서버와 API
 
+- Go 모듈 경로를 `github.com/wsk0715/agent-board`에서 저장소 주소와 같은 `github.com/abyss-works/agent-board`로 바꾼다. CLI 설치와 갱신 명령은 `go install -trimpath -ldflags "-X main.version=<버전>" github.com/abyss-works/agent-board/cmd/agb@main`이다. `agb skill check`가 보이는 갱신 명령과 README, 스킬 문서도 새 경로를 쓴다. 이전 경로는 GitHub 리다이렉트로 이 저장소에 닿지만, 이 판부터는 `go.mod`가 새 경로를 선언하므로 이전 경로로 `@main`을 설치하면 Go가 모듈 경로 불일치로 거절한다. 이전 CLI가 출력하는 갱신 명령은 이전 경로를 쓰므로 새 경로로 직접 설치한다. 이 판 전의 판은 이전 경로로 설치된다.
 - API 변경: 문서 등록(`PUT /v1/projects/{key}/documents/{name}`)이 `location`을 더는 받지 않는다. 보내면 `unknown_field`로 400이다. 전에는 `location`을 `archived`, `imported`로 바꿔 읽었고, `content`와 `location`만 보낸 요청은 같은 원문이면 아무것도 바꾸지 않았다. 문서 응답(등록, 조회, 목록, 검색)에서 `location` 필드도 없앤다. 위치는 `archived`, `imported`, `state`로 읽는다. v0.8.x CLI는 문서를 올리지 못하므로 모든 호스트의 CLI를 v0.9 이상으로 갱신한다.
 - 서버가 주소에 바인딩하지 못해 기동에 실패하면 이미 연 데이터베이스를 닫고 오류를 돌려준다. 전에는 파일이 열린 채로 남았다. `agb serve`는 기동에 실패하면 바로 종료하므로, 이 차이가 드러나는 곳은 같은 프로세스에서 서버를 다시 쓰는 경우(테스트 등)뿐이다.
 - 검색어 임베딩 호출마다 서버 로그에 info 한 줄(`query embedding`)을 남긴다. 용도(`purpose`), 모델(`model`), 임베딩 응답의 `id`(`response_id`, 응답에 없으면 빈 값), 소요 시간(`duration_ms`), 결과(`result`: `ok`, `timeout`, `error`)를 담고 검색어 원문은 담지 않는다. 임베딩 응답 형식에 공급자 필드가 없으므로 공급자 이름은 남기지 않는다. 5초 제한을 넘긴 호출을 `timeout`으로 구분한다.

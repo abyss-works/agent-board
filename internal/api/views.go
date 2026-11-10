@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/wsk0715/agent-board/internal/model"
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 func (h *handler) registerViews(mux *http.ServeMux) {

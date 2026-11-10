@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 // Semantic finds the n sources nearest in meaning to a query text, nearest

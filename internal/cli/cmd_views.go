@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 
-	"github.com/wsk0715/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/client"
 )
 
 var activityCmd = &command{

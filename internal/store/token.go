@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // tokenUseInterval is how far last_used_at must lag behind the clock before a

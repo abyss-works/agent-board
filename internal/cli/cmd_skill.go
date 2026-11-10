@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wsk0715/agent-board/skills"
+	"github.com/abyss-works/agent-board/skills"
 )
 
 // skillName is the folder the skill lives in, both in the embedded tree and

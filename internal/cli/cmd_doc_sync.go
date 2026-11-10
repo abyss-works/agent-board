@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // docSyncResult sorts the files of a sync by what happened to them.

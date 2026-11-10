@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // Optional is a tri-state patch value: absent, set to null, or set to a value.

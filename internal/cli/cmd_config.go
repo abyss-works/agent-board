@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 var configCmd = &command{name: "config", summary: "설정 파일 관리", subs: []*command{

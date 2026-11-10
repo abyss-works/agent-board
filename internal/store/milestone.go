@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // ErrDuplicateMilestoneName reports a name that another milestone of the

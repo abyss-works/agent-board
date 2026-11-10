@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // tplBody is the template body of an issue type: what an agent writes when it

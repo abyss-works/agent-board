@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 var (

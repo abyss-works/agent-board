@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // Sentinel errors of the topic rules. HTTP maps them to 409.

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // BuildMatch turns a user query into an FTS5 MATCH expression. The whole

@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 var templateCmd = &command{name: "template", summary: "이슈 종류별 본문 템플릿", subs: []*command{

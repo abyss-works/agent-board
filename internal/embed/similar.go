@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"slices"
 
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 const (

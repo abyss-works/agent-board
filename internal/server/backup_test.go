@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/backup"
-	"github.com/wsk0715/agent-board/internal/config"
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/backup"
+	"github.com/abyss-works/agent-board/internal/config"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 func backupConfig(t *testing.T) *config.Config {

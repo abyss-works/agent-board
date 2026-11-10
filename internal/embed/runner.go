@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 // batchSize is the number of chunks sent to the embeddings API in one request.

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/wsk0715/agent-board/internal/client"
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/client"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·상태 수정·목록·검색·조회", note: docHelpNote, subs: []*command{

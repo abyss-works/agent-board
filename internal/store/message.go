@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // MessageInput is a create request. An empty To leaves the message without

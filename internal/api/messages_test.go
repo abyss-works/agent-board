@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 func (e *env) putMessage(t *testing.T, project, body string) model.Message {

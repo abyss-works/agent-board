@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/store"
+	"github.com/abyss-works/agent-board/internal/store"
 )
 
 // queryTimeout bounds the embedding of a search query. A search waits for it,

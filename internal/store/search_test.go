@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // TestSearchAcrossSources finds one word in issues, comments and documents of

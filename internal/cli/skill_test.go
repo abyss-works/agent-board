@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wsk0715/agent-board/skills"
+	"github.com/abyss-works/agent-board/skills"
 )
 
 func embeddedSkill(t *testing.T, name string) string {

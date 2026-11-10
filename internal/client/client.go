@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // Client holds the connection settings. Zero HTTP uses http.DefaultClient.

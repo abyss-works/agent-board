@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // Config is the per-machine configuration file. Empty fields are omitted

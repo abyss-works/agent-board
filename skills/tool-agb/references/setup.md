@@ -22,9 +22,9 @@
    ```bash
    REF=main
    VER=<VER>
-   go install -trimpath -ldflags "-X main.version=${VER}" github.com/wsk0715/agent-board/cmd/agb@${REF}
+   go install -trimpath -ldflags "-X main.version=${VER}" github.com/abyss-works/agent-board/cmd/agb@${REF}
    ```
-   - 모듈 경로 `github.com/wsk0715/agent-board`는 저장소의 이전 주소다. GitHub이 `abyss-works/agent-board`로 연결한다.
+   - 모듈 경로는 저장소 주소와 같은 `github.com/abyss-works/agent-board`다. 이전 경로 `github.com/wsk0715/agent-board`는 이 경로를 선언한 판부터 설치되지 않는다.
    - `@latest`를 쓰지 않는다. 저장소에 버전 태그가 없어 `@latest`는 기본 브랜치(`dev`, 출시 전)를 받는다. 릴리즈는 `@main`이나 커밋으로 받는다.
    - `-ldflags`를 빼면 `agb version`이 `dev`로 나온다.
 4. 확인한다.

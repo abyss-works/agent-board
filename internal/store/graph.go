@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // Graph returns the decision graph around a node: the nodes reachable from it

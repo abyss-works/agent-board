@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/abyss-works/agent-board/internal/model"
 )
 
 // supersession is the replacement relations of one document, to be listed

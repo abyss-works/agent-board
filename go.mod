@@ -1,4 +1,4 @@
-module github.com/wsk0715/agent-board
+module github.com/abyss-works/agent-board
 
 go 1.26.0
 
