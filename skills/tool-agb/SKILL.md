@@ -537,7 +537,7 @@ agb doc activity <PROJECT> <이름>
 
 - 보내는 쪽은 넣고 돌아온다: `agb msg put -p <KEY> --to <라벨> --title "<제목>" --body-file -`. `--ttl`은 기본 7일이다.
 - 받는 쪽은 읽고 처리한 뒤 지운다: `agb msg list -p <KEY> --to <라벨>`, `agb msg get <ID> --fields body --text`, `agb msg rm <ID>`.
-- 기간이 지난 메시지와 지운 메시지도 서버에 남는다. `agb msg list --all`, `agb msg get <ID>`로 읽는다.
+- 기간이 지난 메시지와 지운 메시지도 서버에 남는다. `agb msg list --all`, `agb msg get <ID>`로 읽는다. 지운 메시지를 되돌릴 수 없다.
 
 ## 이슈 템플릿
 
