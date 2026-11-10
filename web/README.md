@@ -1,6 +1,6 @@
 # agent-board-web
 
-agent-board REST API를 브라우저에서 쓰는 웹 클라이언트다. 현황, 보드, 이슈 목록과 상세, 활동, 마일스톤을 보고 이슈 등록·수정·상태 변경·댓글과 프로젝트·마일스톤 생성·수정을 한다. 행위자는 사용자 `owner`다.
+agent-board REST API를 브라우저에서 쓰는 웹 클라이언트다. 현황, 보드, 이슈 목록과 상세, 활동, 마일스톤을 보고 이슈 등록·수정·상태 변경·댓글과 프로젝트·마일스톤 생성·수정을 한다. 행위자는 서버에 선언된 사용자 행위자다.
 
 React 19 + TypeScript, Vite로 빌드하는 SPA다. Tailwind CSS 4, shadcn/ui 구성(radix-ui), TanStack Query, react-router, dnd-kit, react-markdown을 쓴다. 서버 쪽 중계는 없다.
 
@@ -25,8 +25,11 @@ AGB_PROXY_TARGET=<서버 주소> pnpm dev
 
 1. 로그인 화면에 접속한 서버 주소가 보이고, 그 아래에 `/v1/health` 결과로 서버가 켜져 있는지 보인다.
 2. 서버의 `AGB_TOKEN` 값을 붙여 넣고 로그인한다.
+3. 서버에 선언된 사용자 행위자(`kind=user`)를 `GET /v1/actors`로 받는다. 하나면 그것을 쓰고, 여럿이면 화면에서 고른다. 하나도 없으면 오류를 보인다.
 
-토큰은 이 브라우저의 localStorage에 저장된다. 요청마다 `Authorization: Bearer <토큰>`, `X-Actor: owner`, `X-Session-Id: web-<브라우저마다 한 번 만든 값>`, `X-Client-Host: web` 헤더를 보낸다. 서버가 401을 돌려주면 토큰을 지우고 로그인 화면으로 돌아간다. 사이드바의 로그아웃도 토큰을 지운다.
+행위자를 저장하기 전에 로그인해 토큰만 저장된 브라우저는 처음 화면을 열 때 같은 목록을 받아 정한다. 여럿이면 `owner`가 있을 때 그것을 쓰고, 없으면 고르게 한다.
+
+토큰과 고른 행위자는 이 브라우저의 localStorage에 저장된다. 요청마다 `Authorization: Bearer <토큰>`, `X-Actor: <고른 행위자>`, `X-Session-Id: web-<브라우저마다 한 번 만든 값>`, `X-Client-Host: web` 헤더를 보낸다. 서버가 401을 돌려주면 토큰을 지우고 로그인 화면으로 돌아간다. 사이드바의 로그아웃도 토큰을 지운다. 둘 다 저장된 행위자도 함께 지운다.
 
 ## 프로젝트 전환
 
