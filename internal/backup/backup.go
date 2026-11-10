@@ -1,7 +1,7 @@
 // Package backup takes periodic consistent snapshots of the database,
 // compresses them and keeps a bounded window of them in an object store.
-// The object store sits behind ObjectStore so tests run against Memory and
-// the real S3-compatible adapter can be added without touching the runner.
+// The object store sits behind ObjectStore: S3 is the S3-compatible adapter
+// the server uses, and Memory is an in-process store for tests.
 package backup
 
 import (
