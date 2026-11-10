@@ -3,6 +3,8 @@ package embed
 import (
 	"cmp"
 	"context"
+	"errors"
+	"log/slog"
 	"math"
 	"slices"
 	"strings"
@@ -113,6 +115,8 @@ type Searcher struct {
 	Prefix   string // prepended to the query text before it is embedded
 	Index    *Index
 	Timeout  time.Duration // bound of the query embedding; zero means queryTimeout
+	Model    string        // named in the log line of each query embedding
+	Logger   *slog.Logger  // nil logs nothing
 }
 
 // Search embeds the query and returns the n nearest sources among allowed, as
@@ -120,9 +124,27 @@ type Searcher struct {
 func (s *Searcher) Search(ctx context.Context, query string, n int, allowed map[store.SourceRef]struct{}) ([]store.SourceText, error) {
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Timeout, queryTimeout))
 	defer cancel()
-	vecs, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
+	start := time.Now()
+	vecs, provider, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
+	s.logEmbed(provider, time.Since(start), err)
 	if err != nil {
 		return nil, err
 	}
 	return s.Index.Search(vecs[0], n, allowed), nil
+}
+
+// logEmbed writes one line per query embedding. It holds no query text, vector
+// or error text; a failure is described by the caller's own log.
+func (s *Searcher) logEmbed(provider string, d time.Duration, err error) {
+	if s.Logger == nil {
+		return
+	}
+	result := "ok"
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		result = "timeout"
+	case err != nil:
+		result = "error"
+	}
+	s.Logger.Info("query embedding", "purpose", "query", "model", s.Model, "provider", provider, "duration_ms", d.Milliseconds(), "result", result)
 }

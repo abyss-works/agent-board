@@ -28,7 +28,7 @@ func TestClientEmbed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	vecs, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
+	vecs, provider, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +37,20 @@ func TestClientEmbed(t *testing.T) {
 	}
 	if len(vecs) != 2 || !slices.Equal(vecs[0], []float32{1, 0.5}) || !slices.Equal(vecs[1], []float32{0, 2}) {
 		t.Errorf("vectors = %v", vecs)
+	}
+	if provider != "" {
+		t.Errorf("provider = %q, want empty when the response has none", provider)
+	}
+}
+
+func TestClientEmbedReadsTheProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"provider":"Nebius","data":[{"index":0,"embedding":[1]}]}`))
+	}))
+	defer srv.Close()
+	_, provider, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a"})
+	if err != nil || provider != "Nebius" {
+		t.Errorf("provider %q, err %v", provider, err)
 	}
 }
 
@@ -59,14 +73,14 @@ func TestClientEmbedErrors(t *testing.T) {
 			w.WriteHeader(tc.status)
 			w.Write([]byte(tc.body))
 		}))
-		_, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
+		_, _, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
 		srv.Close()
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), testKey) {
 			t.Errorf("%s: err = %v, want it to contain %q and not the key", name, err, tc.want)
 		}
 	}
 	// An unreachable server must not leak the key either.
-	if _, err := NewClient("http://127.0.0.1:1", testKey, "m").Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), testKey) {
+	if _, _, err := NewClient("http://127.0.0.1:1", testKey, "m").Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), testKey) {
 		t.Errorf("unreachable: err = %v", err)
 	}
 }
