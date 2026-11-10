@@ -8,7 +8,7 @@ import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
 
 // 개발 서버 프록시. 브라우저가 같은 출처(/api/v1/...)로 부르면 접두어 /api를 떼고 대상 서버로 넘긴다.
-// 대상은 환경변수 VITE_AGB_PROXY_TARGET이고 기본값은 로컬 서버다. 토큰과 추적 헤더는 브라우저가
+// 대상은 환경변수 AGB_PROXY_TARGET이고 기본값은 로컬 서버다. VITE_ 접두어가 없으므로 클라이언트 번들에 들어가지 않는다. 토큰과 추적 헤더는 브라우저가
 // 직접 보내며 프록시는 아무것도 주입하지 않는다.
 const DEFAULT_TARGET = 'http://127.0.0.1:8420'
 
@@ -37,7 +37,7 @@ function proxyFor(target: string): ProxyOptions {
 }
 
 export default defineConfig(({ mode }) => {
-  const target = loadEnv(mode, process.cwd(), 'VITE_').VITE_AGB_PROXY_TARGET || DEFAULT_TARGET
+  const target = loadEnv(mode, process.cwd(), 'AGB_PROXY_').AGB_PROXY_TARGET || DEFAULT_TARGET
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
