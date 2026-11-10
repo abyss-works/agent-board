@@ -35,7 +35,7 @@ const TOAST_CLASS_NAMES = {
 }
 
 function Root() {
-  const { token, instance } = useAppState()
+  const { token } = useAppState()
   const location = useLocation()
   if (!token) return <LoginPage />
   // 이슈 주소이면 그 밑에 그릴 화면의 위치. 이슈를 열어도 아래 화면이 다시 만들어지지 않도록,
@@ -43,8 +43,7 @@ function Root() {
   const background = backgroundOf(location)
   return (
     <>
-      {/* 인스턴스를 바꾸면 트리를 새로 만들어 화면 상태가 섞이지 않게 한다. */}
-      <Routes key={instance.id} location={background ?? location}>
+      <Routes location={background ?? location}>
         <Route element={<AppShell overlayOpen={background !== null} />}>
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<OverviewPage />} />

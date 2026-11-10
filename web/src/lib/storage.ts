@@ -38,7 +38,7 @@ function randomBytes(n: number): Uint8Array {
   return bytes
 }
 
-/** 토큰(인스턴스별), 세션 ID(브라우저당 하나), 선택한 인스턴스와 프로젝트를 둔다. */
+/** 토큰, 세션 ID(브라우저당 하나), 선택한 프로젝트를 둔다. */
 export class AppStorage {
   private readonly store: KeyValueStore
   private sessionId: string | null = null
@@ -64,16 +64,16 @@ export class AppStorage {
     }
   }
 
-  getToken(instanceId: string): string | null {
-    return this.read(`token.${instanceId}`)
+  getToken(): string | null {
+    return this.read('token')
   }
 
-  setToken(instanceId: string, token: string): void {
-    this.write(`token.${instanceId}`, token)
+  setToken(token: string): void {
+    this.write('token', token)
   }
 
-  clearToken(instanceId: string): void {
-    this.write(`token.${instanceId}`, null)
+  clearToken(): void {
+    this.write('token', null)
   }
 
   getSessionId(): string {
@@ -89,19 +89,11 @@ export class AppStorage {
     return created
   }
 
-  getInstance(): string | null {
-    return this.read('instance')
+  getProject(): string | null {
+    return this.read('project')
   }
 
-  setInstance(id: string): void {
-    this.write('instance', id)
-  }
-
-  getProject(instanceId: string): string | null {
-    return this.read(`project.${instanceId}`)
-  }
-
-  setProject(instanceId: string, key: string | null): void {
-    this.write(`project.${instanceId}`, key)
+  setProject(key: string | null): void {
+    this.write('project', key)
   }
 }

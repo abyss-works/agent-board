@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useApi, useAppState } from '@/app/state'
+import { useApi } from '@/app/state'
 import { milestoneListParams } from '@/lib/milestones'
 import { issueListQuery, type IssueListFilters } from './client'
 import type {
@@ -33,25 +33,21 @@ import type {
   TopicStatus,
 } from './types'
 
-/** 모든 질의 키는 인스턴스 ID로 시작한다. 인스턴스를 바꾸면 캐시가 섞이지 않는다. */
-function useKeyPrefix() {
-  return useAppState().instance.id
-}
+/** 모든 질의 키는 이 값으로 시작한다. 쓰기 뒤 이 값으로 모든 조회를 다시 불러온다. */
+export const QUERY_ROOT = 'agb'
 
 export function useProjects() {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'projects'],
+    queryKey: [QUERY_ROOT, 'projects'],
     queryFn: ({ signal }) => api.get<Page<Project>>('/projects', { status: 'all', sort: 'key', limit: 200 }, signal),
   })
 }
 
 export function useOverview(projectKey: string | null) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'overview', projectKey],
+    queryKey: [QUERY_ROOT, 'overview', projectKey],
     queryFn: ({ signal }) => api.get<Overview>(`/projects/${projectKey}/overview`, { limit: 50 }, signal),
     enabled: projectKey !== null,
   })
@@ -59,9 +55,8 @@ export function useOverview(projectKey: string | null) {
 
 export function useBoard(projectKey: string | null) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'board', projectKey],
+    queryKey: [QUERY_ROOT, 'board', projectKey],
     queryFn: ({ signal }) => api.get<Board>('/board', { project: projectKey, closed_days: 7, limit: 200 }, signal),
     placeholderData: keepPreviousData,
   })
@@ -69,10 +64,9 @@ export function useBoard(projectKey: string | null) {
 
 export function useIssues(filters: IssueListFilters) {
   const api = useApi()
-  const inst = useKeyPrefix()
   const query = issueListQuery(filters)
   return useQuery({
-    queryKey: [inst, 'issues', query],
+    queryKey: [QUERY_ROOT, 'issues', query],
     queryFn: ({ signal }) => api.get<Page<IssueSummary>>(`/issues${query}`, undefined, signal),
     placeholderData: keepPreviousData,
   })
@@ -80,18 +74,16 @@ export function useIssues(filters: IssueListFilters) {
 
 export function useIssue(key: string) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'issue', key],
+    queryKey: [QUERY_ROOT, 'issue', key],
     queryFn: ({ signal }) => api.get<Issue>(`/issues/${key}`, undefined, signal),
   })
 }
 
 export function useIssueActivity(key: string) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'issue-activity', key],
+    queryKey: [QUERY_ROOT, 'issue-activity', key],
     queryFn: ({ signal }) => api.get<Page<Activity>>(`/issues/${key}/activity`, { limit: 200 }, signal),
   })
 }
@@ -104,9 +96,8 @@ export interface ActivityFilters {
 
 export function useActivity(f: ActivityFilters) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'activity', f.project, f.actor, f.kind],
+    queryKey: [QUERY_ROOT, 'activity', f.project, f.actor, f.kind],
     queryFn: ({ signal }) =>
       api.get<Page<Activity>>('/activity', { project: f.project, actor: f.actor, kind: f.kind, limit: 100 }, signal),
     placeholderData: keepPreviousData,
@@ -124,10 +115,9 @@ export interface DocumentFilters {
 /** GET /v1/documents. q가 있으면 관련도 순이고 스니펫이 붙는다. 없으면 날짜 최신 먼저다. 종류·상태는 쉼표 OR. */
 export function useDocuments(f: DocumentFilters) {
   const api = useApi()
-  const inst = useKeyPrefix()
   const params = { project: f.project, q: f.q, kind: f.kind.join(','), state: f.state.join(','), limit: 200 }
   return useQuery({
-    queryKey: [inst, 'documents', params],
+    queryKey: [QUERY_ROOT, 'documents', params],
     queryFn: ({ signal }) => api.get<Page<RecordDocument>>('/documents', params, signal),
     placeholderData: keepPreviousData,
   })
@@ -135,27 +125,24 @@ export function useDocuments(f: DocumentFilters) {
 
 export function useDocument(projectKey: string, name: string) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'document', projectKey, name],
+    queryKey: [QUERY_ROOT, 'document', projectKey, name],
     queryFn: ({ signal }) => api.get<RecordDocument>(`/projects/${projectKey}/documents/${encodeURIComponent(name)}`, undefined, signal),
   })
 }
 
 export function useQueue(projectKey: string | null, status: string, limit: number) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'queue', projectKey, status, limit],
+    queryKey: [QUERY_ROOT, 'queue', projectKey, status, limit],
     queryFn: ({ signal }) => api.get<Page<QueueItem>>('/queue', { project: projectKey, status, limit }, signal),
   })
 }
 
 export function useLabels(projectKey: string | null) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'labels', projectKey],
+    queryKey: [QUERY_ROOT, 'labels', projectKey],
     queryFn: ({ signal }) => api.get<{ items: LabelCount[] }>('/labels', { project: projectKey }, signal),
   })
 }
@@ -163,9 +150,8 @@ export function useLabels(projectKey: string | null) {
 /** 프로젝트의 주제 목록. 대주제 이름순, 그 아래 주제 이름순이다. 프로젝트를 고르지 않으면 부르지 않는다. */
 export function useTopics(projectKey: string | null, status: TopicStatus | 'all' = 'active') {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'topics', projectKey, status],
+    queryKey: [QUERY_ROOT, 'topics', projectKey, status],
     queryFn: ({ signal }) => api.get<{ items: Topic[] }>(`/projects/${projectKey}/topics`, { status: status === 'active' ? undefined : status }, signal),
     enabled: projectKey !== null,
   })
@@ -179,10 +165,9 @@ const OPEN_ONLY: readonly MilestoneStatus[] = ['open']
  */
 export function useMilestones(projectKey: string | null, statuses: readonly MilestoneStatus[] = OPEN_ONLY) {
   const api = useApi()
-  const inst = useKeyPrefix()
   const params = milestoneListParams(statuses)
   return useQuery({
-    queryKey: [inst, 'milestones', projectKey, params.status ?? 'open'],
+    queryKey: [QUERY_ROOT, 'milestones', projectKey, params.status ?? 'open'],
     queryFn: ({ signal }) => api.get<{ items: Milestone[] }>(`/projects/${projectKey}/milestones`, params, signal),
     enabled: projectKey !== null,
   })
@@ -191,9 +176,8 @@ export function useMilestones(projectKey: string | null, statuses: readonly Mile
 /** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 3초 갱신에서 뺀다. */
 export function useTemplates() {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'templates'],
+    queryKey: [QUERY_ROOT, 'templates'],
     queryFn: ({ signal }) => api.get<{ items: Template[] }>('/templates', undefined, signal),
     refetchInterval: false,
     staleTime: 5 * 60_000,
@@ -202,17 +186,16 @@ export function useTemplates() {
 
 export function useActors() {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'actors'],
+    queryKey: [QUERY_ROOT, 'actors'],
     queryFn: ({ signal }) => api.get<{ items: Actor[] }>('/actors', undefined, signal),
     refetchInterval: false,
     staleTime: 60_000,
   })
 }
 
-function deviceAuthorizationKey(inst: string, userCode: string | null) {
-  return [inst, 'device-authorization', userCode]
+function deviceAuthorizationKey(userCode: string | null) {
+  return [QUERY_ROOT, 'device-authorization', userCode]
 }
 
 /**
@@ -222,9 +205,8 @@ function deviceAuthorizationKey(inst: string, userCode: string | null) {
  */
 export function useDeviceAuthorization(userCode: string | null) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: deviceAuthorizationKey(inst, userCode),
+    queryKey: deviceAuthorizationKey(userCode),
     queryFn: ({ signal }) => api.get<DeviceAuthorization>(`/device-authorizations/${userCode}`, undefined, signal),
     enabled: userCode !== null,
     refetchInterval: false,
@@ -236,23 +218,20 @@ export function useDeviceAuthorization(userCode: string | null) {
 /** 발급한 행위자 토큰 목록. 서버가 id 내림차순으로 돌려준다. */
 export function useActorTokens(status: ActorTokenFilter) {
   const api = useApi()
-  const inst = useKeyPrefix()
   return useQuery({
-    queryKey: [inst, 'tokens', status],
+    queryKey: [QUERY_ROOT, 'tokens', status],
     queryFn: ({ signal }) => api.get<{ items: ActorToken[] }>('/tokens', { status }, signal),
   })
 }
 
-/** 쓰기 뒤 이 인스턴스의 모든 조회를 다시 불러온다. */
-function useInvalidateInstance() {
+function useInvalidateAll() {
   const qc = useQueryClient()
-  const inst = useKeyPrefix()
-  return () => qc.invalidateQueries({ queryKey: [inst] })
+  return () => qc.invalidateQueries({ queryKey: [QUERY_ROOT] })
 }
 
 export function useCreateIssue() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (body: IssueCreate) => api.post<Issue>('/issues', body),
     onSuccess: () => invalidate(),
@@ -269,19 +248,18 @@ export interface PatchIssueInput {
 export function usePatchIssue() {
   const api = useApi()
   const qc = useQueryClient()
-  const inst = useKeyPrefix()
   return useMutation({
     mutationFn: ({ key, patch, version }: PatchIssueInput) => api.patch<Issue>(`/issues/${key}`, patch, { ifMatch: version }),
     onSuccess: (issue) => {
-      qc.setQueryData([inst, 'issue', issue.key], issue)
+      qc.setQueryData([QUERY_ROOT, 'issue', issue.key], issue)
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: [inst] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: [QUERY_ROOT] }),
   })
 }
 
 export function useDeleteIssue() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ key, version, reason }: { key: string; version: number; reason: string }) =>
       api.delete<Issue>(`/issues/${key}`, { ifMatch: version, query: { reason } }),
@@ -293,14 +271,13 @@ export function useDeleteIssue() {
 export function useSetAcknowledged() {
   const api = useApi()
   const qc = useQueryClient()
-  const inst = useKeyPrefix()
   return useMutation({
     mutationFn: ({ key, acknowledged }: { key: string; acknowledged: boolean }) =>
       acknowledged ? api.post<Issue>(`/issues/${key}/acknowledge`, undefined) : api.delete<Issue>(`/issues/${key}/acknowledge`),
     onSuccess: (issue) => {
-      qc.setQueryData([inst, 'issue', issue.key], issue)
+      qc.setQueryData([QUERY_ROOT, 'issue', issue.key], issue)
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: [inst] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: [QUERY_ROOT] }),
   })
 }
 
@@ -314,7 +291,7 @@ export interface AcknowledgeManyResult {
 /** 키마다 확인 요청을 차례로 보낸다. 일부가 실패해도 나머지는 계속한다. */
 export function useAcknowledgeMany() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: async (keys: string[]): Promise<AcknowledgeManyResult> => {
       const result: AcknowledgeManyResult = { done: 0, failed: 0, firstError: undefined }
@@ -335,7 +312,7 @@ export function useAcknowledgeMany() {
 
 export function useCreateComment() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ key, body }: { key: string; body: string }) => api.post<Activity>(`/issues/${key}/comments`, { body }),
     onSuccess: () => invalidate(),
@@ -344,7 +321,7 @@ export function useCreateComment() {
 
 export function useCreateTopic() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ project, body }: { project: string; body: TopicCreate }) => api.post<Topic>(`/projects/${project}/topics`, body),
     onSuccess: () => invalidate(),
@@ -353,7 +330,7 @@ export function useCreateTopic() {
 
 export function usePatchTopic() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ id, patch }: { id: number; patch: TopicPatch }) => api.patch<Topic>(`/topics/${id}`, patch),
     onSuccess: () => invalidate(),
@@ -362,7 +339,7 @@ export function usePatchTopic() {
 
 export function useDeleteTopic() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (id: number) => api.delete<Topic>(`/topics/${id}`),
     onSuccess: () => invalidate(),
@@ -371,7 +348,7 @@ export function useDeleteTopic() {
 
 export function useCreateMilestone() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ project, body }: { project: string; body: MilestoneCreate }) => api.post<Milestone>(`/projects/${project}/milestones`, body),
     onSuccess: () => invalidate(),
@@ -380,7 +357,7 @@ export function useCreateMilestone() {
 
 export function usePatchMilestone() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ id, patch }: { id: number; patch: MilestonePatch }) => api.patch<Milestone>(`/milestones/${id}`, patch),
     onSuccess: () => invalidate(),
@@ -389,7 +366,7 @@ export function usePatchMilestone() {
 
 export function useDeleteMilestone() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (id: number) => api.delete<Milestone>(`/milestones/${id}`),
     onSuccess: () => invalidate(),
@@ -398,7 +375,7 @@ export function useDeleteMilestone() {
 
 export function useCreateProject() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (body: ProjectCreate) => api.post<Project>('/projects', body),
     onSuccess: () => invalidate(),
@@ -407,7 +384,7 @@ export function useCreateProject() {
 
 export function usePatchProject() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: ({ key, patch }: { key: string; patch: ProjectPatch }) => api.patch<Project>(`/projects/${key}`, patch),
     onSuccess: () => invalidate(),
@@ -416,7 +393,7 @@ export function usePatchProject() {
 
 export function useDeleteProject() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (key: string) => api.delete<Project>(`/projects/${key}`),
     onSuccess: () => invalidate(),
@@ -427,12 +404,11 @@ export function useDeleteProject() {
 export function useDecideDeviceAuthorization() {
   const api = useApi()
   const qc = useQueryClient()
-  const inst = useKeyPrefix()
   return useMutation({
     mutationFn: ({ userCode, status }: { userCode: string; status: DeviceAuthorizationPatch['status'] }) =>
       api.patch<DeviceAuthorization>(`/device-authorizations/${userCode}`, { status }),
     onSuccess: (auth, { userCode }) => {
-      qc.setQueryData(deviceAuthorizationKey(inst, userCode), auth)
+      qc.setQueryData(deviceAuthorizationKey(userCode), auth)
     },
   })
 }
@@ -440,7 +416,7 @@ export function useDecideDeviceAuthorization() {
 /** 활성 토큰 하나를 폐기한다. 폐기한 뒤 이 인스턴스의 조회를 다시 불러온다. */
 export function useRevokeActorToken() {
   const api = useApi()
-  const invalidate = useInvalidateInstance()
+  const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (id: number) => api.delete<ActorToken>(`/tokens/${id}`),
     onSuccess: () => invalidate(),

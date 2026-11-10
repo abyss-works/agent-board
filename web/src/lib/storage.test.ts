@@ -10,16 +10,13 @@ describe('newSessionId', () => {
 })
 
 describe('AppStorage', () => {
-  it('토큰은 인스턴스별로 따로 둔다', () => {
+  it('토큰을 저장하고 지운다', () => {
     const s = new AppStorage(memoryStore())
-    expect(s.getToken('local')).toBeNull()
-    s.setToken('local', 'aaa')
-    s.setToken('staging', 'bbb')
-    expect(s.getToken('local')).toBe('aaa')
-    expect(s.getToken('staging')).toBe('bbb')
-    s.clearToken('local')
-    expect(s.getToken('local')).toBeNull()
-    expect(s.getToken('staging')).toBe('bbb')
+    expect(s.getToken()).toBeNull()
+    s.setToken('aaa')
+    expect(s.getToken()).toBe('aaa')
+    s.clearToken()
+    expect(s.getToken()).toBeNull()
   })
 
   it('세션 ID는 처음 한 번 만들고 그 뒤로는 같은 값을 돌려준다', () => {
@@ -34,18 +31,13 @@ describe('AppStorage', () => {
     expect(new AppStorage(memoryStore()).getSessionId()).not.toBe(first)
   })
 
-  it('선택한 인스턴스와 인스턴스별 프로젝트를 기억한다', () => {
+  it('선택한 프로젝트를 기억한다', () => {
     const s = new AppStorage(memoryStore())
-    expect(s.getInstance()).toBeNull()
-    s.setInstance('staging')
-    expect(s.getInstance()).toBe('staging')
-    expect(s.getProject('staging')).toBeNull()
-    s.setProject('staging', 'AGB')
-    s.setProject('local', 'X')
-    expect(s.getProject('staging')).toBe('AGB')
-    expect(s.getProject('local')).toBe('X')
-    s.setProject('staging', null)
-    expect(s.getProject('staging')).toBeNull()
+    expect(s.getProject()).toBeNull()
+    s.setProject('AGB')
+    expect(s.getProject()).toBe('AGB')
+    s.setProject(null)
+    expect(s.getProject()).toBeNull()
   })
 
   it('저장소가 예외를 던져도 동작한다', () => {
@@ -61,8 +53,8 @@ describe('AppStorage', () => {
       },
     }
     const s = new AppStorage(broken)
-    expect(s.getToken('local')).toBeNull()
-    expect(() => s.setToken('local', 'x')).not.toThrow()
+    expect(s.getToken()).toBeNull()
+    expect(() => s.setToken('x')).not.toThrow()
     expect(s.getSessionId()).toMatch(/^web-[0-9a-f]{32}$/)
   })
 })
