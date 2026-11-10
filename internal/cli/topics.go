@@ -43,9 +43,10 @@ const repoConfigExample = `{
   "new": {
     "template": "history/_{kind}.md",
     "output": "history",
-    "values": {"project": "agent-board", "author": "claude"}
+    "values": {"project": "example", "author": "claude"}
   },
-  "follow_up_headings": ["남은 것", "미확인", "후속"]
+  "follow_up_headings": ["남은 것", "미확인", "후속"],
+  "location": {"repos": [".", "service"]}
 }
 `
 
@@ -65,6 +66,10 @@ agb 는 아래 예시의 폴더 이름을 알지 못합니다.
   documents            올릴 파일의 규칙 목록. 위에서부터 처음 맞는 규칙을 쓰고, 어느 규칙에도 맞지 않는
                        파일은 올리지 않습니다
   new                  agb doc new 가 쓰는 서식과 채울 값
+  location             agb issue comment --location 이 --repo 없이 모을 저장소 (선택). {"repos": [...]} 이고
+                       각 경로는 이 파일이 있는 폴더에서 본 상대 경로입니다. 없으면 현재 폴더의 저장소 하나.
+                       --repo 를 주면 그것이 먼저입니다. 모든 기기의 CLI 를 이 키가 있는 판 이상으로 갱신한 뒤에
+                       넣으세요. 옛 CLI 는 알 수 없는 키를 거절합니다
   follow_up_headings   후속 항목을 알리는 ## 절 제목 목록. 적은 말이 제목에 들면 그 절의 항목을 후속
                        항목으로 알립니다. 목록이 없으면 알리지 않습니다
 

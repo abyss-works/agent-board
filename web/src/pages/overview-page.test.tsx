@@ -3,21 +3,17 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import { ApiClient } from '@/api/client'
+import { QUERY_ROOT } from '@/api/queries'
 import { issueSummary } from '@/api/test-fixtures'
 import type { DoingItem, IssueSummary, Overview, Section } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
 import { OverviewPage } from './overview-page'
 
-const INSTANCE = { id: 'test', label: 'test', baseUrl: '', description: 'test' }
-
 const state: AppState = {
-  instances: [INSTANCE],
-  instance: INSTANCE,
   token: 'token',
   project: 'AGB',
   sessionId: 'session',
   authNotice: null,
-  selectInstance: () => {},
   login: () => {},
   logout: () => {},
   selectProject: () => {},
@@ -56,7 +52,7 @@ function overview(partial: Partial<Overview> = {}): Overview {
 
 function render(o: Overview): string {
   const client = new QueryClient()
-  client.setQueryData([INSTANCE.id, 'overview', 'AGB'], o)
+  client.setQueryData([QUERY_ROOT, 'overview', 'AGB'], o)
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <AppStateContext.Provider value={state}>

@@ -4,7 +4,7 @@
 
 - 대상 환경: Windows(PowerShell, Git Bash), Linux(amd64, arm64, 화면 없는 서버 포함)
 - 제품 저장소: https://github.com/abyss-works/agent-board
-- 운영 인스턴스: https://agb.abyssworks.dev (API `/v1`, 웹 화면은 같은 주소)
+- 서버 주소: `<서버 주소>` (API `/v1`, 웹 화면은 같은 주소)
 - 자리표시자: `<REF>`는 설치할 릴리즈(기본 `main`, 고정하려면 커밋), `<VER>`는 `agb version`이 출력할 버전 문자열(`CHANGELOG.md` 맨 위 버전 이름)이다.
 
 ## 1. CLI 설치
@@ -67,7 +67,7 @@ go install -trimpath -ldflags "-X main.version=<VER>-dev.$(git rev-parse --short
 
 1. 서버 주소를 넣는다.
    ```bash
-   agb config set url https://agb.abyssworks.dev
+   agb config set url <서버 주소>
    ```
 2. 토큰을 받는다. 토큰은 행위자마다 다르다.
    - 에이전트: `SKILL.md`의 "로그인이 필요할 때"를 따라 `agb --actor <자기 ID> login`으로 받는다. 사용자가 웹에서 승인한다.
@@ -111,7 +111,7 @@ agb --actor <자기 ID> project overview <KEY>
 ## 6. 최신 버전 확인
 
 ```bash
-curl -s https://agb.abyssworks.dev/v1/health
+curl -s <서버 주소>/v1/health
 gh api repos/abyss-works/agent-board/commits/main --jq '.sha[0:7] + " " + .commit.message'
 ```
 
@@ -119,8 +119,8 @@ gh api repos/abyss-works/agent-board/commits/main --jq '.sha[0:7] + " " + .commi
 - 두 커밋이 같으면 운영 서버가 최신 릴리즈다. 설치한 `agb version`이 그 버전과 같아야 한다. 릴리즈별 변경은 `CHANGELOG.md`에 있다.
 - 운영 서버의 `release`(`vX.Y.Z`)가 배포된 릴리즈다. `agb skill check`가 이 값을 `agb version`과 견준다. 릴리즈 커밋이 아닌 빌드는 `release`가 없다.
 
-## 7. 운영 인스턴스
+## 7. 운영 서버
 
-- 운영 인스턴스는 제품 저장소의 `main`에 푸시하면 GitHub Actions가 배포한다. 수동으로 다시 시작하거나 다시 띄우지 않는다.
-- 운영 인스턴스에 e2e나 시험 데이터를 보내지 않는다. e2e는 로컬이나 스테이징 인스턴스에 대고 한다.
-- 기록은 운영 인스턴스에만 한다. 로컬과 스테이징 인스턴스에는 기록하지 않는다.
+- 운영 서버는 배포 절차로만 바꾼다. 수동으로 다시 시작하거나 다시 띄우지 않는다.
+- 운영 서버에 e2e나 시험 데이터를 보내지 않는다. e2e는 시험용 서버에 대고 한다.
+- 기록은 실제로 쓰는 서버에 하고, 시험용 서버에는 시험 데이터만 둔다.

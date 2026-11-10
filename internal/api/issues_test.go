@@ -321,13 +321,13 @@ func TestCommentsAndActivity(t *testing.T) {
 	e.createIssue(t, `{"project":"AGB","title":"a"}`)
 	e.createIssue(t, `{"project":"AGB","title":"b"}`)
 
-	rec := e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"착수한다."}`, map[string]string{"X-Session-Id": "sess-9", "X-Client-Host": "ab"})
+	rec := e.do(t, "POST", "/v1/issues/AGB-1/comments", `{"body":"착수한다."}`, map[string]string{"X-Session-Id": "sess-9", "X-Client-Host": "desk"})
 	if rec.Code != 201 {
 		t.Fatalf("comment: %d %s", rec.Code, rec.Body.String())
 	}
 	var a model.Activity
 	decodeJSON(t, rec, &a)
-	if a.Kind != model.ActivityCommented || *a.Body != "착수한다." || a.SessionID != "sess-9" || a.ClientHost != "ab" || a.Actor != "claude" || a.Issue != "AGB-1" || a.Changes != nil {
+	if a.Kind != model.ActivityCommented || *a.Body != "착수한다." || a.SessionID != "sess-9" || a.ClientHost != "desk" || a.Actor != "claude" || a.Issue != "AGB-1" || a.Changes != nil {
 		t.Errorf("comment = %+v", a)
 	}
 	if !strings.Contains(rec.Body.String(), `"changes":null`) {
@@ -378,7 +378,7 @@ func TestCommentsAndActivity(t *testing.T) {
 	if l := get("issue=AGB-1,AGB-2&sort=at&limit=2"); len(l.Items) != 2 || l.Items[0].Kind != model.ActivityCreated || l.Total != 4 {
 		t.Errorf("sort at = %+v", l)
 	}
-	if l := get("client_host=ab"); l.Total != 1 {
+	if l := get("client_host=desk"); l.Total != 1 {
 		t.Errorf("client_host = %d", l.Total)
 	}
 	since := acts.Items[0].At.String()

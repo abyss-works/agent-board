@@ -1,20 +1,18 @@
 import { createContext, useContext } from 'react'
 import type { ApiClient } from '@/api/client'
-import type { Instance } from '@/lib/instances'
 
 export const ACTOR = 'owner'
 export const CLIENT_HOST = 'web'
 export const POLL_MS = 3000
+/** API 기준 경로. 개발 서버에서는 Vite 프록시(`/api`), 운영 빌드에서는 같은 출처다. */
+export const BASE_URL = import.meta.env.DEV ? '/api' : ''
 
 export interface AppState {
-  instances: Instance[]
-  instance: Instance
   token: string | null
   project: string | null
   sessionId: string
   /** 401로 로그아웃된 뒤 로그인 화면에 보여 줄 안내 */
   authNotice: string | null
-  selectInstance: (id: string) => void
   login: (token: string) => void
   logout: () => void
   selectProject: (key: string | null) => void

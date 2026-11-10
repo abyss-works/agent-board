@@ -76,7 +76,7 @@ func TestComments(t *testing.T) {
 func TestActivity(t *testing.T) {
 	p := createProject(t, "AC")
 	creator := caller{actor: "claude", session: sessionID + "-ac", host: "desk-win10"}
-	editor := caller{actor: "codex", session: sessionID + "-ac2", host: "ab"}
+	editor := caller{actor: "codex", session: sessionID + "-ac2", host: "desk"}
 	iss := createIssue(t, creator, map[string]any{"project": p.Key, "title": "활동 기록", "labels": strs("api"), "priority": "P1", "body": templateBody(t, "feature")})
 	tick()
 	upd := patchIssue(t, editor, iss.Key, map[string]any{"status": "doing", "labels": strs("api", "cli"), "title": "활동 기록"})
@@ -134,7 +134,7 @@ func TestActivity(t *testing.T) {
 			t.Fatalf("updated records = %d", got.Total)
 		}
 		a := got.Items[0]
-		if a.Actor != "codex" || a.SessionID != sessionID+"-ac2" || a.ClientHost != "ab" || a.At != upd.UpdatedAt {
+		if a.Actor != "codex" || a.SessionID != sessionID+"-ac2" || a.ClientHost != "desk" || a.At != upd.UpdatedAt {
 			t.Errorf("updated = %+v", a)
 		}
 		ch := *a.Changes
@@ -177,7 +177,7 @@ func TestActivity(t *testing.T) {
 		if n := count("issue=" + iss.Key + "&actor=codex,owner"); n != 2 {
 			t.Errorf("actor OR = %d", n)
 		}
-		if n := count("issue=" + iss.Key + "&client_host=ab"); n != 1 {
+		if n := count("issue=" + iss.Key + "&client_host=desk"); n != 1 {
 			t.Errorf("client_host = %d", n)
 		}
 		if n := count("issue=" + iss.Key + "&kind=commented"); n != 1 {

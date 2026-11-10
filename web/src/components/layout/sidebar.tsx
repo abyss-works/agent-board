@@ -41,41 +41,15 @@ const menuLinkClass = ({ isActive }: { isActive: boolean }) =>
     isActive ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
   )
 
-function InstanceSwitcher() {
-  const { instances, instance, selectInstance } = useAppState()
-  const single = instances.length === 1
+function Brand() {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild disabled={single}>
-        <button
-          type="button"
-          className={cn(
-            'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            !single && 'cursor-pointer hover:bg-sidebar-accent',
-          )}
-        >
-          <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-[0.6875rem] font-bold text-primary-foreground">ab</div>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-[0.8125rem] font-semibold">agent-board</div>
-            <div className="truncate font-mono text-[0.625rem] text-muted-foreground">
-              {single ? instance.description : `${instance.label} · ${instance.description}`}
-            </div>
-          </div>
-          {!single ? <ChevronsUpDownIcon className="size-3.5 text-muted-foreground" /> : null}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuLabel>인스턴스</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={instance.id} onValueChange={selectInstance}>
-          {instances.map((i) => (
-            <DropdownMenuRadioItem key={i.id} value={i.id}>
-              <span className="font-medium">{i.label}</span>
-              <span className="ml-auto font-mono text-[0.6875rem] text-muted-foreground">{i.description}</span>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="flex h-9 w-full items-center gap-2 px-2">
+      <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-[0.6875rem] font-bold text-primary-foreground">ab</div>
+      <div className="min-w-0 flex-1 leading-tight">
+        <div className="truncate text-[0.8125rem] font-semibold">agent-board</div>
+        <div className="truncate font-mono text-[0.625rem] text-muted-foreground">{window.location.host}</div>
+      </div>
+    </div>
   )
 }
 
@@ -195,7 +169,7 @@ export function Sidebar() {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       <div className="p-2">
-        <InstanceSwitcher />
+        <Brand />
       </div>
       <div className="space-y-2 px-3">
         <ProjectSwitcher onCreate={() => setCreateProject(true)} onEdit={setEditProject} onTopics={setTopicProject} onDelete={setDeleteProject} />

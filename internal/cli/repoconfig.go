@@ -35,6 +35,15 @@ type repoConfig struct {
 	// FollowUpHeadings are the "## " headings of a document that name work left
 	// open.
 	FollowUpHeadings []string `json:"follow_up_headings,omitempty"`
+	// Location sets what agb issue comment --location records when --repo is
+	// not given; it is absent when only the current repository is recorded.
+	Location *locationConfig `json:"location,omitempty"`
+}
+
+// locationConfig lists the repositories of a work location. Repos are paths
+// relative to the folder that holds .agb.json.
+type locationConfig struct {
+	Repos []string `json:"repos"`
 }
 
 // docRule says how the files that its glob matches are uploaded.
@@ -117,6 +126,16 @@ func (c *repoConfig) validate() error {
 		for k := range n.Values {
 			if k == "" {
 				return errors.New("new.values: 키가 비어 있습니다.")
+			}
+		}
+	}
+	if l := c.Location; l != nil {
+		if len(l.Repos) == 0 {
+			return errors.New("location.repos: 저장소 경로가 하나 이상 필요합니다.")
+		}
+		for i, r := range l.Repos {
+			if r == "" || filepath.IsAbs(r) || strings.HasPrefix(r, "/") {
+				return fmt.Errorf("location.repos[%d]: .agb.json 위치에서 본 상대 경로여야 합니다: %q", i, r)
 			}
 		}
 	}

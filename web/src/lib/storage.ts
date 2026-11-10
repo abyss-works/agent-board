@@ -38,13 +38,28 @@ function randomBytes(n: number): Uint8Array {
   return bytes
 }
 
-/** 토큰(인스턴스별), 세션 ID(브라우저당 하나), 선택한 인스턴스와 프로젝트를 둔다. */
+/** 토큰, 세션 ID(브라우저당 하나), 선택한 프로젝트를 둔다. */
 export class AppStorage {
   private readonly store: KeyValueStore
   private sessionId: string | null = null
 
   constructor(store: KeyValueStore) {
     this.store = store
+    this.migrateInstanceKeys()
+  }
+
+  /**
+   * 인스턴스별 키(`token.<ID>`, `project.<ID>`, `instance`)를 쓰던 옛 판의 값을 옮기고 지운다.
+   * 운영 빌드의 ID는 `default`라서 그 값만 새 키로 옮기고, 개발 모드 ID(`local`, `staging`, `prod`)의
+   * 값은 새 프록시 대상과 같은 서버인지 알 수 없어 옮기지 않고 지운다. 새 키가 있으면 덮어쓰지 않는다.
+   */
+  private migrateInstanceKeys(): void {
+    for (const name of ['token', 'project']) {
+      const legacy = this.read(`${name}.default`)
+      if (legacy !== null && this.read(name) === null) this.write(name, legacy)
+      for (const id of ['default', 'local', 'staging', 'prod']) this.write(`${name}.${id}`, null)
+    }
+    this.write('instance', null)
   }
 
   private read(key: string): string | null {
@@ -64,16 +79,16 @@ export class AppStorage {
     }
   }
 
-  getToken(instanceId: string): string | null {
-    return this.read(`token.${instanceId}`)
+  getToken(): string | null {
+    return this.read('token')
   }
 
-  setToken(instanceId: string, token: string): void {
-    this.write(`token.${instanceId}`, token)
+  setToken(token: string): void {
+    this.write('token', token)
   }
 
-  clearToken(instanceId: string): void {
-    this.write(`token.${instanceId}`, null)
+  clearToken(): void {
+    this.write('token', null)
   }
 
   getSessionId(): string {
@@ -89,19 +104,11 @@ export class AppStorage {
     return created
   }
 
-  getInstance(): string | null {
-    return this.read('instance')
+  getProject(): string | null {
+    return this.read('project')
   }
 
-  setInstance(id: string): void {
-    this.write('instance', id)
-  }
-
-  getProject(instanceId: string): string | null {
-    return this.read(`project.${instanceId}`)
-  }
-
-  setProject(instanceId: string, key: string | null): void {
-    this.write(`project.${instanceId}`, key)
+  setProject(key: string | null): void {
+    this.write('project', key)
   }
 }
