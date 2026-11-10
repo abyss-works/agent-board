@@ -9,7 +9,7 @@ import { ActorChoice } from '@/components/actor-choice'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NO_USER_ACTOR_MESSAGE, resolveActor } from '@/lib/actors'
+import { LEGACY_ACTOR, NO_USER_ACTOR_MESSAGE, resolveActor } from '@/lib/actors'
 import { cn } from '@/lib/utils'
 
 /** 인증 없이 부르는 /v1/health. 토큰을 넣기 전에 서버가 켜져 있는지 보여 준다. */
@@ -27,7 +27,7 @@ function useHealth() {
 }
 
 export function LoginPage() {
-  const { login, authNotice, sessionId } = useAppState()
+  const { actor, login, authNotice, sessionId } = useAppState()
   const [token, setToken] = useState('')
   const [show, setShow] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -44,7 +44,7 @@ export function LoginPage() {
     setError(null)
     try {
       const users = await fetchUserActorIds({ baseUrl: BASE_URL, token: value, sessionId, clientHost: CLIENT_HOST })
-      const resolution = resolveActor(users, null)
+      const resolution = resolveActor(users, [actor, LEGACY_ACTOR])
       if (resolution.kind === 'use') login(value, resolution.actor)
       else if (resolution.kind === 'choose') setCandidates(resolution.users)
       else setError(NO_USER_ACTOR_MESSAGE)

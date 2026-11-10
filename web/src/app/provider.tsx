@@ -1,6 +1,6 @@
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { ApiClient, isApiError, isUnauthorized } from '@/api/client'
+import { ApiClient, isActorRejected, isApiError, isUnauthorized } from '@/api/client'
 import { AppStorage, browserStore } from '@/lib/storage'
 import { connection } from './connection'
 import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, POLL_MS, type AppState } from './state'
@@ -16,10 +16,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const handleUnauthorized = useCallback(() => {
     storage.clearToken()
-    storage.clearActor()
     setToken(null)
-    setActor(null)
     setAuthNotice('서버가 토큰을 거부했습니다(401). 토큰을 다시 입력해 주세요.')
+  }, [])
+
+  // 저장된 행위자를 서버가 더는 받지 않으면 지운다. 토큰은 두고 행위자 확인 화면으로 돌아간다.
+  const handleActorRejected = useCallback(() => {
+    storage.clearActor()
+    setActor(null)
   }, [])
 
   const [queryClient] = useState(
@@ -39,6 +43,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           onSuccess: () => connection.markOk(),
           onError: (err) => {
             if (isUnauthorized(err)) handleUnauthorized()
+            else if (isActorRejected(err)) handleActorRejected()
             else connection.markError(err)
           },
         }),
@@ -46,6 +51,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           onSuccess: () => connection.markOk(),
           onError: (err) => {
             if (isUnauthorized(err)) handleUnauthorized()
+            else if (isActorRejected(err)) handleActorRejected()
             else connection.markError(err)
           },
         }),
@@ -64,9 +70,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     storage.clearToken()
-    storage.clearActor()
     setToken(null)
-    setActor(null)
     setAuthNotice(null)
     connection.reset()
     queryClient.clear()

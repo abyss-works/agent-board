@@ -66,6 +66,15 @@ export function isPreconditionFailed(err: unknown): boolean {
   return isApiError(err) && err.status === 412
 }
 
+/** 저장된 행위자를 서버가 거절한 오류: 선언되지 않은 행위자(400)나 토큰과 맞지 않는 행위자(403). */
+export function isActorRejected(err: unknown): boolean {
+  return (
+    isApiError(err) &&
+    ((err.status === 400 && err.details.some((d) => d.reason === 'unknown_actor')) ||
+      (err.status === 403 && err.details.some((d) => d.reason === 'actor_mismatch')))
+  )
+}
+
 export function isNotFound(err: unknown): boolean {
   return isApiError(err) && err.status === 404
 }

@@ -19,7 +19,7 @@ export function ActorPage() {
     refetchInterval: false,
     retry: false,
   })
-  const resolution = actors.data ? resolveActor(actors.data, LEGACY_ACTOR) : null
+  const resolution = actors.data ? resolveActor(actors.data, [LEGACY_ACTOR]) : null
   const auto = resolution?.kind === 'use' ? resolution.actor : null
 
   useEffect(() => {

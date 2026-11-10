@@ -17,12 +17,13 @@ export function userActorIds(items: Actor[]): string[] {
 }
 
 /**
- * 서버에 선언된 사용자 행위자 가운데 쓸 것을 정한다. 하나뿐이면 그것을 쓰고, 여럿이면 `preferred`가
- * 목록에 있을 때만 그것을 쓰며 아니면 고르게 한다. 하나도 없으면 none이다.
+ * 서버에 선언된 사용자 행위자 가운데 쓸 것을 정한다. 하나뿐이면 그것을 쓰고, 여럿이면 `preferred`를
+ * 앞에서부터 보아 목록에 있는 첫 값을 쓰며 하나도 없으면 고르게 한다. 사용자 행위자가 없으면 none이다.
  */
-export function resolveActor(users: string[], preferred: string | null): ActorResolution {
+export function resolveActor(users: string[], preferred: (string | null)[]): ActorResolution {
   if (users.length === 0) return { kind: 'none' }
   if (users.length === 1) return { kind: 'use', actor: users[0] }
-  if (preferred !== null && users.includes(preferred)) return { kind: 'use', actor: preferred }
+  const found = preferred.find((p) => p !== null && users.includes(p))
+  if (found) return { kind: 'use', actor: found }
   return { kind: 'choose', users }
 }
