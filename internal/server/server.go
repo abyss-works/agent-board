@@ -105,10 +105,13 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 }
 
 // Start binds the address and serves in the background. It returns the
-// bound address, which matters when the configured port is 0.
+// bound address, which matters when the configured port is 0. When Start
+// fails it closes the store, so the Server is unusable and Shutdown must not
+// be called.
 func (s *Server) Start() (string, error) {
 	ln, err := net.Listen("tcp", s.cfg.Addr)
 	if err != nil {
+		s.store.Close()
 		return "", err
 	}
 	s.ln = ln
