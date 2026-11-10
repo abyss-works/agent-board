@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { ApiClient } from '@/api/client'
 import { AppStorage, browserStore } from '@/lib/storage'
 import { connection } from './connection'
-import { createQueryClient } from './query-client'
+import { createQueryClient, refreshForActor } from './query-client'
 import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, type AppState } from './state'
 
 const storage = new AppStorage(browserStore())
@@ -22,16 +22,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // 저장된 행위자를 서버가 더는 받지 않으면 지운다. 토큰은 두고 행위자 확인 화면으로 돌아간다.
-  const handleActorRejected = useCallback(() => {
-    storage.clearActor()
-    setActor(null)
-  }, [])
+  const handleActorCleared = useCallback(() => setActor(null), [])
 
-  const [queryClient] = useState(() => createQueryClient({ onUnauthorized: handleUnauthorized, onActorRejected: handleActorRejected }))
+  const [queryClient] = useState(() => createQueryClient({ storage, onUnauthorized: handleUnauthorized, onActorCleared: handleActorCleared }))
 
   // 행위자가 바뀌면 이전 행위자로 받은 캐시를 다시 받는다. 클라이언트가 새 행위자로 바뀐 뒤에 실행된다.
   useEffect(() => {
-    if (actor) void queryClient.invalidateQueries()
+    refreshForActor(queryClient, actor)
   }, [actor, queryClient])
 
   const login = useCallback((value: string, picked: string) => {

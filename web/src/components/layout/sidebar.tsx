@@ -143,7 +143,14 @@ function ActorSwitcher() {
   const actors = useActors()
   const users = actors.data ? userActorIds(actors.data.items) : []
   const name = <span className="font-mono text-foreground/80">{actor}</span>
-  if (!actor || !canSwitchActor(users)) return <span className="min-w-0 truncate">행위자 {name}</span>
+  // 목록이 도착해도 폭이 바뀌지 않도록, 바꿀 수 없을 때도 아이콘 자리를 비워 둔다.
+  if (!actor || !canSwitchActor(users))
+    return (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate">행위자 {name}</span>
+        <span className="size-3 shrink-0" />
+      </span>
+    )
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
