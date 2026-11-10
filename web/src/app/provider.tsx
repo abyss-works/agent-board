@@ -1,9 +1,10 @@
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { ApiClient, isActorRejected, isApiError, isUnauthorized } from '@/api/client'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ApiClient } from '@/api/client'
 import { AppStorage, browserStore } from '@/lib/storage'
 import { connection } from './connection'
-import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, POLL_MS, type AppState } from './state'
+import { createQueryClient } from './query-client'
+import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, type AppState } from './state'
 
 const storage = new AppStorage(browserStore())
 
@@ -26,37 +27,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setActor(null)
   }, [])
 
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            refetchInterval: POLL_MS,
-            refetchIntervalInBackground: false,
-            staleTime: 1000,
-            retry: (count, err) => !isApiError(err) && count < 1,
-            retryDelay: 1000,
-          },
-          mutations: { retry: false },
-        },
-        queryCache: new QueryCache({
-          onSuccess: () => connection.markOk(),
-          onError: (err) => {
-            if (isUnauthorized(err)) handleUnauthorized()
-            else if (isActorRejected(err)) handleActorRejected()
-            else connection.markError(err)
-          },
-        }),
-        mutationCache: new MutationCache({
-          onSuccess: () => connection.markOk(),
-          onError: (err) => {
-            if (isUnauthorized(err)) handleUnauthorized()
-            else if (isActorRejected(err)) handleActorRejected()
-            else connection.markError(err)
-          },
-        }),
-      }),
-  )
+  const [queryClient] = useState(() => createQueryClient({ onUnauthorized: handleUnauthorized, onActorRejected: handleActorRejected }))
+
+  // 행위자가 바뀌면 이전 행위자로 받은 캐시를 다시 받는다. 클라이언트가 새 행위자로 바뀐 뒤에 실행된다.
+  useEffect(() => {
+    if (actor) void queryClient.invalidateQueries()
+  }, [actor, queryClient])
 
   const login = useCallback((value: string, picked: string) => {
     const trimmed = value.trim()
