@@ -6,13 +6,16 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +26,7 @@ const (
 	envToken        = "AGB_E2E_TOKEN"
 	envPersistKey   = "AGB_E2E_PERSIST_KEY"
 	envPersistPhase = "AGB_E2E_PERSIST_PHASE"
+	envPass         = "AGB_E2E_PASS" // set in the child processes of a -count run
 
 	defaultHost = "e2e-host"
 	jsonType    = "application/json; charset=utf-8"
@@ -48,6 +52,10 @@ func TestMain(m *testing.M) {
 	if baseURL == "" || token == "" {
 		fmt.Fprintf(os.Stderr, "e2e: %s and %s must be set\n", envURL, envToken)
 		os.Exit(2)
+	}
+	flag.Parse()
+	if n, _ := strconv.Atoi(flag.Lookup("test.count").Value.String()); n > 1 && os.Getenv(envPass) == "" {
+		os.Exit(repeat(n))
 	}
 	runID = randomID(5)
 	sessionID = "e2e-" + runID
@@ -98,6 +106,33 @@ func loginAgents() error {
 		actorTokens[a.ID] = tok.Token
 	}
 	return nil
+}
+
+// repeat runs the test binary n times, each in its own process. -count would
+// run the tests again inside this process, where runID, and with it every
+// project key, label and search word, is the same as in the pass before.
+// Each child draws its own runID. It returns the exit code: the first
+// failing pass's code, or 0.
+func repeat(n int) int {
+	args := append([]string(nil), os.Args[1:]...)
+	for i, a := range args {
+		if strings.HasPrefix(a, "-test.count=") {
+			args[i] = "-test.count=1"
+		}
+	}
+	code := 0
+	for pass := 1; pass <= n; pass++ {
+		cmd := exec.Command(os.Args[0], args...)
+		cmd.Env = append(os.Environ(), envPass+"="+strconv.Itoa(pass))
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil && code == 0 {
+			code = 1
+			if ee, ok := err.(*exec.ExitError); ok {
+				code = ee.ExitCode()
+			}
+		}
+	}
+	return code
 }
 
 func randomID(n int) string {
