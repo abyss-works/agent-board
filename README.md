@@ -36,7 +36,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 
 ## 핵심 개념과 데이터 모델
 
-저장소는 SQLite 파일 하나(`<AGB_DATA_DIR>/agb.db`)입니다. 스키마는 `internal/store/migrations/`의 SQL로 만들어지며 서버가 시작할 때 빠진 이관을 순서대로 적용합니다.
+저장소는 SQLite 파일 하나(`<AGB_DATA_DIR>/agb.db`)입니다. 스키마는 `internal/store/migrations/`의 SQL로 만들어지며 서버가 시작할 때 빠진 마이그레이션을 순서대로 적용합니다.
 
 | 엔티티 | 주요 필드 | 상태 | 관계 |
 |---|---|---|---|
@@ -70,7 +70,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 
 - 일반 문서는 이름이 `yyyy-mm-dd-HHMM-<종류>-<slug>.md`이고 `title`이 필수입니다. 가져온 문서(`imported`)는 저장소 기준 상대 경로를 이름으로 씁니다.
 - 종류는 형식(`^[a-z][a-z0-9_]*$`, 32자 이하)만 검사합니다. 어떤 종류를 쓸지는 문서를 올리는 저장소가 정합니다.
-- 같은 이름에 다른 원문을 올리면 409(`immutable`)로 거절합니다. 1MiB를 넘는 문서와 `_`로 시작하는 서식 파일은 받지 않습니다.
+- 같은 이름에 다른 원문을 올리면 409(`immutable`)로 거절합니다. 1MiB를 넘는 문서와 `_`로 시작하거나 `.example.md`로 끝나는 서식 파일은 받지 않습니다.
 - 상태는 저장하지 않고 계산합니다. 아카이브 표시가 있으면 `archived`, 다른 문서의 `supersedes`가 가리키면 `superseded`, 아니면 `current`입니다.
 - 어떤 저장소의 어떤 파일을 올릴지는 그 저장소 최상위의 `.agb.json`이 정합니다. 이 파일은 CLI만 읽고 서버는 모릅니다. 형식은 `agb help repo-config`에 있습니다.
 
@@ -90,7 +90,7 @@ internal/api      라우팅, 인증, 추적 헤더 검사, 요청 로그, 지표
 internal/store    SQLite 저장소. 키 발급, 순환 검사, 버전 증가, 활동 기록 같은 트랜잭션 규칙
 internal/model    도메인 객체, 열거형, 필드 검증. 저장소와 HTTP에 의존하지 않음
 internal/client   CLI가 쓰는 HTTP 클라이언트
-internal/cli      CLI 명령. 업무 규칙 없이 서버를 호출하고 출력 형식만 다룸
+internal/cli      CLI 명령. 서버를 호출하고 출력을 만듦. 업무 규칙은 서버에 있고, 저장소 설정(`.agb.json`) 처리, 문서 검사, 병합 커밋 탐색 같은 클라이언트 쪽 일을 맡음
 internal/embed    OpenAI 호환 임베딩 API 호출, 청크 분할, 메모리 색인, 유사 문서 계산
 internal/backup   DB 스냅샷을 gzip으로 압축해 S3 호환 저장소에 주기적으로 올리고 보존 기간이 지난 것을 지움
 skills/tool-agb   에이전트용 사용 절차(SKILL.md). 바이너리에 내장되어 "agb skill install"로 설치됨
@@ -112,33 +112,57 @@ deploy/           운영용 compose 파일과 Kubernetes Ingress 구성
 - 웹 클라이언트를 빌드하려면 Node 22와 pnpm 11
 - cgo 없는 SQLite 드라이버(`modernc.org/sqlite`)를 쓰므로 데이터베이스를 따로 설치하지 않습니다.
 
-### 빌드
+### 설치
+
+모듈 경로로 바로 설치합니다.
 
 ```bash
+go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main
+agb version
+```
+
+- 실행 파일은 `$GOBIN`(기본값 `$(go env GOPATH)/bin`)에 생깁니다. 이 폴더를 `PATH`에 추가합니다.
+- 모듈 경로 `github.com/wsk0715/agent-board`는 이 저장소의 이전 주소입니다. GitHub이 이 주소를 `abyss-works/agent-board`로 연결하므로 그대로 설치할 수 있습니다.
+- `main`은 릴리즈 브랜치이므로 `<버전>`에는 `CHANGELOG.md` 맨 위의 릴리즈 이름(`vX.Y.Z`)을 넣습니다.
+
+저장소를 받아 직접 빌드할 수도 있습니다.
+
+```bash
+git clone https://github.com/abyss-works/agent-board.git
+cd agent-board
 go build -o agb ./cmd/agb
 # 버전 문자열을 넣으려면
 go build -ldflags "-X main.version=<버전> -X main.release=<vX.Y.Z>" -o agb ./cmd/agb
 ```
 
-`main.version`이 없으면 `agb version`은 `dev`를 출력합니다. `main.release`는 `/v1/health` 응답의 `release`가 됩니다.
+`main.version`이 없으면 `agb version`은 `dev`를 출력하고, `agb skill check`는 CLI와 서버의 판 비교를 건너뜁니다. `main.release`는 `/v1/health` 응답의 `release`가 됩니다.
 
 ### 서버 실행
 
 ```bash
-export AGB_TOKEN=<32자 이상의 공용 토큰>
+export AGB_TOKEN="$(openssl rand -hex 32)"
 export AGB_ACTORS=owner:user,claude:agent
-./agb serve
+(cd web && pnpm install && pnpm build)
+AGB_WEB_DIR=web/dist ./agb serve
 ```
+
+`AGB_WEB_DIR`을 지정하지 않으면 웹 화면이 없어서 에이전트 로그인의 `/device` 승인을 할 수 없습니다.
 
 기본 주소는 `127.0.0.1:8420`, 기본 데이터 폴더는 `./data`입니다. 로그는 표준 오류에 JSON 한 줄씩 남습니다. 웹 클라이언트는 사용자 행위자를 `owner`로 보내므로, 웹을 쓰려면 `owner:user`를 선언합니다.
 
 ### Docker
 
 ```bash
-AGB_TOKEN=... AGB_ACTORS=owner:user,claude:agent docker compose up -d
+export AGB_TOKEN="$(openssl rand -hex 32)"
+export AGB_ACTORS=owner:user,claude:agent
+docker compose up -d --build
+curl http://127.0.0.1:8420/v1/health
 ```
 
+응답에 `"status":"ok"`가 있으면 서버가 떠 있습니다. 웹 화면은 `http://127.0.0.1:8420/`에서 열립니다.
+
 - `Dockerfile`은 웹을 빌드한 뒤 Go 바이너리와 함께 distroless 이미지에 담습니다. 컨테이너 안에서는 `AGB_ADDR=0.0.0.0:8420`, `AGB_DATA_DIR=/data`, `AGB_WEB_DIR=/web`이 기본값입니다.
+- 이미지를 빌드할 때 `AGB_VERSION`을 지정하면 그 값이 `agb version`과 `/v1/health` 응답의 `version`이 됩니다. 기본값은 `dev`입니다.
 - `compose.yaml`은 호스트의 `AGB_BIND`(기본 `127.0.0.1`)와 `AGB_PORT`(기본 `8420`)에 포트를 열고, 데이터를 이름 있는 볼륨 `agb-data`에 둡니다.
 
 ### 서버 환경변수
@@ -151,11 +175,15 @@ AGB_TOKEN=... AGB_ACTORS=owner:user,claude:agent docker compose up -d
 | `AGB_DATA_DIR` | | 데이터 폴더. 기본 `./data` |
 | `AGB_WEB_DIR` | | 빌드된 웹 클라이언트 폴더. 비우면 웹을 제공하지 않음 |
 | `AGB_BACKUP_BUCKET` | | 지정하면 백업을 켬 |
-| `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY` | 백업 시 | S3 호환 저장소 접속 정보 |
-| `AGB_BACKUP_PREFIX`, `AGB_BACKUP_INTERVAL`, `AGB_BACKUP_RETENTION` | | 객체 이름 접두어(기본 `agb`), 주기(기본 1h), 보존 기간(기본 672h) |
+| `AGB_BACKUP_ENDPOINT` | 백업 시 | S3 호환 저장소 주소. `http(s)://호스트[:포트]` 형식 |
+| `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY` | 백업 시 | S3 호환 저장소 자격 증명 |
+| `AGB_BACKUP_PREFIX`, `AGB_BACKUP_INTERVAL`, `AGB_BACKUP_RETENTION` | | 객체 이름 접두어(기본 `agb`), 주기(Go duration 형식, 기본 `1h`), 보존 기간(Go duration 형식, 기본 `672h`) |
 | `AGB_EMBEDDING_API_KEY` | | 지정하면 의미 검색을 켬 |
-| `AGB_EMBEDDING_URL`, `AGB_EMBEDDING_MODEL` | 의미 검색 시 | OpenAI 호환 임베딩 API 주소와 모델 |
-| `AGB_EMBEDDING_QUERY_PREFIX`, `AGB_EMBEDDING_INTERVAL` | | 검색어 앞에 붙일 문자열, 색인 주기(기본 1m) |
+| `AGB_EMBEDDING_URL` | 의미 검색 시 | OpenAI 호환 임베딩 엔드포인트의 전체 URL |
+| `AGB_EMBEDDING_MODEL` | 의미 검색 시 | 임베딩 모델 이름 |
+| `AGB_EMBEDDING_QUERY_PREFIX` | | 검색어에만 앞에 붙이는 문자열. 값에 적은 `
+` 두 글자는 줄바꿈으로 읽음 |
+| `AGB_EMBEDDING_INTERVAL` | | 색인 주기. Go duration 형식, 기본 `1m` |
 
 의미 검색의 유사도 하한은 특정 임베딩 모델에 맞춘 값입니다. 다른 모델을 쓰면 검색 결과의 범위가 달라질 수 있습니다. 검색 응답의 `semantic` 필드(`ok`, `disabled`, `failed`)로 의미 검색이 실제로 쓰였는지 알 수 있습니다.
 
@@ -189,7 +217,7 @@ agb --actor owner project create APP "예제 앱"
 
 ```bash
 agb --actor claude login             # 승인 주소와 코드가 나오면 사용자가 웹 /device 에서 승인
-agb skill install                    # CLI와 같은 판의 사용 절차를 설치
+agb skill install                    # CLI와 같은 판의 사용 절차를 설치 (갱신 상세는 skills/tool-agb/references/setup.md)
 export AGB_ACTOR=claude AGB_SESSION_ID=<세션 ID>
 ```
 
@@ -198,7 +226,7 @@ export AGB_ACTOR=claude AGB_SESSION_ID=<세션 ID>
 ```bash
 agb agenda -p APP                    # 사용자 차례, 에이전트 할 일, 대기
 agb recall "목록 정렬"                # 시작 전에 관련 결정과 사고를 찾음
-agb template show bug                # 본문 템플릿 확인
+agb template show bug > body.md      # 본문 템플릿을 파일로 받아 각 제목 아래를 채움
 agb issue create -p APP --type bug -t "목록 화면에서 정렬이 풀리는 문제 수정" --body-file body.md
 agb issue update APP-12 --status doing
 agb issue comment APP-12 --kind decision --summary "정렬 기준 결정" --body "..."
@@ -214,7 +242,7 @@ agb --actor owner issue ack APP-12
 기록 문서와 검색:
 
 ```bash
-agb init -p APP                      # .agb.json 생성 (업로드 규칙은 직접 채움)
+agb init -p APP                      # .agb.json 생성. documents 규칙과 new 설정(서식, 출력 폴더)을 채워야 doc new가 동작함
 agb doc new decision --slug sort-order --title "정렬 기준"
 agb doc check
 agb doc sync                         # 커밋된 문서 중 서버에 없는 것을 올림
