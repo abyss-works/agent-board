@@ -25,23 +25,6 @@ const DocumentKindFormat = "영문 소문자로 시작하고 영문 소문자, �
 
 var documentKindRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-// DocumentLocation is where a document lay in the management repository. The
-// server no longer stores it: a document response carries the value computed
-// from archived and imported, and a put request may still name it (see
-// DocumentArgs.ApplyLocation). The compatibility ends with the release after
-// v0.9.x.
-type DocumentLocation string
-
-const (
-	LocationHistory DocumentLocation = "history"
-	LocationArchive DocumentLocation = "archive"
-	// LocationLegacy is a document that was imported.
-	LocationLegacy DocumentLocation = "legacy"
-)
-
-// DocumentLocations lists every location.
-var DocumentLocations = []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}
-
 // ParseDocumentKind returns the document kind named v. Any kind of a valid
 // format is accepted; which kinds a repository uses is its own choice.
 func ParseDocumentKind(v string) (DocumentKind, bool) {
@@ -49,11 +32,6 @@ func ParseDocumentKind(v string) (DocumentKind, bool) {
 		return "", false
 	}
 	return DocumentKind(v), true
-}
-
-// ParseDocumentLocation returns the document location named v.
-func ParseDocumentLocation(v string) (DocumentLocation, bool) {
-	return parseEnum(v, DocumentLocations)
 }
 
 // DocumentState is what a document is worth for a decision now. It is computed
@@ -140,9 +118,7 @@ type Document struct {
 	CreatedBy      string          `json:"created_by"`
 	UpdatedAt      Time            `json:"updated_at"`
 	UpdatedBy      string          `json:"updated_by"`
-	// Location is computed for clients of v0.8.x; see DocumentLocation.
-	Location DocumentLocation `json:"location"`
-	Snippet  *string          `json:"snippet,omitempty"`
+	Snippet        *string         `json:"snippet,omitempty"`
 }
 
 // DocumentResult is the answer to a write: the document without its content and
@@ -455,32 +431,6 @@ type DocumentArgs struct {
 	Issues     []string
 	Archived   *bool
 	Imported   *bool
-}
-
-// HasMetadata reports whether the request carries any metadata.
-func (a DocumentArgs) HasMetadata() bool {
-	return a.Kind != nil || a.Date != nil || a.Title != nil || a.Path != nil || a.Tags != nil || a.Supersedes != nil ||
-		a.Related != nil || a.Issues != nil || a.Archived != nil || a.Imported != nil
-}
-
-// ApplyLocation reads the location of a v0.8.x client as the metadata it stands
-// for: archive as archived, legacy as imported. A legacy name that starts with
-// archive/ is archived too. It sets only what the request left unset, and only
-// when neither archived nor imported was sent.
-func (a *DocumentArgs) ApplyLocation(name string, loc DocumentLocation) {
-	if a.Archived != nil || a.Imported != nil {
-		return
-	}
-	t := true
-	switch loc {
-	case LocationArchive:
-		a.Archived = &t
-	case LocationLegacy:
-		a.Imported = &t
-		if strings.HasPrefix(name, "archive/") {
-			a.Archived = &t
-		}
-	}
 }
 
 // DocumentMeta is the metadata of a record document after the arguments, the

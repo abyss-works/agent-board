@@ -31,10 +31,21 @@ func docSHA(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// locArgs reads a location of a v0.8.x client as the arguments it stands for.
+// locArgs turns the shorthand the tests use for a document into arguments:
+// archive is archived, legacy is imported, and a legacy name under archive/
+// is archived too.
 func locArgs(name, location string) model.DocumentArgs {
 	var a model.DocumentArgs
-	a.ApplyLocation(name, model.DocumentLocation(location))
+	t := true
+	switch location {
+	case "archive":
+		a.Archived = &t
+	case "legacy":
+		a.Imported = &t
+		if strings.HasPrefix(name, "archive/") {
+			a.Archived = &t
+		}
+	}
 	return a
 }
 
@@ -93,7 +104,7 @@ func TestPutDocumentStoresTheOriginalBytes(t *testing.T) {
 	if !created {
 		t.Error("a new document must report created")
 	}
-	if d.Project != "AGB" || d.Name != docPriority || d.Location != model.LocationHistory || d.Kind != "decision" ||
+	if d.Project != "AGB" || d.Name != docPriority || d.Kind != "decision" ||
 		d.SHA256 != docSHA(content) || d.Size != len(content) || d.CreatedBy != "claude" || d.UpdatedBy != "claude" {
 		t.Errorf("document = %+v", d)
 	}
@@ -176,7 +187,7 @@ func TestPutDocumentRefusesOtherContent(t *testing.T) {
 		}
 	}
 	got, _ := s.GetDocument(ctx, "AGB", docPriority)
-	if *got.Content != content || got.Location != model.LocationHistory || got.UpdatedBy != "owner" || got.UpdatedAt != first.UpdatedAt {
+	if *got.Content != content || got.UpdatedBy != "owner" || got.UpdatedAt != first.UpdatedAt {
 		t.Errorf("a refused put changed the document: %+v", got)
 	}
 }
@@ -286,7 +297,7 @@ func TestListDocuments(t *testing.T) {
 			t.Errorf("a list item has no content or snippet and belongs to the project: %+v", it)
 		}
 	}
-	if items[1].Location != model.LocationArchive || items[1].State != model.StateArchived || !items[1].Archived || items[3].Date == nil || *items[3].Date != "2026-10-20 15:44" {
+	if !items[1].Archived || items[1].State != model.StateArchived || items[3].Date == nil || *items[3].Date != "2026-10-20 15:44" {
 		t.Errorf("list items = %+v", items)
 	}
 

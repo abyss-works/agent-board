@@ -36,7 +36,7 @@ func (h *handler) registerDocuments(mux *http.ServeMux) {
 
 // documentFields are the fields of a put request.
 var documentFields = map[string]bool{
-	"content": true, "location": true, "kind": true, "date": true, "title": true, "tags": true, "supersedes": true,
+	"content": true, "kind": true, "date": true, "title": true, "tags": true, "supersedes": true,
 	"related": true, "issues": true, "archived": true, "imported": true, "path": true,
 }
 
@@ -51,8 +51,7 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in store.DocumentInput
-	var location *string
-	if aerr := firstError(decodeField(b, "content", &in.Content), decodeOptional(b, "location", &location)); aerr != nil {
+	if aerr := decodeField(b, "content", &in.Content); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
@@ -68,21 +67,6 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, name := r.PathValue("key"), r.PathValue("name")
-	if location != nil {
-		// A location is checked after the project, as every value is: 404, 409, then 422.
-		if err := h.checkProjectActive(r, project); err != nil {
-			writeError(w, h.storeError(r, err))
-			return
-		}
-		loc, ok := model.ParseDocumentLocation(*location)
-		if !ok {
-			writeError(w, validationFailed([]Detail{{Field: "location", Message: "history, archive, legacy 중 하나여야 합니다."}}))
-			return
-		}
-		// A client of v0.8.x sends the content and a location, nothing else.
-		in.LocationOnly = !args.HasMetadata()
-		args.ApplyLocation(name, loc)
-	}
 	d, created, err := h.store.PutDocument(r.Context(), TraceFrom(r.Context()), project, name, in)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
@@ -94,19 +78,6 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, d)
-}
-
-// checkProjectActive reports a project that does not exist or is not active
-// with the error the store gives for it.
-func (h *handler) checkProjectActive(r *http.Request, key string) error {
-	p, err := h.store.GetProject(r.Context(), key)
-	if err != nil {
-		return err
-	}
-	if p.Status != model.ProjectActive {
-		return store.ErrProjectNotActive
-	}
-	return nil
 }
 
 func firstError(errs ...*apiError) *apiError {

@@ -7,9 +7,6 @@ import (
 )
 
 func TestDocumentEnums(t *testing.T) {
-	if want := []DocumentLocation{LocationHistory, LocationArchive, LocationLegacy}; !reflect.DeepEqual(DocumentLocations, want) {
-		t.Fatalf("DocumentLocations = %v, want %v", DocumentLocations, want)
-	}
 	for _, v := range []string{"decision", "incident", "report", "implementation", "other", "lesson", "a1_b", "a", strings.Repeat("a", 32)} {
 		if got, ok := ParseDocumentKind(v); !ok || string(got) != v {
 			t.Errorf("ParseDocumentKind(%q) = %q, %v", v, got, ok)
@@ -31,16 +28,6 @@ func TestDocumentEnums(t *testing.T) {
 	}
 	if got, ok := ParseRelationKind("about"); !ok || got != RelAbout {
 		t.Errorf("ParseRelationKind(about) = %q, %v", got, ok)
-	}
-	for _, v := range []string{"history", "archive", "legacy"} {
-		if got, ok := ParseDocumentLocation(v); !ok || string(got) != v {
-			t.Errorf("ParseDocumentLocation(%q) = %q, %v", v, got, ok)
-		}
-	}
-	for _, v := range []string{"", "draft", "History", "history/", "spec"} {
-		if _, ok := ParseDocumentLocation(v); ok {
-			t.Errorf("ParseDocumentLocation(%q) must fail", v)
-		}
 	}
 }
 

@@ -220,35 +220,6 @@ func TestValidateDocumentSizeBoundary(t *testing.T) {
 	}
 }
 
-func TestDocumentArgsLocation(t *testing.T) {
-	apply := func(name string, loc DocumentLocation, in DocumentArgs) DocumentArgs {
-		in.ApplyLocation(name, loc)
-		return in
-	}
-	if a := apply("x.md", LocationHistory, DocumentArgs{}); a.HasMetadata() {
-		t.Errorf("history sets nothing: %+v", a)
-	}
-	if a := apply("x.md", LocationArchive, DocumentArgs{}); a.Archived == nil || !*a.Archived || a.Imported != nil {
-		t.Errorf("archive = %+v", a)
-	}
-	if a := apply("decisions/x.md", LocationLegacy, DocumentArgs{}); a.Imported == nil || !*a.Imported || a.Archived != nil {
-		t.Errorf("legacy = %+v", a)
-	}
-	if a := apply("archive/2026-06-x/n.md", LocationLegacy, DocumentArgs{}); a.Imported == nil || a.Archived == nil || !*a.Archived {
-		t.Errorf("legacy archive subfolder = %+v", a)
-	}
-	// Archived or imported sent explicitly: the location is not read.
-	if a := apply("x.md", LocationArchive, DocumentArgs{Imported: ptr(false)}); a.Archived != nil {
-		t.Errorf("explicit imported must stop the location: %+v", a)
-	}
-	if a := apply("x.md", LocationLegacy, DocumentArgs{Archived: ptr(false)}); a.Imported != nil {
-		t.Errorf("explicit archived must stop the location: %+v", a)
-	}
-	if (DocumentArgs{}).HasMetadata() || !(DocumentArgs{Tags: []string{}}).HasMetadata() {
-		t.Error("HasMetadata must see an empty list as sent and nothing as not sent")
-	}
-}
-
 func TestDocumentJSON(t *testing.T) {
 	at, err := ParseTime("2026-10-21T02:00:00.000Z")
 	if err != nil {
@@ -257,7 +228,7 @@ func TestDocumentJSON(t *testing.T) {
 	d := DocumentResult{Document: Document{
 		Project: "AGB", Name: "a.md", Kind: "decision", Tags: []string{}, State: StateCurrent,
 		Supersedes: []string{}, SupersededBy: []string{}, Related: []string{"XYZ/b.md"}, Issues: []string{"AGB-1"}, UnresolvedRefs: []UnresolvedRef{{RelSupersedes, "x.md"}},
-		SHA256: "9f2c", Size: 6, CreatedAt: at, CreatedBy: "claude", UpdatedAt: at, UpdatedBy: "claude", Location: LocationHistory,
+		SHA256: "9f2c", Size: 6, CreatedAt: at, CreatedBy: "claude", UpdatedAt: at, UpdatedBy: "claude",
 	}, Warnings: []DocumentWarning{{"supersedes[0]", "unresolved", "없습니다."}}}
 	b, err := json.Marshal(d)
 	if err != nil {
@@ -266,7 +237,7 @@ func TestDocumentJSON(t *testing.T) {
 	want := `{"project":"AGB","name":"a.md","kind":"decision","date":null,"title":null,"tags":[],"state":"current","archived":false,"imported":false,"path":null,` +
 		`"supersedes":[],"superseded_by":[],"related":["XYZ/b.md"],"issues":["AGB-1"],"unresolved_refs":[{"kind":"supersedes","target":"x.md"}],` +
 		`"sha256":"9f2c","size":6,"created_at":"2026-10-21T02:00:00.000Z","created_by":"claude","updated_at":"2026-10-21T02:00:00.000Z","updated_by":"claude",` +
-		`"location":"history","warnings":[{"field":"supersedes[0]","reason":"unresolved","message":"없습니다."}]}`
+		`"warnings":[{"field":"supersedes[0]","reason":"unresolved","message":"없습니다."}]}`
 	if string(b) != want {
 		t.Errorf("document JSON =\n%s\nwant\n%s", b, want)
 	}

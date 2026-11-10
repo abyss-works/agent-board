@@ -240,8 +240,7 @@ v0.8 까지는 CLI 가 폴더 이름으로 문서의 위치(history, archive, le
    상태는 바뀌지 않으며, 아카이브는 agb doc archive 로 표시합니다.
 5. 일반 문서 서식에서 supersedes: <... | none> 같은 값을 쓰던 저장소는 서식을 고칩니다. none 은 관계 없음으로
    받고, 설명 문장은 문서 이름이 아니라 거절됩니다(not_a_name).
-6. 구 CLI 와 새 CLI 가 섞여 있는 동안(v0.9.x)에는 서버가 구 CLI 의 요청을 받습니다. 요청의 location 을
-   archived, imported 로 바꿔 읽고, 응답에는 계산한 location 을 넣습니다. 구 CLI 가 폴더를 옮긴 파일을 다시
-   올려도 서버의 문서는 바뀌지 않습니다. 구 CLI 의 doc search --location 은 400 입니다. v0.9.x 뒤의 판에서 이
-   호환을 없앨 수 있으므로 모든 호스트의 CLI 를 갱신합니다.
+6. v0.10 부터 서버는 구 CLI 의 요청을 받지 않습니다. 문서 등록 요청의 location 은 모르는 필드(unknown_field)로
+   400 이고, 응답에는 location 이 없습니다. 구 CLI 의 doc search --location 도 400 입니다. 모든 호스트의 CLI 를
+   먼저 v0.9 이상으로 갱신합니다.
 `
