@@ -12,11 +12,11 @@ import (
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
-// queryTimeout bounds each attempt to embed a search query. The API usually
-// answers in under a second but sometimes takes several; a tighter bound drops
-// the search by meaning for those queries. Search retries a failed attempt
-// once, so a single slow call does not lose the search by meaning.
-const queryTimeout = 10 * time.Second
+// queryTimeout bounds the embedding of a search query. A search waits for it,
+// so a slow API must not hold the answer back: past the bound the keywords
+// answer alone. The query is embedded once, without a retry. Indexing in the
+// background does not use it.
+const queryTimeout = 5 * time.Second
 
 // Index holds every stored chunk in memory and finds the sources nearest to a
 // query vector.
@@ -112,26 +112,17 @@ type Searcher struct {
 	Embedder Embedder
 	Prefix   string // prepended to the query text before it is embedded
 	Index    *Index
-	Timeout  time.Duration // bound of one embedding attempt; zero means queryTimeout
+	Timeout  time.Duration // bound of the query embedding; zero means queryTimeout
 }
 
 // Search embeds the query and returns the n nearest sources among allowed, as
-// Index.Search does. A failed embedding is retried once unless ctx is already
-// done.
+// Index.Search does. The embedding is tried once and ends after the timeout.
 func (s *Searcher) Search(ctx context.Context, query string, n int, allowed map[store.SourceRef]struct{}) ([]store.SourceText, error) {
-	vecs, err := s.embed(ctx, query)
-	if err != nil && ctx.Err() == nil {
-		vecs, err = s.embed(ctx, query)
-	}
+	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Timeout, queryTimeout))
+	defer cancel()
+	vecs, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
 	if err != nil {
 		return nil, err
 	}
 	return s.Index.Search(vecs[0], n, allowed), nil
-}
-
-func (s *Searcher) embed(ctx context.Context, query string) ([][]float32, error) {
-	timeout := cmp.Or(s.Timeout, queryTimeout)
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return s.Embedder.Embed(ctx, []string{s.Prefix + query})
 }

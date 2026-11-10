@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/embed"
 	"github.com/wsk0715/agent-board/internal/model"
@@ -17,15 +18,23 @@ import (
 
 // conceptEmbedder gives a text one dimension per concept, counting the words of
 // the concept, so that texts about the same thing are near without sharing a
-// word. It fails while fail is set.
+// word. It fails while fail is set and blocks until its context ends while
+// hang is set. calls counts every call.
 type conceptEmbedder struct {
 	fail    bool
+	hang    bool
+	calls   int
 	queries []string
 }
 
 var concepts = [][]string{{"잠금", "락", "lock"}, {"큐", "queue"}, {"배포", "release"}}
 
-func (c *conceptEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+func (c *conceptEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	c.calls++
+	if c.hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if c.fail {
 		return nil, errors.New("embeddings API returned 503")
 	}
@@ -55,7 +64,7 @@ func hybridEnv(t *testing.T) (*env, *conceptEmbedder) {
 	emb := &conceptEmbedder{}
 	index := &embed.Index{}
 	e := newEnvWith(t, testActors, func(o *Options) {
-		o.Semantic = &embed.Searcher{Embedder: emb, Prefix: "Query: ", Index: index}
+		o.Semantic = &embed.Searcher{Embedder: emb, Prefix: "Query: ", Index: index, Timeout: 300 * time.Millisecond}
 	})
 	e.createProject(t, "AGB", "agent-board")
 	e.createProject(t, "OTH", "other")
@@ -351,5 +360,20 @@ func TestHybridSearchScoresWhatBothListsFound(t *testing.T) {
 	l := e.searchHits(t, "/v1/search?q=잠금&type=issue&project=AGB")
 	if len(l.Items) != 1 || !strings.Contains(l.Items[0].Snippet, "[잠금]") || l.Items[0].SemanticScore == nil {
 		t.Errorf("hit found by both lists = %+v", l.Items)
+	}
+}
+
+// A query that is not embedded within the time limit is tried once; the
+// keywords then answer alone and the envelope says failed.
+func TestSearchAnswersWithKeywordsWhenTheEmbeddingIsTooSlow(t *testing.T) {
+	e, emb := hybridEnv(t)
+	emb.hang = true
+	emb.calls = 0
+	l := e.searchHits(t, "/v1/search?q=잠금")
+	if l.Semantic != "failed" || l.Total != 1 {
+		t.Errorf("semantic = %q, total %d, want failed with the one keyword hit", l.Semantic, l.Total)
+	}
+	if emb.calls != 1 {
+		t.Errorf("embedding calls = %d, want 1", emb.calls)
 	}
 }
