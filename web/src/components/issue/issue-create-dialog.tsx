@@ -40,7 +40,7 @@ interface Props {
 }
 
 function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDone: () => void; initialStatus?: IssueStatus; projects: Project[]; projectsLoaded: boolean }) {
-  const { project: selectedProject } = useAppState()
+  const { actor, project: selectedProject } = useAppState()
   const navigate = useNavigate()
   const create = useCreateIssue()
 
@@ -169,7 +169,7 @@ function CreateForm({ onDone, initialStatus, projects, projectsLoaded }: { onDon
     <form onSubmit={submit} className="contents">
       <DialogHeader>
         <DialogTitle>새 이슈</DialogTitle>
-        <DialogDescription>행위자 owner로 등록합니다.</DialogDescription>
+        <DialogDescription>{actor}의 이름으로 등록합니다.</DialogDescription>
       </DialogHeader>
 
       <div className="space-y-3">

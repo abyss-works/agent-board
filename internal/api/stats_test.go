@@ -141,6 +141,21 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatsCountsActorListWithoutActor(t *testing.T) {
+	e := newEnv(t)
+	e.do(t, "GET", "/v1/actors", "", map[string]string{"Authorization": "Bearer " + testToken, "X-Actor": "-"})
+	var got statsResponse
+	decodeJSON(t, e.do(t, "GET", "/v1/stats", "", nil), &got)
+	if n := findRoute(t, got.Routes, "GET", "/v1/actors").Requests; n != 1 {
+		t.Errorf("/v1/actors requests = %d, want 1", n)
+	}
+	for _, r := range got.Routes {
+		if r.Route == "/" {
+			t.Errorf("request counted under %q", r.Route)
+		}
+	}
+}
+
 func TestStatsEndpointAccess(t *testing.T) {
 	e := newEnv(t)
 	if rec := e.do(t, "GET", "/v1/stats", "", map[string]string{"Authorization": "Bearer wrong"}); rec.Code != 401 {

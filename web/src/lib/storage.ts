@@ -38,7 +38,7 @@ function randomBytes(n: number): Uint8Array {
   return bytes
 }
 
-/** 토큰, 세션 ID(브라우저당 하나), 선택한 프로젝트를 둔다. */
+/** 토큰, 행위자, 세션 ID(브라우저당 하나), 선택한 프로젝트를 둔다. */
 export class AppStorage {
   private readonly store: KeyValueStore
   private sessionId: string | null = null
@@ -89,6 +89,18 @@ export class AppStorage {
 
   clearToken(): void {
     this.write('token', null)
+  }
+
+  getActor(): string | null {
+    return this.read('actor')
+  }
+
+  setActor(actor: string): void {
+    this.write('actor', actor)
+  }
+
+  clearActor(): void {
+    this.write('actor', null)
   }
 
   getSessionId(): string {

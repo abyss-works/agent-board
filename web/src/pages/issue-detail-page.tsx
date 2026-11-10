@@ -2,6 +2,7 @@ import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'luci
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
+import { useAppState } from '@/app/state'
 import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilestones, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
 import { MILESTONE_STATUSES, type Issue, type IssuePatch, type IssueStatus, type IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
@@ -58,6 +59,7 @@ function Meta({ label, actor, at }: { label: string; actor?: string; at: string 
 }
 
 function IssueDetail({ issue }: { issue: Issue }) {
+  const { actor } = useAppState()
   const navigate = useNavigate()
   const patch = usePatchIssue()
   const del = useDeleteIssue()
@@ -218,7 +220,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
                   disabled={comment.isPending}
                 />
                 <div className="flex items-center justify-between">
-                  <span className="text-[0.6875rem] text-muted-foreground">owner로 남깁니다. 삭제된 이슈에도 댓글을 달 수 있습니다.</span>
+                  <span className="text-[0.6875rem] text-muted-foreground">{actor}의 이름으로 남깁니다. 삭제된 이슈에도 댓글을 달 수 있습니다.</span>
                   <Button size="sm" onClick={submitComment} disabled={!commentText.trim() || comment.isPending}>
                     댓글 달기
                   </Button>
