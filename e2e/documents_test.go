@@ -288,8 +288,6 @@ func TestDocuments(t *testing.T) {
 			{"empty content", "2026-10-20-1544-decision-x.md", "history", "", "title"},
 			{"one byte over the limit", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("a", maxDocumentBytes-len(head)+1), "content"},
 			{"bytes, not characters", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("가", (maxDocumentBytes-len(head))/3+1), "content"},
-			{"unknown location", "2026-10-20-1544-decision-x.md", "draft", ok, "location"},
-			{"empty location", "2026-10-20-1544-decision-x.md", "", ok, "location"},
 		} {
 			e := wantError(t, put(c.name, c.location, c.content), 422, "validation_failed")
 			if !e.hasField(c.field) {
@@ -300,7 +298,7 @@ func TestDocuments(t *testing.T) {
 		if got := e.fields(); !reflect.DeepEqual(got, []string{"name", "title"}) {
 			t.Errorf("every violation at once = %v", got)
 		}
-		wantError(t, owner.do(t, "PUT", documentPath(p.Key, "2026-10-20-1544-decision-x.md"), map[string]any{"location": nil, "content": nil}), 422, "validation_failed")
+		wantError(t, owner.do(t, "PUT", documentPath(p.Key, "2026-10-20-1544-decision-x.md"), map[string]any{"content": nil}), 422, "validation_failed")
 
 		// Exactly the limit is accepted, and 1MB of Korean text, which is three bytes a character.
 		if d, status := mustPutDocument(t, owner, p.Key, nAtLimit, "history", head+strings.Repeat("a", maxDocumentBytes-len(head))); status != 201 || d.Size != maxDocumentBytes {
@@ -314,14 +312,14 @@ func TestDocuments(t *testing.T) {
 		// The body of the request is a JSON object with the fields of a put.
 		path := documentPath(p.Key, "2026-10-20-1544-decision-x.md")
 		for _, body := range []map[string]any{
-			{"location": "history", "content": ok, "sha256": "abc"},
-			{"location": "history", "content": ok, "project": p.Key},
-			{"location": 1, "content": ok},
-			{"location": "history", "content": 5},
+			{"content": ok, "sha256": "abc"},
+			{"content": ok, "project": p.Key},
+			{"location": "history", "content": ok},
+			{"content": 5},
 		} {
 			wantError(t, owner.do(t, "PUT", path, body), 400, "bad_request")
 		}
-		wantError(t, owner.doRaw(t, "PUT", path, []byte(`{"location":"history","content":`)), 400, "bad_request")
+		wantError(t, owner.doRaw(t, "PUT", path, []byte(`{"content":`)), 400, "bad_request")
 		wantError(t, owner.doRaw(t, "PUT", path, []byte(`["history"]`)), 400, "bad_request")
 		huge := owner.do(t, "PUT", path, map[string]any{"location": "history", "content": head + strings.Repeat("a", 7<<20)})
 		wantError(t, huge, 413, "payload_too_large")
