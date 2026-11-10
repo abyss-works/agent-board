@@ -2,11 +2,14 @@ import { useQuery } from '@tanstack/react-query'
 import { EyeIcon, EyeOffIcon, KeyRoundIcon, ServerIcon } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { Health } from '@/api/types'
+import { errorMessage, fetchUserActorIds, isUnauthorized } from '@/api/client'
 import { QUERY_ROOT } from '@/api/queries'
-import { BASE_URL, useAppState } from '@/app/state'
+import { BASE_URL, CLIENT_HOST, useAppState } from '@/app/state'
+import { ActorChoice } from '@/components/actor-choice'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NO_USER_ACTOR_MESSAGE, resolveActor } from '@/lib/actors'
 import { cn } from '@/lib/utils'
 
 /** 인증 없이 부르는 /v1/health. 토큰을 넣기 전에 서버가 켜져 있는지 보여 준다. */
@@ -24,15 +27,36 @@ function useHealth() {
 }
 
 export function LoginPage() {
-  const { login, authNotice } = useAppState()
+  const { login, authNotice, sessionId } = useAppState()
   const [token, setToken] = useState('')
   const [show, setShow] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  /** 사용자 행위자가 여럿일 때 고를 후보. 토큰을 고치면 비운다. */
+  const [candidates, setCandidates] = useState<string[] | null>(null)
   const health = useHealth()
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!token.trim()) return
-    login(token)
+    const value = token.trim()
+    if (!value || checking) return
+    setChecking(true)
+    setError(null)
+    try {
+      const users = await fetchUserActorIds({ baseUrl: BASE_URL, token: value, sessionId, clientHost: CLIENT_HOST })
+      const resolution = resolveActor(users, null)
+      if (resolution.kind === 'use') login(value, resolution.actor)
+      else if (resolution.kind === 'choose') setCandidates(resolution.users)
+      else setError(NO_USER_ACTOR_MESSAGE)
+    } catch (err) {
+      setError(
+        isUnauthorized(err)
+          ? '서버가 토큰을 거부했습니다(401). 공용 토큰을 확인해 주세요.'
+          : `행위자 목록을 받지 못했습니다. ${errorMessage(err)}`,
+      )
+    } finally {
+      setChecking(false)
+    }
   }
 
   return (
@@ -48,7 +72,7 @@ export function LoginPage() {
           </div>
         </div>
 
-        <form onSubmit={submit} className="space-y-4 rounded-xl border bg-card p-5 shadow-xl">
+        <form onSubmit={(e) => void submit(e)} className="space-y-4 rounded-xl border bg-card p-5 shadow-xl">
           <div className="space-y-1.5">
             <Label>서버</Label>
             <div className="flex h-8 items-center gap-2 rounded-md border border-input px-2.5 text-[0.8125rem]">
@@ -78,7 +102,10 @@ export function LoginPage() {
                 id="token"
                 type={show ? 'text' : 'password'}
                 value={token}
-                onChange={(e) => setToken(e.target.value)}
+                onChange={(e) => {
+                  setToken(e.target.value)
+                  setCandidates(null)
+                }}
                 placeholder="AGB_TOKEN 값을 붙여 넣으세요"
                 autoComplete="off"
                 autoFocus
@@ -96,15 +123,21 @@ export function LoginPage() {
             </div>
             <p className="text-[0.6875rem] text-muted-foreground">
               토큰은 이 브라우저의 localStorage에 저장되며 요청마다 <code className="font-mono">Authorization: Bearer</code>로
-              보냅니다. 행위자는 <code className="font-mono">owner</code>입니다.
+              보냅니다. 요청의 행위자는 서버에 선언된 사용자 행위자입니다.
             </p>
           </div>
 
-          {authNotice ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-[0.75rem] text-destructive">{authNotice}</p> : null}
+          {candidates ? <ActorChoice users={candidates} onPick={(actor) => login(token, actor)} /> : null}
 
-          <Button type="submit" className="w-full" disabled={!token.trim()}>
-            로그인
-          </Button>
+          {error ?? authNotice ? (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-[0.75rem] text-destructive">{error ?? authNotice}</p>
+          ) : null}
+
+          {candidates ? null : (
+            <Button type="submit" className="w-full" disabled={!token.trim() || checking}>
+              {checking ? '확인 중' : '로그인'}
+            </Button>
+          )}
         </form>
       </div>
     </div>

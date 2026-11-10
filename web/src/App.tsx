@@ -6,6 +6,7 @@ import { useAppState } from '@/app/state'
 import { AppShell } from '@/components/layout/app-shell'
 import { backgroundOf } from '@/lib/overlay'
 import { ActivityPage } from '@/pages/activity-page'
+import { ActorPage } from '@/pages/actor-page'
 import { BoardPage } from '@/pages/board-page'
 import { DevicePage } from '@/pages/device-page'
 import { DocumentPage } from '@/pages/document-page'
@@ -35,9 +36,10 @@ const TOAST_CLASS_NAMES = {
 }
 
 function Root() {
-  const { token } = useAppState()
+  const { token, actor } = useAppState()
   const location = useLocation()
   if (!token) return <LoginPage />
+  if (!actor) return <ActorPage />
   // 이슈 주소이면 그 밑에 그릴 화면의 위치. 이슈를 열어도 아래 화면이 다시 만들어지지 않도록,
   // 오버레이가 없을 때도 같은 방식(location 지정)으로 그린다.
   const background = backgroundOf(location)

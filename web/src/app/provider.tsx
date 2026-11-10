@@ -3,19 +3,22 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { ApiClient, isApiError, isUnauthorized } from '@/api/client'
 import { AppStorage, browserStore } from '@/lib/storage'
 import { connection } from './connection'
-import { ACTOR, ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, POLL_MS, type AppState } from './state'
+import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, POLL_MS, type AppState } from './state'
 
 const storage = new AppStorage(browserStore())
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => storage.getToken())
+  const [actor, setActor] = useState<string | null>(() => storage.getActor())
   const [project, setProject] = useState<string | null>(() => storage.getProject())
   const [authNotice, setAuthNotice] = useState<string | null>(null)
   const sessionId = useMemo(() => storage.getSessionId(), [])
 
   const handleUnauthorized = useCallback(() => {
     storage.clearToken()
+    storage.clearActor()
     setToken(null)
+    setActor(null)
     setAuthNotice('서버가 토큰을 거부했습니다(401). 토큰을 다시 입력해 주세요.')
   }, [])
 
@@ -49,21 +52,30 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }),
   )
 
-  const login = useCallback((value: string) => {
+  const login = useCallback((value: string, picked: string) => {
     const trimmed = value.trim()
     storage.setToken(trimmed)
+    storage.setActor(picked)
     setToken(trimmed)
+    setActor(picked)
     setAuthNotice(null)
     connection.reset()
   }, [])
 
   const logout = useCallback(() => {
     storage.clearToken()
+    storage.clearActor()
     setToken(null)
+    setActor(null)
     setAuthNotice(null)
     connection.reset()
     queryClient.clear()
   }, [queryClient])
+
+  const selectActor = useCallback((picked: string) => {
+    storage.setActor(picked)
+    setActor(picked)
+  }, [])
 
   const selectProject = useCallback((key: string | null) => {
     storage.setProject(key)
@@ -72,15 +84,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const client = useMemo(
     () =>
-      token
-        ? new ApiClient({ baseUrl: BASE_URL, token, actor: ACTOR, sessionId, clientHost: CLIENT_HOST })
+      token && actor
+        ? new ApiClient({ baseUrl: BASE_URL, token, actor, sessionId, clientHost: CLIENT_HOST })
         : null,
-    [token, sessionId],
+    [token, actor, sessionId],
   )
 
   const state = useMemo<AppState>(
-    () => ({ token, project, sessionId, authNotice, login, logout, selectProject }),
-    [token, project, sessionId, authNotice, login, logout, selectProject],
+    () => ({ token, actor, project, sessionId, authNotice, login, logout, selectActor, selectProject }),
+    [token, actor, project, sessionId, authNotice, login, logout, selectActor, selectProject],
   )
 
   return (

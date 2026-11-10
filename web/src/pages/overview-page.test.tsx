@@ -11,11 +11,13 @@ import { OverviewPage } from './overview-page'
 
 const state: AppState = {
   token: 'token',
+  actor: 'owner',
   project: 'AGB',
   sessionId: 'session',
   authNotice: null,
   login: () => {},
   logout: () => {},
+  selectActor: () => {},
   selectProject: () => {},
 }
 

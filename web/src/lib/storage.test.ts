@@ -31,6 +31,16 @@ describe('AppStorage', () => {
     expect(new AppStorage(memoryStore()).getSessionId()).not.toBe(first)
   })
 
+  it('고른 행위자를 기억하고 지운다', () => {
+    const store = memoryStore()
+    const s = new AppStorage(store)
+    expect(s.getActor()).toBeNull()
+    s.setActor('me')
+    expect(new AppStorage(store).getActor()).toBe('me')
+    s.clearActor()
+    expect(s.getActor()).toBeNull()
+  })
+
   it('선택한 프로젝트를 기억한다', () => {
     const s = new AppStorage(memoryStore())
     expect(s.getProject()).toBeNull()

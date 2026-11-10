@@ -1,10 +1,12 @@
-import type { ErrorDetail } from './types'
+import { userActorIds } from '@/lib/actors'
+import type { Actor, ErrorDetail } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
   baseUrl: string
   token: string
-  actor: string
+  /** 없으면 X-Actor를 보내지 않는다. 사용자 행위자를 알기 전 목록을 받을 때만 비운다. */
+  actor?: string
   sessionId: string
   clientHost: string
 }
@@ -138,12 +140,13 @@ export function issueListQuery(f: IssueListFilters): string {
 }
 
 export function headersFor(config: ClientConfig): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${config.token}`,
-    'X-Actor': config.actor,
     'X-Session-Id': config.sessionId,
     'X-Client-Host': config.clientHost,
   }
+  if (config.actor !== undefined) headers['X-Actor'] = config.actor
+  return headers
 }
 
 export interface RequestOptions {
@@ -216,4 +219,10 @@ async function parseResponse<T>(res: Response): Promise<T> {
   if (res.ok) return data as T
   const err = (data as { error?: { code?: string; message?: string; details?: ErrorDetail[] } } | null)?.error
   throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, err?.details ?? [])
+}
+
+/** 공용 토큰으로 서버에 선언된 사용자 행위자의 ID를 받는다. 행위자를 정하기 전이라 X-Actor를 보내지 않는다. */
+export async function fetchUserActorIds(config: Omit<ClientConfig, 'actor'>, fetchFn?: FetchFn): Promise<string[]> {
+  const { items } = await new ApiClient(config, fetchFn).get<{ items: Actor[] }>('/actors')
+  return userActorIds(items)
 }

@@ -4,7 +4,7 @@ import { NavLink } from 'react-router'
 import { useProjects } from '@/api/queries'
 import type { Project } from '@/api/types'
 import { useConnection } from '@/app/connection'
-import { ACTOR, POLL_MS, useAppState } from '@/app/state'
+import { POLL_MS, useAppState } from '@/app/state'
 import { IssueCreateDialog } from '@/components/issue/issue-create-dialog'
 import { ProjectDeleteDialog } from '@/components/project/project-delete-dialog'
 import { ProjectDialog } from '@/components/project/project-dialog'
@@ -159,7 +159,7 @@ function ConnectionStatus() {
 }
 
 export function Sidebar() {
-  const { logout, project, selectProject } = useAppState()
+  const { actor, logout, project, selectProject } = useAppState()
   const [newIssue, setNewIssue] = useState(false)
   const [createProject, setCreateProject] = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
@@ -204,7 +204,7 @@ export function Sidebar() {
         <ConnectionStatus />
         <div className="flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
           <span className="size-2 rounded-full bg-sky-400" />
-          행위자 <span className="font-mono text-foreground/80">{ACTOR}</span>
+          행위자 <span className="font-mono text-foreground/80">{actor}</span>
           <Button variant="ghost" size="xs" className="ml-auto" onClick={logout} title="토큰을 지우고 로그인 화면으로">
             <LogOutIcon />
             로그아웃
