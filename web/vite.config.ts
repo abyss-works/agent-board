@@ -4,19 +4,16 @@ import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import type { ProxyOptions } from 'vite'
+import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
 
-// 개발 서버 프록시. 브라우저가 같은 출처(/api/<인스턴스>/v1/...)로 부르면 경로의 접두어를 떼고
-// 해당 인스턴스로 넘긴다. 토큰과 추적 헤더는 브라우저가 직접 보내며 프록시는 아무것도 주입하지 않는다.
-const instances = {
-  local: 'http://127.0.0.1:8420',
-  staging: 'http://127.0.0.1:8421',
-  prod: 'https://agb.abyssworks.dev',
-} as const
+// 개발 서버 프록시. 브라우저가 같은 출처(/api/v1/...)로 부르면 접두어 /api를 떼고 대상 서버로 넘긴다.
+// 대상은 환경변수 VITE_AGB_PROXY_TARGET이고 기본값은 로컬 서버다. 토큰과 추적 헤더는 브라우저가
+// 직접 보내며 프록시는 아무것도 주입하지 않는다.
+const DEFAULT_TARGET = 'http://127.0.0.1:8420'
 
-function proxyFor(name: keyof typeof instances): ProxyOptions {
-  const target = instances[name]
-  const prefix = `/api/${name}`
+function proxyFor(target: string): ProxyOptions {
+  const prefix = '/api'
   return {
     target,
     changeOrigin: true,
@@ -39,23 +36,22 @@ function proxyFor(name: keyof typeof instances): ProxyOptions {
   }
 }
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-  },
-  server: {
-    host: '127.0.0.1',
-    port: 5173,
-    strictPort: true,
-    proxy: {
-      '/api/local': proxyFor('local'),
-      '/api/staging': proxyFor('staging'),
-      '/api/prod': proxyFor('prod'),
+export default defineConfig(({ mode }) => {
+  const target = loadEnv(mode, process.cwd(), 'VITE_').VITE_AGB_PROXY_TARGET || DEFAULT_TARGET
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },
-  },
-  test: {
-    environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}'],
-  },
+    server: {
+      host: '127.0.0.1',
+      port: 5173,
+      strictPort: true,
+      proxy: { '/api': proxyFor(target) },
+    },
+    test: {
+      environment: 'node',
+      include: ['src/**/*.test.{ts,tsx}'],
+    },
+  }
 })
