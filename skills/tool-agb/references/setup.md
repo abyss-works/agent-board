@@ -4,7 +4,7 @@
 
 - 대상 환경: Windows(PowerShell, Git Bash), Linux(amd64, arm64, 화면 없는 서버 포함)
 - 제품 저장소: https://github.com/abyss-works/agent-board
-- 운영 인스턴스: https://agb.abyssworks.dev (API `/v1`, 웹 화면은 같은 주소)
+- 서버 주소: `<서버 주소>` (API `/v1`, 웹 화면은 같은 주소)
 - 자리표시자: `<REF>`는 설치할 릴리즈(기본 `main`, 고정하려면 커밋), `<VER>`는 `agb version`이 출력할 버전 문자열(`CHANGELOG.md` 맨 위 버전 이름)이다.
 
 ## 1. CLI 설치
@@ -67,7 +67,7 @@ go install -trimpath -ldflags "-X main.version=<VER>-dev.$(git rev-parse --short
 
 1. 서버 주소를 넣는다.
    ```bash
-   agb config set url https://agb.abyssworks.dev
+   agb config set url <서버 주소>
    ```
 2. 토큰을 받는다. 토큰은 행위자마다 다르다.
    - 에이전트: `SKILL.md`의 "로그인이 필요할 때"를 따라 `agb --actor <자기 ID> login`으로 받는다. 사용자가 웹에서 승인한다.
@@ -111,7 +111,7 @@ agb --actor <자기 ID> project overview <KEY>
 ## 6. 최신 버전 확인
 
 ```bash
-curl -s https://agb.abyssworks.dev/v1/health
+curl -s <서버 주소>/v1/health
 gh api repos/abyss-works/agent-board/commits/main --jq '.sha[0:7] + " " + .commit.message'
 ```
 
