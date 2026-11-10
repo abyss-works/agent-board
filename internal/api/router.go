@@ -50,11 +50,13 @@ type handler struct {
 	actors  map[string]model.Actor
 	store   *store.Store
 	devices *deviceStore
+	stats   *statsCollector
+	started time.Time
 }
 
 // New builds the complete HTTP handler.
 func New(o Options) http.Handler {
-	h := &handler{opts: o, actors: map[string]model.Actor{}, store: o.Store}
+	h := &handler{opts: o, actors: map[string]model.Actor{}, store: o.Store, stats: newStatsCollector()}
 	for _, a := range o.Actors {
 		h.actors[a.ID] = a
 	}
@@ -68,11 +70,13 @@ func New(o Options) http.Handler {
 		h.opts.Rand = crand.Reader
 	}
 	h.devices = newDeviceStore(h.opts.Now, h.opts.Rand)
+	h.started = h.opts.Now()
 
 	// Routes behind authentication and trace headers.
 	protected := http.NewServeMux()
 	route(protected, "/v1/actors", methods{"GET": h.listActors})
 	route(protected, "/v1/actors/me", methods{"GET": h.me})
+	route(protected, "/v1/stats", methods{"GET": h.serverStats})
 	h.registerProjects(protected)
 	h.registerIssues(protected)
 	h.registerTopics(protected)
@@ -108,7 +112,7 @@ func New(o Options) http.Handler {
 		root.Handle("/v1/", guarded)
 		root.Handle("/", webHandler(o.Web))
 	}
-	return logging(h.opts.Logger, root)
+	return logging(h.opts.Logger, h.stats, root)
 }
 
 // startsLogin reports whether the request is one of the two that start a
@@ -138,6 +142,7 @@ func (m methods) serve() http.HandlerFunc {
 	sort.Strings(allowed)
 	allow := strings.Join(allowed, ", ")
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPattern(r, r.Pattern)
 		if fn, ok := m[r.Method]; ok {
 			fn(w, r)
 			return
@@ -153,6 +158,19 @@ func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
 		body["release"] = h.opts.Release
 	}
 	writeJSON(w, 200, body)
+}
+
+func (h *handler) serverStats(w http.ResponseWriter, r *http.Request) {
+	size, err := h.store.FileSize()
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"started_at": model.NewTime(h.started),
+		"db_bytes":   size,
+		"routes":     h.stats.snapshot(),
+	})
 }
 
 func (h *handler) listActors(w http.ResponseWriter, _ *http.Request) {

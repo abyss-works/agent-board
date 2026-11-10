@@ -136,6 +136,8 @@ agb config set actor agent1
 agb login
 agb health
 agb whoami
+# 서버가 메모리에 모은 요청 수, 오류 수, 처리 시간 지표를 본다. 서버를 다시 시작하면 0부터 센다.
+agb stats
 ```
 
 에이전트 행위자는 공용 토큰을 쓰지 않고 `agb login`이 기기 승인으로 받은 행위자별 토큰을 쓴다. `agb login`은 승인 요청을 만들어 승인 주소(`<서버 주소>/device?code=<코드>`)와 코드를 표준 오류에 보이고 브라우저로 주소를 연다(`--no-browser`를 붙이면 열지 않는다). 사용자가 웹 클라이언트에서 코드를 확인하고 승인하면 CLI가 토큰을 받아 설정 파일에 행위자별로 저장하고, 이후 그 행위자의 요청에 쓴다. 승인 요청은 10분 뒤 만료되며, 거부되거나 만료되면 종료 코드 1로 끝난다. 같은 행위자가 같은 기기에서 다시 로그인하면 서버가 이전 토큰을 폐기한다. `agb logout`은 서버에서 토큰을 폐기하고 설정 파일에서 지운다. 토큰 값은 어떤 출력에도 나오지 않는다.
@@ -207,13 +209,25 @@ agb issue update DEMO-1 --add-depends-on DEMO-2
 
 ## REST API
 
-`/v1` 아래에 `projects`, `agenda`, `digest`, `issues`, `topics`, `milestones`, `documents`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
+`/v1` 아래에 `projects`, `agenda`, `digest`, `issues`, `topics`, `milestones`, `documents`, `templates`, `activity`, `board`, `queue`, `labels`, `actors`, `stats`, `device-authorizations`, `tokens`, `health` 경로가 있다. `health`와 로그인에 쓰는 두 요청(`POST /v1/device-authorizations`, `POST /v1/tokens`)을 뺀 요청에는 토큰(`Authorization: Bearer`, 공용 토큰 또는 행위자 토큰)과 행위자(`X-Actor`), 세션 ID(`X-Session-Id`), 클라이언트 호스트(`X-Client-Host`) 헤더가 있어야 한다. 행위자는 서버에 선언된 값이어야 하고, 공용 토큰은 `user` 종류 행위자만, 행위자 토큰은 그 토큰의 행위자만 쓸 수 있다(어긋나면 403). 토큰이 없거나 틀리면 401, 추적 헤더가 규칙에 맞지 않으면 400으로 거부하며, 거부한 요청을 포함한 모든 요청이 서버 로그에 남는다.
 
 ```bash
 curl -H "Authorization: Bearer $AGB_TOKEN" \
   -H "X-Actor: owner" -H "X-Session-Id: demo-1" -H "X-Client-Host: laptop" \
   http://127.0.0.1:8420/v1/projects
 ```
+
+`GET /v1/stats`는 서버가 요청을 처리하며 메모리에 모은 성능 지표를 원자료 그대로 돌려준다. 다른 읽기 API와 같은 인증을 쓴다. 지표는 DB에 저장하지 않으므로 서버를 다시 시작하면 0부터 다시 센다.
+
+- `started_at`: 집계를 시작한 시각(UTC). 서버 시작 시각이다.
+- `db_bytes`: DB 파일(`agb.db`)의 바이트 크기. WAL 파일은 포함하지 않는다.
+- `routes`: 라우트 패턴(예: `/v1/issues/{key}`)과 메서드별 항목의 배열. 라우트, 메서드 순으로 정렬한다. 어떤 라우트도 처리하지 않은 요청(인증·헤더 거부, 없는 경로, 웹 클라이언트)은 라우트 `(unrouted)`로 묶는다.
+  - `method`, `route`: 메서드와 라우트 패턴. 표준 메서드(GET, HEAD, POST, PUT, PATCH, DELETE, CONNECT, OPTIONS, TRACE) 밖의 메서드는 `OTHER` 하나로 묶는다.
+  - `requests`: 요청 수. `errors`: 5xx로 응답한 요청 수.
+  - `total_ms`, `max_ms`: 처리 시간의 합계와 최댓값(밀리초).
+  - `buckets`: 처리 시간 구간별 요청 수. 항목은 `le_ms`(구간 상한, 포함)와 `count`이고 구간이 겹치지 않는다. 상한은 1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000이며, 마지막 항목은 5000ms를 넘은 요청으로 `le_ms`가 `null`이다.
+
+판정이나 경고는 담지 않는다. 평균은 `total_ms / requests`로 읽는 쪽이 계산한다.
 
 ## 웹 클라이언트
 
