@@ -40,6 +40,37 @@ describe('AppStorage', () => {
     expect(s.getProject()).toBeNull()
   })
 
+  it('옛 인스턴스별 키는 default만 새 키로 옮기고 모두 지운다', () => {
+    const store = memoryStore()
+    store.setItem('agb.token.default', 'tok')
+    store.setItem('agb.project.default', 'AGB')
+    store.setItem('agb.token.local', 'dev')
+    store.setItem('agb.project.staging', 'X')
+    store.setItem('agb.instance', 'staging')
+    const s = new AppStorage(store)
+    expect(s.getToken()).toBe('tok')
+    expect(s.getProject()).toBe('AGB')
+    for (const k of ['token.default', 'project.default', 'token.local', 'project.staging', 'instance']) {
+      expect(store.getItem(`agb.${k}`)).toBeNull()
+    }
+  })
+
+  it('개발 모드 ID의 토큰은 옮기지 않고 지운다', () => {
+    const store = memoryStore()
+    store.setItem('agb.token.prod', 'dev')
+    const s = new AppStorage(store)
+    expect(s.getToken()).toBeNull()
+    expect(store.getItem('agb.token.prod')).toBeNull()
+  })
+
+  it('새 키가 있으면 옛 값으로 덮어쓰지 않는다', () => {
+    const store = memoryStore()
+    store.setItem('agb.token', 'new')
+    store.setItem('agb.token.default', 'old')
+    expect(new AppStorage(store).getToken()).toBe('new')
+    expect(store.getItem('agb.token.default')).toBeNull()
+  })
+
   it('저장소가 예외를 던져도 동작한다', () => {
     const broken = {
       getItem: () => {

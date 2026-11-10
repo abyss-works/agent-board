@@ -95,7 +95,7 @@ export function LoginPage() {
               </button>
             </div>
             <p className="text-[0.6875rem] text-muted-foreground">
-              토큰은 이 브라우저의 localStorage에 인스턴스별로 저장되며 요청마다 <code className="font-mono">Authorization: Bearer</code>로
+              토큰은 이 브라우저의 localStorage에 저장되며 요청마다 <code className="font-mono">Authorization: Bearer</code>로
               보냅니다. 행위자는 <code className="font-mono">owner</code>입니다.
             </p>
           </div>

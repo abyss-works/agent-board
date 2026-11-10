@@ -45,6 +45,21 @@ export class AppStorage {
 
   constructor(store: KeyValueStore) {
     this.store = store
+    this.migrateInstanceKeys()
+  }
+
+  /**
+   * 인스턴스별 키(`token.<ID>`, `project.<ID>`, `instance`)를 쓰던 옛 판의 값을 옮기고 지운다.
+   * 운영 빌드의 ID는 `default`라서 그 값만 새 키로 옮기고, 개발 모드 ID(`local`, `staging`, `prod`)의
+   * 값은 새 프록시 대상과 같은 서버인지 알 수 없어 옮기지 않고 지운다. 새 키가 있으면 덮어쓰지 않는다.
+   */
+  private migrateInstanceKeys(): void {
+    for (const name of ['token', 'project']) {
+      const legacy = this.read(`${name}.default`)
+      if (legacy !== null && this.read(name) === null) this.write(name, legacy)
+      for (const id of ['default', 'local', 'staging', 'prod']) this.write(`${name}.${id}`, null)
+    }
+    this.write('instance', null)
   }
 
   private read(key: string): string | null {
