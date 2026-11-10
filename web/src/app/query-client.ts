@@ -18,7 +18,7 @@ interface Handlers {
 /**
  * 행위자를 서버가 거절하면 로그인용 행위자 목록 캐시를 버린 뒤 저장된 행위자를 지우고 `onActorCleared`를 부른다.
  * 행위자 확인 화면이 오래된 목록으로 먼저 정하지 않고 새로 받은 목록으로만 정하게 하려는 것이다.
- * 구독자가 없는 캐시만 버려, 행위자 확인 화면이 이미 받고 있는 요청은 남긴다. 캐시를 먼저 버리는 것은 저장값이 지워지는 순간 화면이 바뀌므로, 그때는 오래된 목록이 이미 없어야 하기 때문이다.
+ * 구독자가 없는 캐시만 버려, 행위자 확인 화면이 이미 받고 있는 요청은 남긴다. 캐시를 먼저 버리는 것은 `onActorCleared`에서 화면이 바뀌므로, 그때는 오래된 목록이 이미 없어야 하기 때문이다.
  */
 export function createQueryClient({ storage, onUnauthorized, onActorCleared }: Handlers): QueryClient {
   const onError = (err: unknown) => {

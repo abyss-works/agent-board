@@ -21,7 +21,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setAuthNotice('서버가 토큰을 거부했습니다(401). 토큰을 다시 입력해 주세요.')
   }, [])
 
-  // 저장된 행위자를 서버가 더는 받지 않으면 지운다. 토큰은 두고 행위자 확인 화면으로 돌아간다.
+  // 서버가 행위자를 거절하면 query-client가 저장값을 지운 뒤 부른다. 여기서는 화면 상태만 비워 행위자 확인 화면으로 돌아간다. 토큰은 둔다.
   const handleActorCleared = useCallback(() => setActor(null), [])
 
   const [queryClient] = useState(() => createQueryClient({ storage, onUnauthorized: handleUnauthorized, onActorCleared: handleActorCleared }))
