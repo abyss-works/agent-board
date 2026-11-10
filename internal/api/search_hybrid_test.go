@@ -239,8 +239,16 @@ func TestHybridSearchTakesLongQuestions(t *testing.T) {
 		t.Fatalf("long question: %d %s", rec.Code, rec.Body.String())
 	}
 	emb.fail = true
-	if rec := e.do(t, "GET", long, "", nil); rec.Code != 400 {
+	// The refusal names the cause (the search by meaning failed) and the next
+	// step (shorten the query to 10 terms and search again).
+	rec := e.do(t, "GET", long, "", nil)
+	if rec.Code != 400 {
 		t.Errorf("long question without meaning: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"의미 검색", "실패", "10항 이내로 줄여 다시"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("refusal lacks %q: %s", want, rec.Body.String())
+		}
 	}
 	if rec := newEnv(t).do(t, "GET", long, "", nil); rec.Code != 400 {
 		t.Errorf("long question on a keyword server: %d %s", rec.Code, rec.Body.String())
