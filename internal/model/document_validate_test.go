@@ -44,7 +44,7 @@ func TestValidateDocumentPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := DocumentMeta{
-		Kind: DocumentDecision, Date: ptr("2026-10-20 15:44"), Title: ptr("프런트매터 제목"), Tags: []string{"fm"},
+		Kind: "decision", Date: ptr("2026-10-20 15:44"), Title: ptr("프런트매터 제목"), Tags: []string{"fm"},
 		Supersedes: []string{"a.md"}, Related: []string{"b.md", "c.md"}, Issues: []string{"AGB-1", "AGB-2"},
 	}
 	if !reflect.DeepEqual(meta, want) {
@@ -60,7 +60,7 @@ func TestValidateDocumentPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	want = DocumentMeta{
-		Kind: DocumentDecision, Date: ptr("2026-10-21"), Title: ptr("인자 제목"), Tags: []string{},
+		Kind: "decision", Date: ptr("2026-10-21"), Title: ptr("인자 제목"), Tags: []string{},
 		Supersedes: []string{"a.md"}, Related: []string{"z.md"}, Issues: []string{"AGB-1", "AGB-2"}, Archived: true, Path: ptr("history/x.md"),
 	}
 	if !reflect.DeepEqual(meta, want) {
@@ -69,7 +69,7 @@ func TestValidateDocumentPrecedence(t *testing.T) {
 
 	// Everything by argument: no front matter needed.
 	meta, err = ValidateDocument(recordName, "본문만", DocumentArgs{Title: ptr("제목"), Kind: ptr("decision"), Supersedes: []string{"a.md"}})
-	if err != nil || meta.Kind != DocumentDecision || *meta.Title != "제목" || !reflect.DeepEqual(meta.Supersedes, []string{"a.md"}) {
+	if err != nil || meta.Kind != "decision" || *meta.Title != "제목" || !reflect.DeepEqual(meta.Supersedes, []string{"a.md"}) {
 		t.Errorf("argument-only meta = %+v, %v", meta, err)
 	}
 
@@ -83,7 +83,7 @@ func TestValidateDocumentPrecedence(t *testing.T) {
 func TestValidateDocumentFallbacks(t *testing.T) {
 	// A record document takes kind and date from its name.
 	meta, err := ValidateDocument(recordName, front("title: 제목"), DocumentArgs{})
-	if err != nil || meta.Kind != DocumentDecision || meta.Date == nil || *meta.Date != "2026-10-20 15:44" {
+	if err != nil || meta.Kind != "decision" || meta.Date == nil || *meta.Date != "2026-10-20 15:44" {
 		t.Errorf("record fallbacks = %+v, %v", meta, err)
 	}
 	// An imported document: kind other, date from the name, title from the first heading.
@@ -96,7 +96,7 @@ func TestValidateDocumentFallbacks(t *testing.T) {
 		{"decisions/2026-10-17-14-30-scope.md", "# 범위 결정\n\n본문", DocumentOther, "2026-10-17 14:30", "범위 결정"},
 		{"decisions/2026-10-17-1430-scope.md", "\xef\xbb\xbf# 범위\n", DocumentOther, "2026-10-17 14:30", "범위"},
 		{"reports/2026-10-12-src-structure.md", "본문만", DocumentOther, "2026-10-12", ""},
-		{"incidents/save-loss.md", "---\nkind: report\ndate: 2026-09-01 10:00\ntitle: 저장 손실\n---\n# 다른 제목", DocumentReport, "2026-09-01 10:00", "저장 손실"},
+		{"incidents/save-loss.md", "---\nkind: report\ndate: 2026-09-01 10:00\ntitle: 저장 손실\n---\n# 다른 제목", "report", "2026-09-01 10:00", "저장 손실"},
 		{"archive/2026-06-x/notes.md", "---\ntitle: 닫히지 않음\n# 제목", DocumentOther, "", "제목"},
 		{"notes.md", "본문", DocumentOther, "", ""},
 		{"2026-13-45-bad.md", "본문", DocumentOther, "", ""},
@@ -255,7 +255,7 @@ func TestDocumentJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := DocumentResult{Document: Document{
-		Project: "AGB", Name: "a.md", Kind: DocumentDecision, Tags: []string{}, State: StateCurrent,
+		Project: "AGB", Name: "a.md", Kind: "decision", Tags: []string{}, State: StateCurrent,
 		Supersedes: []string{}, SupersededBy: []string{}, Related: []string{"XYZ/b.md"}, Issues: []string{"AGB-1"}, UnresolvedRefs: []UnresolvedRef{{RelSupersedes, "x.md"}},
 		SHA256: "9f2c", Size: 6, CreatedAt: at, CreatedBy: "claude", UpdatedAt: at, UpdatedBy: "claude", Location: LocationHistory,
 	}, Warnings: []DocumentWarning{{"supersedes[0]", "unresolved", "없습니다."}}}

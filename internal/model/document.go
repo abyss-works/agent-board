@@ -13,10 +13,6 @@ import (
 type DocumentKind string
 
 const (
-	DocumentDecision       DocumentKind = "decision"
-	DocumentIncident       DocumentKind = "incident"
-	DocumentReport         DocumentKind = "report"
-	DocumentImplementation DocumentKind = "implementation"
 	// DocumentOther is the kind of an imported document that names no other
 	// kind. A record document name never carries it.
 	DocumentOther DocumentKind = "other"

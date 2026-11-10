@@ -124,7 +124,7 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 	}
 	var d model.Document
 	decodeJSON(t, rec, &d)
-	if d.Project != "AGB" || d.Name != apiDocPriority || d.Location != model.LocationHistory || d.Kind != model.DocumentDecision ||
+	if d.Project != "AGB" || d.Name != apiDocPriority || d.Location != model.LocationHistory || d.Kind != "decision" ||
 		d.SHA256 != apiDocSHA(content) || d.Size != len(content) || d.CreatedBy != "claude" || d.UpdatedBy != "claude" || d.CreatedAt != d.UpdatedAt {
 		t.Errorf("document = %+v", d)
 	}
