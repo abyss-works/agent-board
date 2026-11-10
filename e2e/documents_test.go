@@ -268,7 +268,7 @@ func TestDocuments(t *testing.T) {
 			field                          string
 		}{
 			{"name without the pattern", "priority-model.md", "history", ok, "name"},
-			{"unknown kind in the name", "2026-10-20-1544-plan-x.md", "history", documentText("plan", "", "", "", "본문"), "name"},
+			{"kind in the name is not lower case", "2026-10-20-1544-Plan-x.md", "history", documentText("Plan", "", "", "", "본문"), "name"},
 			{"upper case slug", "2026-10-20-1544-decision-Priority.md", "history", ok, "name"},
 			{"slug with an underscore", "2026-10-20-1544-decision-a_b.md", "history", ok, "name"},
 			{"not markdown", "2026-10-20-1544-decision-x.txt", "history", ok, "name"},
@@ -481,7 +481,7 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("page of a search = %+v", hitPage)
 		}
 		for _, bad := range []string{
-			"kind=plan", "kind=decision,plan", "location=history", "state=old", "imported=maybe", "project=agb", "project=A", "project=" + p.Key + ",x", "kind=decision&kind=report",
+			"kind=Plan", "kind=decision,1plan", "kind=" + strings.Repeat("a", 33), "location=history", "state=old", "imported=maybe", "project=agb", "project=A", "project=" + p.Key + ",x", "kind=decision&kind=report",
 			"q=a&q=b", "limit=0", "limit=201", "offset=-1", "sort=date", "status=all", "content=true", "q=" + url.QueryEscape(strings.Repeat("a ", 11)),
 		} {
 			wantError(t, owner.do(t, "GET", "/v1/documents?"+bad, nil), 400, "bad_request")
