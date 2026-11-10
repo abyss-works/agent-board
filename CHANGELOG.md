@@ -6,11 +6,11 @@
 
 ### CLI
 
-- `agb issue comment --location`의 기본 저장소를 현재 폴더의 저장소 하나로 바꿨다. 전에는 그 아래 `project/` 저장소가 있으면 함께 기록했다. 저장소를 더 기록하려면 `--repo`(반복 가능)를 주거나 `.agb.json`에 `"location": {"repos": [".", "service"]}`처럼 적는다. 경로는 `.agb.json`이 있는 폴더 기준 상대 경로이고, 우선순위는 `--repo`, `.agb.json`, 현재 저장소 순이다.
+- `agb issue comment --location`의 기본 저장소를 현재 폴더의 저장소 하나로 바꿨다. 전에는 그 아래 `project/` 저장소가 있으면 함께 기록했다. 저장소를 더 기록하려면 `--repo`(반복 가능)를 주거나 `.agb.json`에 `"location": {"repos": [".", "service"]}`처럼 적는다. 경로는 `.agb.json`이 있는 폴더 기준 상대 경로이고, 우선순위는 `--repo`, `.agb.json`, 현재 저장소 순이다. 옛 CLI는 `.agb.json`의 알 수 없는 키를 거절하므로, 모든 기기의 CLI를 이 판 이상으로 갱신한 뒤에 `location` 키를 넣는다. `--location`이나 `--status done`이 아닌 `issue comment`는 `.agb.json`을 읽지 않는다.
 
 ### 웹
 
-- 개발 서버 프록시를 대상 하나(`/api`)로 줄였다. 대상 주소는 환경변수 `VITE_AGB_PROXY_TARGET`으로 정하고 기본값은 `http://127.0.0.1:8420`이다. 전에 있던 `/api/local`, `/api/staging`, `/api/prod` 경로와 인스턴스 목록은 없앴다.
+- 개발 서버 프록시를 대상 하나(`/api`)로 줄였다. 대상 주소는 환경변수 `AGB_PROXY_TARGET`으로 정하고 기본값은 `http://127.0.0.1:8420`이다. 전에 있던 `/api/local`, `/api/staging`, `/api/prod` 경로와 화면의 인스턴스 선택은 없앴다. 브라우저에 저장된 토큰과 선택한 프로젝트의 저장 키가 바뀌어, 업데이트 뒤 한 번 다시 로그인해야 한다.
 
 ### 스킬
 
