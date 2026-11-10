@@ -1,5 +1,5 @@
 // Package e2e holds the end-to-end suite that exercises a running agb
-// server over HTTP against spec/api.md.
+// server over HTTP against the API that internal/api serves.
 //
 // The suite is behind the build tag e2e so that plain "go test ./..." does
 // not run it. It needs a server reachable at AGB_E2E_URL and its token in
