@@ -11,6 +11,7 @@
 ### CLI
 
 - `agb issue comment --location`의 기본 저장소를 현재 폴더의 저장소 하나로 바꿨다. 전에는 그 아래 `project/` 저장소가 있으면 함께 기록했다. 저장소를 더 기록하려면 `--repo`(반복 가능)를 주거나 `.agb.json`에 `"location": {"repos": [".", "service"]}`처럼 적는다. 경로는 `.agb.json`이 있는 폴더 기준 상대 경로이고, 우선순위는 `--repo`, `.agb.json`, 현재 저장소 순이다. 옛 CLI는 `.agb.json`의 알 수 없는 키를 거절하므로, 모든 기기의 CLI를 이 판 이상으로 갱신한 뒤에 `location` 키를 넣는다. `--location`이나 `--status done`이 아닌 `issue comment`는 `.agb.json`을 읽지 않는다.
+- `agb recall --help`가 문서에서 이슈로 가는 연결을 `issue`가 아니라 `about`으로 적는다. `agb graph`와 출력의 `edge` 값은 전부터 `about`이며 출력은 바뀌지 않는다.
 
 ### 웹
 
