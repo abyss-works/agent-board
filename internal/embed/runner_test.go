@@ -27,16 +27,16 @@ type fakeEmbedder struct {
 
 func newFake() *fakeEmbedder { return &fakeEmbedder{failAfter: -1} }
 
-func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, string, error) {
 	if f.failAfter >= 0 && len(f.calls) >= f.failAfter {
-		return nil, errors.New("embeddings API returned 503")
+		return nil, "", errors.New("embeddings API returned 503")
 	}
 	f.calls = append(f.calls, texts)
 	out := make([][]float32, len(texts))
 	for i, t := range texts {
 		out[i] = fakeVector(t)
 	}
-	return out, nil
+	return out, "", nil
 }
 
 // fakeVector counts the letters a, b and c in the text.

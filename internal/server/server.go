@@ -78,7 +78,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		}
 		index.Load(rows)
 		embedder = &embed.Runner{Store: st, Embedder: client, Model: cfg.Embedding.Model, Interval: cfg.Embedding.Interval, Index: index, Logger: opts.Logger}
-		searcher = &embed.Searcher{Embedder: client, Prefix: cfg.Embedding.QueryPrefix, Index: index}
+		searcher = &embed.Searcher{Embedder: client, Prefix: cfg.Embedding.QueryPrefix, Index: index, Model: cfg.Embedding.Model, Logger: opts.Logger}
 	}
 	var web fs.FS
 	if cfg.WebDir != "" {

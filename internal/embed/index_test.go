@@ -1,8 +1,12 @@
 package embed
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,9 +48,56 @@ func TestSearcherEmbedsTheQueryWithThePrefix(t *testing.T) {
 	}
 }
 
+// logged runs one search and returns the log lines it wrote.
+func logged(e Embedder, timeout time.Duration, query string) []map[string]any {
+	var buf bytes.Buffer
+	s := &Searcher{Embedder: e, Model: "m1", Index: oneSourceIndex(), Timeout: timeout, Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+	s.Search(context.Background(), query, 5, nil)
+	var lines []map[string]any
+	for _, l := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte{10}) {
+		var m map[string]any
+		if json.Unmarshal(l, &m) == nil {
+			lines = append(lines, m)
+		}
+	}
+	return lines
+}
+
+func TestSearcherLogsOneLinePerQueryEmbedding(t *testing.T) {
+	for name, tc := range map[string]struct {
+		e      Embedder
+		result string
+	}{
+		"ok":      {&scripted{}, "ok"},
+		"error":   {failing{}, "error"},
+		"timeout": {&hanging{}, "timeout"},
+	} {
+		lines := logged(tc.e, 20*time.Millisecond, "secret-query-text")
+		if len(lines) != 1 {
+			t.Fatalf("%s: %d log lines", name, len(lines))
+		}
+		l := lines[0]
+		if l["level"] != "INFO" || l["purpose"] != "query" || l["model"] != "m1" || l["result"] != tc.result {
+			t.Errorf("%s: line = %v", name, l)
+		}
+		if _, ok := l["duration_ms"]; !ok {
+			t.Errorf("%s: no duration_ms in %v", name, l)
+		}
+		if p, _ := l["response_id"].(string); (name == "ok") != (p == "p") {
+			t.Errorf("%s: response_id = %q", name, p)
+		}
+		raw, _ := json.Marshal(l)
+		if strings.Contains(string(raw), "secret-query-text") {
+			t.Errorf("%s: log holds the query: %s", name, raw)
+		}
+	}
+}
+
 type failing struct{}
 
-func (failing) Embed(context.Context, []string) ([][]float32, error) { return nil, errors.New("x") }
+func (failing) Embed(context.Context, []string) ([][]float32, string, error) {
+	return nil, "", errors.New("x")
+}
 
 // scripted answers each call with the next entry of errs; nil succeeds with a
 // vector matching the index.
@@ -55,13 +106,13 @@ type scripted struct {
 	calls int
 }
 
-func (s *scripted) Embed(ctx context.Context, _ []string) ([][]float32, error) {
+func (s *scripted) Embed(ctx context.Context, _ []string) ([][]float32, string, error) {
 	i := s.calls
 	s.calls++
 	if i < len(s.errs) && s.errs[i] != nil {
-		return nil, s.errs[i]
+		return nil, "", s.errs[i]
 	}
-	return [][]float32{{1, 0, 0}}, nil
+	return [][]float32{{1, 0, 0}}, "p", nil
 }
 
 func oneSourceIndex() *Index {
@@ -81,10 +132,10 @@ func TestSearcherEmbedsTheQueryOnceAndReportsAFailure(t *testing.T) {
 // hanging blocks until its context ends.
 type hanging struct{ calls int }
 
-func (h *hanging) Embed(ctx context.Context, _ []string) ([][]float32, error) {
+func (h *hanging) Embed(ctx context.Context, _ []string) ([][]float32, string, error) {
 	h.calls++
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return nil, "", ctx.Err()
 }
 
 func TestSearcherStopsWaitingAfterTheTimeoutWithoutRetrying(t *testing.T) {

@@ -29,14 +29,14 @@ type conceptEmbedder struct {
 
 var concepts = [][]string{{"잠금", "락", "lock"}, {"큐", "queue"}, {"배포", "release"}}
 
-func (c *conceptEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+func (c *conceptEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, string, error) {
 	c.calls++
 	if c.hang {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, "", ctx.Err()
 	}
 	if c.fail {
-		return nil, errors.New("embeddings API returned 503")
+		return nil, "", errors.New("embeddings API returned 503")
 	}
 	out := make([][]float32, len(texts))
 	for i, t := range texts {
@@ -53,7 +53,7 @@ func (c *conceptEmbedder) Embed(ctx context.Context, texts []string) ([][]float3
 	if len(texts) == 1 {
 		c.queries = append(c.queries, texts[0])
 	}
-	return out, nil
+	return out, "", nil
 }
 
 // hybridEnv is an environment with the search by meaning on, holding two

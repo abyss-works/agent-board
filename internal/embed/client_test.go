@@ -3,11 +3,13 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testKey = "sk-test-key-0123456789" // dummy
@@ -28,7 +30,7 @@ func TestClientEmbed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	vecs, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
+	vecs, id, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +39,34 @@ func TestClientEmbed(t *testing.T) {
 	}
 	if len(vecs) != 2 || !slices.Equal(vecs[0], []float32{1, 0.5}) || !slices.Equal(vecs[1], []float32{0, 2}) {
 		t.Errorf("vectors = %v", vecs)
+	}
+	if id != "" {
+		t.Errorf("response id = %q, want empty when the response has none", id)
+	}
+}
+
+func TestClientEmbedReadsTheResponseID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"embd-1","data":[{"index":0,"embedding":[1]}]}`))
+	}))
+	defer srv.Close()
+	_, id, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a"})
+	if err != nil || id != "embd-1" {
+		t.Errorf("response id %q, err %v", id, err)
+	}
+}
+
+// TestClientTimeoutIsLoggedAsTimeout runs the real client against a server that
+// never answers, so the error chain the client returns is what decides the result.
+func TestClientTimeoutIsLoggedAsTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body) // the server notices a closed connection only once the body is read
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	lines := logged(NewClient(srv.URL, testKey, "m"), 50*time.Millisecond, "q")
+	if len(lines) != 1 || lines[0]["result"] != "timeout" {
+		t.Errorf("lines = %v", lines)
 	}
 }
 
@@ -59,14 +89,14 @@ func TestClientEmbedErrors(t *testing.T) {
 			w.WriteHeader(tc.status)
 			w.Write([]byte(tc.body))
 		}))
-		_, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
+		_, _, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
 		srv.Close()
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), testKey) {
 			t.Errorf("%s: err = %v, want it to contain %q and not the key", name, err, tc.want)
 		}
 	}
 	// An unreachable server must not leak the key either.
-	if _, err := NewClient("http://127.0.0.1:1", testKey, "m").Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), testKey) {
+	if _, _, err := NewClient("http://127.0.0.1:1", testKey, "m").Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), testKey) {
 		t.Errorf("unreachable: err = %v", err)
 	}
 }
