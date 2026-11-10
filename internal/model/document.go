@@ -12,11 +12,9 @@ import (
 // matter both name it.
 type DocumentKind string
 
-const (
-	// DocumentOther is the kind of an imported document that names no other
-	// kind. A record document name never carries it.
-	DocumentOther DocumentKind = "other"
-)
+// DocumentOther is the kind of an imported document that names no other
+// kind. A record document name never carries it.
+const DocumentOther DocumentKind = "other"
 
 // MaxDocumentKindLen is the longest kind in bytes.
 const MaxDocumentKindLen = 32

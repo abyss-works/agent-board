@@ -8,8 +8,7 @@ import (
 	"sync"
 )
 
-// Memory is an in-process ObjectStore for tests. The server runs no backup
-// when no bucket is configured.
+// Memory is an in-process ObjectStore for tests.
 type Memory struct {
 	mu   sync.Mutex
 	objs map[string][]byte
