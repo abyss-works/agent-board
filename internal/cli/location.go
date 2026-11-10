@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -19,17 +20,18 @@ const locationHeading = "## 작업 위치"
 const maxLocationFiles = 50
 
 // locationRepos are the repositories a location records: the ones given with
-// --repo, else the location.repos of the .agb.json at the top of the current
-// repository (relative to that folder), else the current folder's repository.
+// --repo, else the location.repos of the nearest .agb.json above the current
+// folder (relative to the folder that holds it), else the current folder's
+// repository.
 func locationRepos(flagged []string) ([]string, error) {
 	if len(flagged) > 0 {
 		return flagged, nil
 	}
-	top, err := git(".", "rev-parse", "--show-toplevel")
+	wd, err := os.Getwd()
 	if err != nil {
-		return []string{"."}, nil
+		return nil, err
 	}
-	cfg, err := loadRepoConfig(top)
+	root, cfg, err := fileRepo(wd)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +40,7 @@ func locationRepos(flagged []string) ([]string, error) {
 	}
 	repos := make([]string, len(cfg.Location.Repos))
 	for i, r := range cfg.Location.Repos {
-		repos[i] = filepath.Join(top, filepath.FromSlash(r))
+		repos[i] = filepath.Join(root, filepath.FromSlash(r))
 	}
 	return repos, nil
 }

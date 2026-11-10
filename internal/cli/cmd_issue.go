@@ -692,9 +692,13 @@ var issueCommentCmd = &command{
 			return err
 		}
 		c := a.newClient(s)
-		dirs, err := locationRepos(repos)
-		if err != nil {
-			return err
+		// The repositories are looked up only when the comment records a
+		// location or links merges, so a plain comment never reads .agb.json.
+		var dirs []string
+		if location || len(repos) > 0 || status == string(model.StatusDone) {
+			if dirs, err = locationRepos(repos); err != nil {
+				return err
+			}
 		}
 		if location || len(repos) > 0 {
 			loc, err := workLocation(s.ClientHost, dirs)
