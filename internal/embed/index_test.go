@@ -83,8 +83,8 @@ func TestSearcherLogsOneLinePerQueryEmbedding(t *testing.T) {
 		if _, ok := l["duration_ms"]; !ok {
 			t.Errorf("%s: no duration_ms in %v", name, l)
 		}
-		if p, _ := l["provider"].(string); (name == "ok") != (p == "p") {
-			t.Errorf("%s: provider = %q", name, p)
+		if p, _ := l["response_id"].(string); (name == "ok") != (p == "p") {
+			t.Errorf("%s: response_id = %q", name, p)
 		}
 		raw, _ := json.Marshal(l)
 		if strings.Contains(string(raw), "secret-query-text") {

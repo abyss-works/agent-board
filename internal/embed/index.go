@@ -125,8 +125,8 @@ func (s *Searcher) Search(ctx context.Context, query string, n int, allowed map[
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Timeout, queryTimeout))
 	defer cancel()
 	start := time.Now()
-	vecs, provider, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
-	s.logEmbed(provider, time.Since(start), err)
+	vecs, responseID, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
+	s.logEmbed(responseID, time.Since(start), err)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (s *Searcher) Search(ctx context.Context, query string, n int, allowed map[
 
 // logEmbed writes one line per query embedding. It holds no query text, vector
 // or error text; a failure is described by the caller's own log.
-func (s *Searcher) logEmbed(provider string, d time.Duration, err error) {
+func (s *Searcher) logEmbed(responseID string, d time.Duration, err error) {
 	if s.Logger == nil {
 		return
 	}
@@ -146,5 +146,5 @@ func (s *Searcher) logEmbed(provider string, d time.Duration, err error) {
 	case err != nil:
 		result = "error"
 	}
-	s.Logger.Info("query embedding", "purpose", "query", "model", s.Model, "provider", provider, "duration_ms", d.Milliseconds(), "result", result)
+	s.Logger.Info("query embedding", "purpose", "query", "model", s.Model, "response_id", responseID, "duration_ms", d.Milliseconds(), "result", result)
 }
