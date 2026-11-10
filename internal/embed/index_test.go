@@ -70,50 +70,38 @@ func oneSourceIndex() *Index {
 	return &x
 }
 
-func TestSearcherRetriesTheQueryOnceAfterAFailure(t *testing.T) {
-	e := &scripted{errs: []error{errors.New("deadline")}}
-	got, err := (&Searcher{Embedder: e, Index: oneSourceIndex()}).Search(context.Background(), "q", 5, nil)
-	if err != nil || len(got) != 1 || e.calls != 2 {
-		t.Errorf("got %+v, %v, calls %d", got, err, e.calls)
-	}
-}
-
-func TestSearcherReportsTheErrorAfterTwoFailures(t *testing.T) {
+func TestSearcherEmbedsTheQueryOnceAndReportsAFailure(t *testing.T) {
 	e := &scripted{errs: []error{errors.New("a"), errors.New("b")}}
 	_, err := (&Searcher{Embedder: e, Index: oneSourceIndex()}).Search(context.Background(), "q", 5, nil)
-	if err == nil || err.Error() != "b" || e.calls != 2 {
+	if err == nil || err.Error() != "a" || e.calls != 1 {
 		t.Errorf("err %v, calls %d", err, e.calls)
 	}
 }
 
-func TestSearcherDoesNotRetryWhenTheRequestIsDone(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	e := &scripted{errs: []error{context.Canceled}}
-	_, err := (&Searcher{Embedder: e, Index: oneSourceIndex()}).Search(ctx, "q", 5, nil)
-	if err == nil || e.calls != 1 {
-		t.Errorf("err %v, calls %d", err, e.calls)
-	}
-}
-
-// hanging blocks until its context ends on the first call and succeeds after.
+// hanging blocks until its context ends.
 type hanging struct{ calls int }
 
 func (h *hanging) Embed(ctx context.Context, _ []string) ([][]float32, error) {
 	h.calls++
-	if h.calls == 1 {
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	return [][]float32{{1, 0, 0}}, nil
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
-func TestSearcherGivesEachAttemptItsOwnTimeout(t *testing.T) {
+func TestSearcherStopsWaitingAfterTheTimeoutWithoutRetrying(t *testing.T) {
 	h := &hanging{}
 	s := &Searcher{Embedder: h, Index: oneSourceIndex(), Timeout: 20 * time.Millisecond}
+	_, err := s.Search(context.Background(), "q", 5, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || h.calls != 1 {
+		t.Errorf("err %v, calls %d", err, h.calls)
+	}
+}
+
+func TestSearcherAnswersWithinTheTimeout(t *testing.T) {
+	e := &scripted{}
+	s := &Searcher{Embedder: e, Index: oneSourceIndex(), Timeout: time.Second}
 	got, err := s.Search(context.Background(), "q", 5, nil)
-	if err != nil || len(got) != 1 || h.calls != 2 {
-		t.Errorf("got %+v, %v, calls %d", got, err, h.calls)
+	if err != nil || len(got) != 1 || e.calls != 1 {
+		t.Errorf("got %+v, %v, calls %d", got, err, e.calls)
 	}
 }
 
