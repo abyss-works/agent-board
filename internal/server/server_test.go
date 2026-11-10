@@ -15,6 +15,7 @@ import (
 
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/wsk0715/agent-board/internal/store"
 )
 
 const testToken = "test-token-0123456789abcdef0123456789" // dummy
@@ -96,6 +97,9 @@ func TestStartFailureClosesStore(t *testing.T) {
 	}
 	if _, err := srv.Start(); err == nil {
 		t.Fatal("Start succeeded on an address already in use")
+	}
+	if _, _, err := srv.store.ListProjects(context.Background(), store.ProjectFilter{}); err == nil {
+		t.Fatal("store is still open after a failed Start")
 	}
 	if err := os.Remove(filepath.Join(dataDir, "agb.db")); err != nil {
 		t.Fatalf("database file is still held after a failed Start: %v", err)
