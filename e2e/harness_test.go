@@ -115,15 +115,21 @@ func loginAgents() error {
 // child never repeats. It returns the exit code: the first failing pass's
 // code, or 0.
 //
-// go test kills only this process, at -test.timeout plus a minute (plus a
-// tenth of the timeout beyond ten minutes). A child outlives that kill and
-// keeps sending requests to the server. So this process ends its children
-// itself, 30 seconds after the timeout: a child whose own timer fired at the
-// timeout has by then printed its "test timed out" report and the goroutine
-// dump, and only a child that still runs is killed.
+// go test kills only this process, at -test.timeout plus the larger of a
+// minute and a tenth of the timeout. A child outlives that kill and keeps
+// sending requests to the server. So each child gets, as its own
+// -test.timeout, the time left until this process's deadline, which is the
+// timeout counted from this process's start. A child that runs out of time
+// prints its "test timed out" report and the goroutine dump itself. As a
+// backstop, this process kills a child still running 30 seconds after the
+// deadline. Once no time is left, it starts no further pass.
 func repeat(n int) int {
 	ctx := context.Background()
+	var timeout time.Duration
+	deadline := time.Now()
 	if d, _ := flag.Lookup("test.timeout").Value.(flag.Getter).Get().(time.Duration); d > 0 {
+		timeout = d
+		deadline = deadline.Add(d)
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d+30*time.Second)
 		defer cancel()
@@ -131,15 +137,24 @@ func repeat(n int) int {
 	args := childArgs(os.Args[1:])
 	failfast, _ := strconv.ParseBool(flag.Lookup("test.failfast").Value.String())
 	return runPasses(n, failfast, func(pass int) (int, bool) {
-		cmd := exec.CommandContext(ctx, os.Args[0], args...)
+		passArgs := args
+		if timeout > 0 {
+			left := time.Until(deadline).Truncate(time.Millisecond)
+			if left <= 0 {
+				fmt.Fprintf(os.Stderr, "e2e: timed out before pass %d; the remaining passes are not run\n", pass)
+				return 1, true
+			}
+			passArgs = withTimeout(args, left)
+		}
+		cmd := exec.CommandContext(ctx, os.Args[0], passArgs...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		err := cmd.Run()
+		if err == nil {
+			return 0, false
+		}
 		if ctx.Err() != nil {
 			fmt.Fprintf(os.Stderr, "e2e: timed out in pass %d; the remaining passes are not run\n", pass)
 			return 1, true
-		}
-		if err == nil {
-			return 0, false
 		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode(), false

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // This file has no e2e build tag: its tests need no server, so go test ./...
@@ -41,6 +42,26 @@ func childArgs(args []string) []string {
 		}
 	}
 	return out
+}
+
+// withTimeout returns args with -test.timeout set to d, leaving args
+// unchanged. It handles the forms -test.timeout=X, --test.timeout=X and the
+// two with a separate value, and appends the flag when args has none.
+func withTimeout(args []string, d time.Duration) []string {
+	v := d.String()
+	out := append([]string(nil), args...)
+	for i, a := range out {
+		a = strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-")
+		switch {
+		case strings.HasPrefix(a, "test.timeout="):
+			out[i] = "-test.timeout=" + v
+			return out
+		case a == "test.timeout" && i+1 < len(out):
+			out[i+1] = v
+			return out
+		}
+	}
+	return append(out, "-test.timeout="+v)
 }
 
 func TestChildArgs(t *testing.T) {
@@ -98,6 +119,33 @@ func TestRunPasses(t *testing.T) {
 			})
 			if got != tc.wantCode || calls != tc.wantCalls {
 				t.Fatalf("code=%d calls=%d, want %d and %d", got, calls, tc.wantCode, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestWithTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		in, want []string
+	}{
+		{"equals form", []string{"-test.v", "-test.timeout=10m0s", "-test.run=X"}, []string{"-test.v", "-test.timeout=1m30s", "-test.run=X"}},
+		{"double dash", []string{"--test.timeout=10m0s"}, []string{"-test.timeout=1m30s"}},
+		{"space form", []string{"-test.timeout", "10m0s", "-test.v"}, []string{"-test.timeout", "1m30s", "-test.v"}},
+		{"double dash space form", []string{"--test.timeout", "10m0s"}, []string{"--test.timeout", "1m30s"}},
+		{"absent", []string{"-test.v"}, []string{"-test.v", "-test.timeout=1m30s"}},
+		{"empty", nil, []string{"-test.timeout=1m30s"}},
+		{"trailing flag without value", []string{"-test.timeout"}, []string{"-test.timeout", "-test.timeout=1m30s"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			in := append([]string(nil), tc.in...)
+			got := withTimeout(in, 90*time.Second)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("withTimeout(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if !reflect.DeepEqual(in, tc.in) {
+				t.Fatalf("withTimeout changed its input: %q", in)
 			}
 		})
 	}
