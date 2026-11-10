@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,5 +74,30 @@ func TestServerStartsServesAndStops(t *testing.T) {
 	}
 	if _, err := http.Get("http://" + addr + "/v1/health"); err == nil {
 		t.Error("server still accepting connections after Shutdown")
+	}
+}
+
+func TestStartFailureClosesStore(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg := &config.Config{
+		Addr:    busy.Addr().String(),
+		DataDir: dataDir,
+		Token:   testToken,
+		Actors:  []model.Actor{{ID: "owner", Kind: model.ActorUser}},
+	}
+	srv, err := New(cfg, Options{Version: "t", Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Start(); err == nil {
+		t.Fatal("Start succeeded on an address already in use")
+	}
+	if err := os.Remove(filepath.Join(dataDir, "agb.db")); err != nil {
+		t.Fatalf("database file is still held after a failed Start: %v", err)
 	}
 }
