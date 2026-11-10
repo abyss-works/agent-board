@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"flag"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -695,9 +696,16 @@ var issueCommentCmd = &command{
 		// The repositories are looked up only when the comment records a
 		// location or links merges, so a plain comment never reads .agb.json.
 		var dirs []string
-		if location || len(repos) > 0 || status == string(model.StatusDone) {
+		if location || len(repos) > 0 {
 			if dirs, err = locationRepos(repos); err != nil {
 				return err
+			}
+		} else if status == string(model.StatusDone) {
+			// Only the merge search needs the repositories here, so an
+			// unreadable .agb.json is a warning and the current one is used.
+			if dirs, err = locationRepos(nil); err != nil {
+				fmt.Fprintf(a.Stderr, "agb: 경고: 저장소 설정을 읽지 못해 현재 저장소로 병합을 찾습니다: %v\n", err)
+				dirs = []string{"."}
 			}
 		}
 		if location || len(repos) > 0 {

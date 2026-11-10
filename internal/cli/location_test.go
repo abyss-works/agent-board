@@ -143,3 +143,24 @@ func TestPlainCommentIgnoresBrokenRepoConfig(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 }
+
+func TestDoneCommentWarnsOnBrokenRepoConfig(t *testing.T) {
+	repo := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".agb.json"), []byte(`{broken`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	srv := newFakeServer(t)
+	srv.on("PATCH", "/v1/issues/CLI-1", canned{status: 200, body: `{"key":"CLI-1","project":"CLI","status":"done","version":2}`})
+	srv.on("POST", "/v1/issues/CLI-1/comments", canned{status: 201, body: `{"id":1,"issue":"CLI-1","project":"CLI","kind":"commented","actor":"claude","session_id":"s","client_host":"desk","at":"2026-10-17T05:46:06.000Z","changes":null,"summary":"","body":"x"}`})
+	h := newHarness(t, srv, false)
+	if code := h.run("issue", "comment", "CLI-1", "--status", "done", "--body", "x"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "경고") {
+		t.Errorf("no warning: %s", h.stderr)
+	}
+	if code := h.run("issue", "comment", "CLI-1", "--location", "--body", "x"); code == 0 {
+		t.Error("--location with a broken .agb.json succeeded")
+	}
+}
