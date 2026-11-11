@@ -35,7 +35,9 @@ var setupClaudeCmd = &command{
 	usage: `사용법: agb setup claude [--actor <ID>]
 
 Claude Code 에 agb 를 연결합니다. 설치를 실행하는 행위자가 있어야 합니다(--actor, AGB_ACTOR, 설정 파일의 actor 순서).
-행위자가 없거나 그 행위자가 쓸 토큰이 없으면 아무것도 하지 않습니다. 토큰은 agb login --actor <ID> 로 받습니다.
+훅은 이 셸의 환경변수 없이 실행되므로, 그 행위자가 쓸 토큰과 서버 주소가 설정 파일에 있어야 합니다(AGB_TOKEN,
+AGB_URL, --url 은 세지 않습니다). 행위자, 토큰, 주소 중 하나가 없으면 아무것도 하지 않습니다. 토큰은
+agb login --actor <ID> 로 받고, 주소는 agb config set url <주소> 로 저장합니다.
 
 다음을 차례로 하고, 하나가 실패하면 거기서 멈춥니다.
 
@@ -45,8 +47,9 @@ Claude Code 에 agb 를 연결합니다. 설치를 실행하는 행위자가 있
                       다른 폴더이면 거기에도 씁니다. ~/.claude/skills/tool-agb 가 링크이면 그대로 둡니다.
 4. 훅 행위자 저장:    설정 파일의 hook_actors 에 ` + claudeTool + ` 의 값으로 이 실행의 행위자를 씁니다. 훅만 이 값을 쓰고,
                       다른 명령의 행위자는 바뀌지 않습니다.
-5. 훅 점검:           훅과 같은 조회를 현재 폴더에서 한 번 하고 결과를 "훅 점검:" 한 줄로 알립니다. 세션에 보일
-                      메시지 건수이거나, 보이지 않을 이유(프로젝트를 판정할 수 없음, 서버에 닿지 않음 등)입니다.
+5. 훅 점검:           훅과 같은 조회를 현재 폴더에서 한 번 하고 결과를 "훅 점검:" 한 줄로 알립니다. 환경변수와
+                      옵션 없이 설정 파일의 값(훅 행위자, 토큰, 주소)만으로 조회합니다. 세션에 보일 메시지
+                      건수이거나, 보이지 않을 이유(프로젝트를 판정할 수 없음, 서버에 닿지 않음 등)입니다.
                       점검 결과는 종료 코드를 바꾸지 않습니다.
 
 플러그인은 세션을 시작할 때 agb hook session-start --tool ` + claudeTool + ` 를 불러 확인하지 않은 메시지를 알립니다.
@@ -86,8 +89,13 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		if !model.ValidActorID(actor) {
 			return usageErrorf("행위자 ID 형식이 아닙니다 (소문자와 숫자 1~32자).")
 		}
-		if err := (Settings{Actor: actor, Token: tokenOf(actor, a.Getenv, file)}).requireAuth(); err != nil {
-			return err
+		// The agent tool runs the hook without the environment of this
+		// shell, so the hook gets its token and its address from the file.
+		if tokenOf(actor, noEnv, file) == "" {
+			return usageErrorf("설정 파일에 행위자 %s 가 쓸 토큰이 없습니다. 훅은 이 셸의 환경변수 없이 실행되므로 AGB_TOKEN 을 쓸 수 없습니다. `agb login --actor %s`로 토큰을 설정 파일에 받은 뒤 다시 실행하세요.", actor, actor)
+		}
+		if file.URL == "" {
+			return usageErrorf("설정 파일에 서버 주소가 없습니다. 훅은 이 셸의 환경변수 없이 실행되므로 AGB_URL 과 --url 을 쓸 수 없습니다. `agb config set url <주소>`로 저장한 뒤 다시 실행하세요.")
 		}
 		run := a.RunClaude
 		if run == nil {
@@ -129,13 +137,20 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 			return err
 		}
 		fmt.Fprintln(a.Stdout, "새 Claude Code 세션부터 적용됩니다.")
-		// The check tells what a session started in this folder gets. Its
-		// result does not change how the setup ends.
-		_, summary := a.unreadNotice(ctx, g, claudeTool, hookStdin{})
+		// The check tells what a session started in this folder gets: it
+		// asks as the hook does when neither the environment nor a flag
+		// gives it anything, with the config file alone. Its result does
+		// not change how the setup ends.
+		hook := *a
+		hook.Getenv = noEnv
+		_, summary := hook.unreadNotice(ctx, &globals{config: g.config}, claudeTool, hookStdin{})
 		_, err = fmt.Fprintf(a.Stdout, "훅 점검: %s\n", summary)
 		return err
 	},
 }
+
+// noEnv is an environment without variables.
+func noEnv(string) string { return "" }
 
 // runClaude runs the claude executable on PATH and returns what it wrote.
 func runClaude(ctx context.Context, args ...string) ([]byte, error) {

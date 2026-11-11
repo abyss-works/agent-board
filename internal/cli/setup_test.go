@@ -33,14 +33,26 @@ func (f *fakeClaude) run(ctx context.Context, args ...string) ([]byte, error) {
 
 // newSetupHarness has a home of its own: the default skills folder and the
 // skills folder of Claude Code are two folders below it, neither made yet.
+// The working folder has no .agb.json above it.
 func newSetupHarness(t *testing.T) (*harness, *fakeClaude) {
 	t.Helper()
+	t.Chdir(t.TempDir())
 	return withFakeClaude(t, newHarness(t, nil, false))
 }
 
-// withFakeClaude gives h a home of its own and a fake claude executable.
+// withFakeClaude gives h a home of its own, a fake claude executable and a
+// config file with what a hook needs besides its actor: the address of the
+// harness's server, or one that nothing listens on, and a token of the actor
+// claude.
 func withFakeClaude(t *testing.T, h *harness) (*harness, *fakeClaude) {
 	t.Helper()
+	url := h.env["AGB_URL"]
+	if url == "" {
+		url = "http://127.0.0.1:1"
+	}
+	if err := saveConfig(h.app.ConfigPath, Config{URL: url, Tokens: map[string]string{"claude": "agb_file-token-of-claude"}}); err != nil {
+		t.Fatal(err)
+	}
 	home := t.TempDir()
 	h.app.SkillsDir = filepath.Join(home, ".agents", "skills")
 	h.app.ClaudeSkillsDir = filepath.Join(home, ".claude", "skills")
@@ -218,10 +230,10 @@ func TestSetupUsage(t *testing.T) {
 }
 
 // ranNothing reports whether a run of agb setup claude stopped before its
-// first step: no call of claude, no skill, no config file.
+// first step: no call of claude, no skill, no hook actor.
 func ranNothing(h *harness, f *fakeClaude) bool {
-	_, err := os.Stat(h.app.ConfigPath)
-	return len(f.calls) == 0 && !installed(h.app.SkillsDir) && !installed(h.app.ClaudeSkillsDir) && os.IsNotExist(err)
+	cfg, err := loadConfig(h.app.ConfigPath)
+	return len(f.calls) == 0 && !installed(h.app.SkillsDir) && !installed(h.app.ClaudeSkillsDir) && err == nil && cfg.HookActors == nil
 }
 
 func TestSetupClaudeNeedsAnActor(t *testing.T) {
@@ -243,22 +255,82 @@ func TestSetupClaudeNeedsAnActor(t *testing.T) {
 	}
 }
 
-func TestSetupClaudeNeedsATokenOfTheActor(t *testing.T) {
+// The hook runs without the environment of the shell that ran the setup, so
+// a token or an address that only the environment holds does not count.
+func TestSetupClaudeNeedsATokenInTheConfigFile(t *testing.T) {
 	h, f := newSetupHarness(t)
-	delete(h.env, "AGB_TOKEN")
-	if code := h.run("setup", "claude"); code == 0 || !strings.Contains(h.stderr.String(), "agb login --actor claude") {
+	saveConfig(h.app.ConfigPath, Config{URL: "http://127.0.0.1:1"})
+	if code := h.run("setup", "claude"); code != 2 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	if !ranNothing(h, f) {
-		t.Errorf("a step ran without a token: calls=%v", f.calls)
+	for _, want := range []string{"AGB_TOKEN", "agb login --actor claude"} {
+		if !strings.Contains(h.stderr.String(), want) {
+			t.Errorf("stderr lacks %q: %s", want, h.stderr)
+		}
 	}
-	// The token of another actor does not count; the actor's own does.
-	saveConfig(h.app.ConfigPath, Config{Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"}})
-	if code := h.run("setup", "claude"); code == 0 || len(f.calls) != 0 {
+	if !ranNothing(h, f) {
+		t.Errorf("a step ran without a token in the file: calls=%v", f.calls)
+	}
+	// The token of another actor does not count; the actor's own does, and so does the shared token.
+	saveConfig(h.app.ConfigPath, Config{URL: "http://127.0.0.1:1", Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"}})
+	if code := h.run("setup", "claude"); code != 2 || !ranNothing(h, f) {
 		t.Errorf("token of another actor: code=%d calls=%v", code, f.calls)
 	}
 	if code := h.run("setup", "claude", "--actor", "reviewer"); code != 0 || len(f.calls) != 2 {
 		t.Errorf("token of the actor: code=%d calls=%v stderr=%s", code, f.calls, h.stderr)
+	}
+	saveConfig(h.app.ConfigPath, Config{URL: "http://127.0.0.1:1", Token: "shared-token-value"})
+	if code := h.run("setup", "claude"); code != 0 {
+		t.Errorf("shared token: code=%d stderr=%s", code, h.stderr)
+	}
+}
+
+func TestSetupClaudeNeedsTheAddressInTheConfigFile(t *testing.T) {
+	h, f := newSetupHarness(t)
+	h.env["AGB_URL"] = "http://127.0.0.1:1"
+	saveConfig(h.app.ConfigPath, Config{Tokens: map[string]string{"claude": "agb_file-token-of-claude"}})
+	for _, args := range [][]string{{"setup", "claude"}, {"setup", "claude", "--url", "http://127.0.0.1:1"}} {
+		if code := h.run(args...); code != 2 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, h.stderr)
+		}
+		for _, want := range []string{"AGB_URL", "agb config set url"} {
+			if !strings.Contains(h.stderr.String(), want) {
+				t.Errorf("%v: stderr lacks %q: %s", args, want, h.stderr)
+			}
+		}
+		if !ranNothing(h, f) {
+			t.Errorf("%v: a step ran without an address in the file: calls=%v", args, f.calls)
+		}
+	}
+}
+
+// The check asks what the hook will ask: with the address, the token and the
+// session ID that the config file gives, whatever the environment holds.
+func TestSetupClaudeChecksTheHookWithoutTheEnvironment(t *testing.T) {
+	mh, srv := newMsgHarness(t, false)
+	h, _ := withFakeClaude(t, mh)
+	other := newFakeServer(t)
+	other.on("GET", "/v1/projects/CLI/messages", canned{body: `{"items":[],"total":0,"limit":50,"offset":0}`})
+	h.env["AGB_URL"] = other.srv.URL
+	t.Chdir(hookRepo(t, "CLI"))
+	if code := h.run("setup", "claude", "--url", other.srv.URL, "--session-id", "fromflag"); code != 0 || h.stderr.Len() != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if !strings.Contains(h.stdout.String(), "훅 점검: 프로젝트 CLI의 확인하지 않은 메시지 2건\n") {
+		t.Errorf("stdout = %s", h.stdout)
+	}
+	if len(other.reqs) != 0 || len(srv.reqs) != 1 {
+		t.Fatalf("requests: config file's server %d, environment's server %d", len(srv.reqs), len(other.reqs))
+	}
+	req := srv.last()
+	if got := req.Header.Get("Authorization"); got != "Bearer agb_file-token-of-claude" {
+		t.Errorf("Authorization = %q", got)
+	}
+	if got := req.Header.Get("X-Session-Id"); got != defaultSessionID(noon) {
+		t.Errorf("X-Session-Id = %q", got)
+	}
+	if got := req.Header.Get("X-Actor"); got != "claude" {
+		t.Errorf("X-Actor = %q", got)
 	}
 }
 
@@ -266,7 +338,7 @@ func TestSetupClaudeSavesTheHookActor(t *testing.T) {
 	h, f := newSetupHarness(t)
 	t.Chdir(t.TempDir())
 	before := Config{
-		Token: "shared-token-value", Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"},
+		URL: "http://127.0.0.1:1", Token: "shared-token-value", Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"},
 		SessionID: "keep", ClientHost: "desk2", HookActors: map[string]string{"another": "base"},
 	}
 	if err := saveConfig(h.app.ConfigPath, before); err != nil {
@@ -310,8 +382,8 @@ func TestSetupClaudeKeepsTheHookActorWhenAStepFails(t *testing.T) {
 	if code := h.run("setup", "claude"); code != 1 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
-	if _, err := os.Stat(h.app.ConfigPath); !os.IsNotExist(err) {
-		t.Errorf("the config file was written: %v", err)
+	if cfg, err := loadConfig(h.app.ConfigPath); err != nil || cfg.HookActors != nil {
+		t.Errorf("config = %+v (%v)", cfg, err)
 	}
 }
 
