@@ -320,7 +320,7 @@ func (a *App) helpFor(path []string) int {
 	for _, p := range path {
 		next := cmd.find(p)
 		if next == nil {
-			fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n", strings.Join(path, " "))
+			fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n%s", strings.Join(path, " "), cmd.suggest(name, p))
 			return 2
 		}
 		cmd, name = next, name+" "+p

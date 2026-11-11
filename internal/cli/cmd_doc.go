@@ -232,17 +232,33 @@ var docListCmd = &command{
 }
 
 // docGetTarget reads the project key and the file name of agb doc get: the key
-// is the --project flag or the first of two positional arguments, and both
-// given must be the same key.
-func docGetTarget(flagProject string, pos []string) (key, name string, err error) {
-	if flagProject == "" {
+// is the --project flag or the first of two positional arguments, and every key
+// given must be the same one, for the command takes a single project.
+func docGetTarget(flagProjects []string, pos []string) (key, name string, err error) {
+	for _, p := range flagProjects[min(1, len(flagProjects)):] {
+		if p != flagProjects[0] {
+			return "", "", usageErrorf("프로젝트 키가 둘입니다: --project %s, --project %s. 하나만 주세요.", flagProjects[0], p)
+		}
+	}
+	oneKey := func(k string) (string, error) {
+		if strings.Contains(k, ",") {
+			return "", usageErrorf("프로젝트 하나만 받습니다: %s", k)
+		}
+		return k, nil
+	}
+	if len(flagProjects) == 0 {
 		switch {
 		case len(pos) < 2:
 			return "", "", usageErrorf("<KEY>와 <파일명> 인자가 필요합니다. 키는 --project 로 줄 수도 있습니다.")
 		case len(pos) > 2:
 			return "", "", usageErrorf("인자가 너무 많습니다: %s", strings.Join(pos[2:], " "))
 		}
-		return pos[0], pos[1], nil
+		key, err = oneKey(pos[0])
+		return key, pos[1], err
+	}
+	flagProject, err := oneKey(flagProjects[0])
+	if err != nil {
+		return "", "", err
 	}
 	switch {
 	case len(pos) == 0:
@@ -272,15 +288,15 @@ var docGetCmd = &command{
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("doc get", g)
 		var content bool
-		var project string
+		var projects stringList
 		fs.BoolVar(&content, "content", false, "")
-		fs.StringVar(&project, "project", "", "")
-		fs.StringVar(&project, "p", "", "")
+		fs.Var(&projects, "project", "")
+		fs.Var(&projects, "p", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
 		}
-		key, name, err := docGetTarget(project, pos)
+		key, name, err := docGetTarget(projects, pos)
 		if err != nil {
 			return err
 		}

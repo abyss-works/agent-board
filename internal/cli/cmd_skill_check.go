@@ -86,7 +86,7 @@ CLI 판을 서버 릴리즈와, 설치된 스킬을 이 CLI에 내장된 스킬�
 			return usageErrorf("홈 폴더를 알 수 없습니다. --dir 로 전역 스킬 폴더를 주세요.")
 		}
 		okCLI := a.checkServerRelease(ctx, g)
-		okSkill, err := a.checkSkillTree(filepath.Join(dir, skillName))
+		okSkill, err := a.checkSkillTree(filepath.Join(dir, skillName), okCLI)
 		if err != nil {
 			return err
 		}
@@ -142,10 +142,13 @@ func (a *App) compareWithServer(release string) bool {
 // checkSkillTree compares the skill at target, or what a link at target
 // points to, with the embedded skill. It returns false when the skill is
 // missing or differs.
-func (a *App) checkSkillTree(target string) (bool, error) {
+func (a *App) checkSkillTree(target string, cliCurrent bool) (bool, error) {
 	fi, err := os.Lstat(target)
 	if errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(a.Stdout, "스킬: %s 에 설치되어 있지 않습니다. `agb skill install`로 설치하세요.\n설치하지 않고 `agb skill show`로 읽어 쓴다면 이 결과는 예상한 것입니다. 종료 코드 1은 스킬이 설치되지 않았다는 뜻일 뿐입니다.\n", target)
+		fmt.Fprintf(a.Stdout, "스킬: %s 에 설치되어 있지 않습니다. `agb skill install`로 설치하세요.\n", target)
+		if cliCurrent {
+			fmt.Fprintf(a.Stdout, "설치하지 않고 `agb skill show`로 읽어 쓴다면 이 결과는 예상한 것입니다. 종료 코드 1은 스킬이 설치되지 않았다는 뜻일 뿐입니다.\n")
+		}
 		return false, nil
 	}
 	if err != nil {

@@ -37,10 +37,15 @@ func TestDocGetRejectsConflictingOrMissingProject(t *testing.T) {
 		args []string
 		want string
 	}{
-		"flag differs from positional": {[]string{"doc", "get", "-p", "OTHER", "CLI", docDecisionName}, "OTHER"},
-		"flag and three positionals":   {[]string{"doc", "get", "-p", "CLI", "CLI", docDecisionName, "x"}, "인자가 너무 많습니다"},
-		"flag without a name":          {[]string{"doc", "get", "-p", "CLI"}, "<파일명>"},
-		"name only":                    {[]string{"doc", "get", docDecisionName}, "-p"},
+		"flag differs from positional":  {[]string{"doc", "get", "-p", "OTHER", "CLI", docDecisionName}, "OTHER"},
+		"flag and three positionals":    {[]string{"doc", "get", "-p", "CLI", "CLI", docDecisionName, "x"}, "인자가 너무 많습니다"},
+		"flag without a name":           {[]string{"doc", "get", "-p", "CLI"}, "<파일명>"},
+		"name only":                     {[]string{"doc", "get", docDecisionName}, "키는 --project 로 줄 수도 있습니다"},
+		"several projects":              {[]string{"doc", "get", "-p", "A,B", docDecisionName}, "프로젝트 하나"},
+		"several projects positional":   {[]string{"doc", "get", "A,B", docDecisionName}, "프로젝트 하나"},
+		"flag given twice, differing":   {[]string{"doc", "get", "-p", "A", "-p", "B", docDecisionName}, "프로젝트 키가 둘"},
+		"flag long and short differing": {[]string{"doc", "get", "-p", "A", docDecisionName, "--project", "B"}, "프로젝트 키가 둘"},
+		"flag without a value":          {[]string{"doc", "get", docDecisionName, "-p"}, "flag needs an argument"},
 	} {
 		if code := h.run(tc.args...); code != 2 || !strings.Contains(h.stderr.String(), tc.want) {
 			t.Errorf("%s: code=%d stderr=%s", label, code, h.stderr)
@@ -118,4 +123,51 @@ func TestHintsNameExistingSubcommands(t *testing.T) {
 		}
 	}
 	walk(root, "agb")
+}
+
+func TestDocGetFlagEdgeForms(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/projects/CLI/documents/"+docDecisionName, canned{body: serverDoc("CLI", docDecisionName, "history", "n")})
+	h := newHarness(t, srv, false)
+
+	// The same key twice is not a conflict.
+	if code := h.run("doc", "get", "-p", "CLI", "-p", "CLI", docDecisionName); code != 0 {
+		t.Errorf("same key twice: code=%d stderr=%s", code, h.stderr)
+	}
+	// After "--" every argument is positional, so the flag form needs -p before it.
+	if code := h.run("doc", "get", "-p", "CLI", "--", docDecisionName); code != 0 {
+		t.Errorf("name after --: code=%d stderr=%s", code, h.stderr)
+	}
+	if code := h.run("doc", "get", "--", "CLI", docDecisionName); code != 0 {
+		t.Errorf("both after --: code=%d stderr=%s", code, h.stderr)
+	}
+	srv.reqs = nil
+	if code := h.run("doc", "get", "--", "-p", "CLI", docDecisionName); code != 2 {
+		t.Errorf("-p after --: code=%d, want 2", code)
+	}
+	if len(srv.reqs) != 0 {
+		t.Errorf("usage errors must not reach the server: %v", srv.paths())
+	}
+}
+
+func TestHelpForUnknownCommandSuggests(t *testing.T) {
+	h := newHarness(t, nil, false)
+	if code := h.run("help", "doc", "show"); code != 2 || !strings.Contains(h.stderr.String(), "가까운 명령: agb doc get") {
+		t.Errorf("code=%d stderr=%s", code, h.stderr)
+	}
+}
+
+func TestSkillCheckShowOnlyNoteIsLeftOutWhenTheCLIIsOld(t *testing.T) {
+	h := newHarness(t, healthServer(t, healthWithRelease), false)
+	h.app.Version = "v0.7.0"
+	if code := h.run("skill", "check", "--dir", t.TempDir()); code != 1 {
+		t.Fatalf("code=%d", code)
+	}
+	out := h.stdout.String()
+	if !strings.Contains(out, "CLI가 서버보다 오래됐습니다") || !strings.Contains(out, "설치되어 있지 않습니다") {
+		t.Errorf("output = %s", out)
+	}
+	if strings.Contains(out, "agb skill show") {
+		t.Errorf("the show-only note would hide the CLI update:\n%s", out)
+	}
 }
