@@ -21,9 +21,17 @@
 - 읽은 쪽 이름은 `--as`가 없으면 명령을 실행한 저장소 `.agb.json`의 프로젝트 키다. `--project`로 다른 프로젝트의 메시지 공간을 가리켜도 같다. `.agb.json`이 없고 `--as`도 없으면 사용법 오류(종료 코드 2)다.
 - `agb msg get`의 표 출력이 확인 표시를 읽은 쪽마다 `read` 줄로 보인다.
 - `agb msg --help`와 `agb msg rm --help`가 처리한 메시지를 지우는 대신 확인 표시를 하라고 적는다.
+- `agb hook session-start`를 더한다. 에이전트 도구의 세션 시작 훅이 부르는 명령이다. 표준 입력의 훅 JSON에서 `cwd`를 읽어(없으면 현재 작업 폴더) 그 저장소 `.agb.json`의 프로젝트를 찾고, 그 프로젝트 키가 확인하지 않은 메시지를 평문으로 출력한다. 건수와 프로젝트 키 한 줄, 메시지마다 한 줄(최대 20줄, 넘으면 남은 건수), 읽기와 확인 명령 한 줄이다. 서버 조회는 5초로 제한한다. `.agb.json`, 설정, 토큰이 없거나 서버에 닿지 않거나 서버가 오류를 돌려주거나 메시지가 없으면 아무것도 출력하지 않으며, 어떤 경우에도 종료 코드 0이고 표준 오류에 쓰지 않는다. 확인 표시는 만들지 않는다.
+- `agb setup claude`를 더한다. `claude plugin marketplace add abyss-works/agent-board#main`, `claude plugin install agb@agent-board`, 스킬 설치를 차례로 하고 실패한 단계에서 멈춘다. 스킬은 `~/.agents/skills/tool-agb`에 쓰고, `~/.claude/skills`가 다른 폴더이면 거기에도 쓴다(그 폴더의 `tool-agb`가 링크이면 그대로 둔다). `claude` 실행 파일이 `PATH`에 없으면 아무것도 설치하지 않고 종료 코드 2다. 다시 실행해도 된다.
+
+### Claude Code 플러그인
+
+- 이 저장소가 Claude Code 마켓플레이스를 겸한다. 저장소 루트의 `.claude-plugin/marketplace.json`(마켓플레이스 이름 `agent-board`)이 `plugin/` 폴더의 플러그인 `agb`를 싣는다. 플러그인은 훅 설정만 담고, 세션 시작 훅(`SessionStart`, 제한 10초)이 `agb hook session-start`를 셸 없이 부른다. `plugin.json`에 `version`을 두지 않아 플러그인 판은 커밋을 따른다.
+- 갱신 순서는 CLI 먼저, 플러그인 나중이다. `hook` 명령을 모르는 옛 CLI에서는 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보인다. 세션 시작은 막지 않는다.
 
 ### 스킬
 
+- 내장 스킬 `tool-agb`의 설치 문서(`references/setup.md`) 2절에 `agb setup claude`의 설치, 갱신 순서, 제거를 더한다.
 - 내장 스킬 `tool-agb`의 메시지 공간 절을 바꿨다. 읽는 쪽은 `agb msg list --unread`로 확인하지 않은 메시지를 받아 처리한 뒤 `agb msg ack`로 확인 표시를 한다. 처리했다는 이유로 메시지를 지우지 않는다.
 
 ## v0.13.4 (2026-11-11)
