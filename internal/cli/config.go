@@ -15,11 +15,14 @@ import (
 // Config is the per-machine configuration file. Empty fields are omitted
 // from the file. Token is the shared token, which only a user actor may use.
 // Tokens holds the actor tokens that "agb login" received, by actor ID.
+// HookActors holds the actor that "agb hook" acts as, by the name of the agent
+// tool that "agb setup" connected. No other command reads it.
 type Config struct {
 	URL        string            `json:"url,omitempty"`
 	Token      string            `json:"token,omitempty"`
 	Tokens     map[string]string `json:"tokens,omitempty"`
 	Actor      string            `json:"actor,omitempty"`
+	HookActors map[string]string `json:"hook_actors,omitempty"`
 	SessionID  string            `json:"session_id,omitempty"`
 	ClientHost string            `json:"client_host,omitempty"`
 }
