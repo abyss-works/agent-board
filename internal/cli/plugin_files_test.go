@@ -23,7 +23,7 @@ func readJSONFile(t *testing.T, name string, v any) {
 // The Claude Code plugin only wires hooks to the CLI: the marketplace at the
 // top of the repository lists the plugin in plugin/, the plugin carries no
 // version of its own, and its session start hook runs agb hook session-start
-// without a shell.
+// without a shell, naming the tool whose hook actor agb setup claude saves.
 func TestClaudePluginFiles(t *testing.T) {
 	var market struct {
 		Name    string `json:"name"`
@@ -63,7 +63,7 @@ func TestClaudePluginFiles(t *testing.T) {
 	if len(hooks.Hooks) != 1 || len(start) != 1 || start[0].Matcher != "" {
 		t.Fatalf("hooks = %+v", hooks.Hooks)
 	}
-	want := []hook{{Type: "command", Command: "agb", Args: []string{"hook", "session-start"}, Timeout: 10}}
+	want := []hook{{Type: "command", Command: "agb", Args: []string{"hook", "session-start", "--tool", claudeTool}, Timeout: 10}}
 	if !reflect.DeepEqual(start[0].Hooks, want) {
 		t.Errorf("SessionStart hooks = %+v, want %+v", start[0].Hooks, want)
 	}

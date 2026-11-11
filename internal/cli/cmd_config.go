@@ -43,7 +43,7 @@ var configShowCmd = &command{
 	usage: `사용법: agb config show [--json]
 
 설정 파일의 값을 보여 줍니다. 토큰 값은 보여 주지 않습니다. 공용 토큰은 저장 여부만, 행위자별 토큰은
-토큰이 있는 행위자의 이름만 보여 줍니다.
+토큰이 있는 행위자의 이름만 보여 줍니다. hook_actors 는 agb setup <대상> 이 저장한, 도구별 훅 행위자입니다.
 `,
 	run: func(a *App, _ context.Context, g *globals, args []string) error {
 		pos, err := parseArgs(leafFlags("config show", g), args)
@@ -66,10 +66,15 @@ var configShowCmd = &command{
 			actorTokens = append(actorTokens, actor)
 		}
 		sort.Strings(actorTokens)
+		hookActors := make([]string, 0, len(cfg.HookActors))
+		for tool, actor := range cfg.HookActors {
+			hookActors = append(hookActors, tool+"="+actor)
+		}
+		sort.Strings(hookActors)
 		if a.jsonOutput(g) {
 			raw, _ := json.Marshal(map[string]any{
 				"path": path, "url": cfg.URL, "actor": cfg.Actor, "session_id": cfg.SessionID, "client_host": cfg.ClientHost,
-				"token_set": cfg.Token != "", "actor_tokens": actorTokens,
+				"token_set": cfg.Token != "", "actor_tokens": actorTokens, "hook_actors": orEmptyMap(cfg.HookActors),
 			})
 			writeJSON(a.Stdout, raw)
 			return nil
@@ -83,9 +88,18 @@ var configShowCmd = &command{
 			{"url", orDash(cfg.URL)}, {"actor", orDash(cfg.Actor)}, {"session_id", orDash(cfg.SessionID)}, {"client_host", orDash(cfg.ClientHost)},
 			{"token", token},
 			{"actor_tokens", joinOr(actorTokens, "(없음)")},
+			{"hook_actors", joinOr(hookActors, "(없음)")},
 		})
 		return nil
 	},
+}
+
+// orEmptyMap is m, or an empty map for a nil one, which JSON writes as {}.
+func orEmptyMap(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 func orDash(s string) string {

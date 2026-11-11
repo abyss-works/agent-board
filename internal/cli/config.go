@@ -15,11 +15,14 @@ import (
 // Config is the per-machine configuration file. Empty fields are omitted
 // from the file. Token is the shared token, which only a user actor may use.
 // Tokens holds the actor tokens that "agb login" received, by actor ID.
+// HookActors holds the actor that "agb hook" acts as, by the name of the agent
+// tool that "agb setup" connected. No other command reads it.
 type Config struct {
 	URL        string            `json:"url,omitempty"`
 	Token      string            `json:"token,omitempty"`
 	Tokens     map[string]string `json:"tokens,omitempty"`
 	Actor      string            `json:"actor,omitempty"`
+	HookActors map[string]string `json:"hook_actors,omitempty"`
 	SessionID  string            `json:"session_id,omitempty"`
 	ClientHost string            `json:"client_host,omitempty"`
 }
@@ -119,10 +122,7 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 		SessionID:  pick(g.sessionID, "AGB_SESSION_ID", file.SessionID),
 		ClientHost: pick(g.clientHost, "AGB_CLIENT_HOST", file.ClientHost),
 	}
-	s.Token = pick("", "AGB_TOKEN", file.Token)
-	if t := file.Tokens[s.Actor]; t != "" {
-		s.Token = t
-	}
+	s.Token = tokenOf(s.Actor, getenv, file)
 	if s.SessionID == "" {
 		s.SessionID = defaultSessionID(now)
 	}
@@ -153,6 +153,18 @@ func actorOf(g *globals, getenv func(string) string, file Config) string {
 		return v
 	}
 	return file.Actor
+}
+
+// tokenOf is the token a request of actor carries: the actor's token in the
+// file, else AGB_TOKEN, else the shared token in the file.
+func tokenOf(actor string, getenv func(string) string, file Config) string {
+	if t := file.Tokens[actor]; t != "" {
+		return t
+	}
+	if t := getenv("AGB_TOKEN"); t != "" {
+		return t
+	}
+	return file.Token
 }
 
 // requireAuth checks that the settings can make an authenticated request.
