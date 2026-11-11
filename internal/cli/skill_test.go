@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -153,5 +154,65 @@ func TestSkillInstallNeedsDirWhenHomeIsUnknown(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), "--dir") {
 		t.Errorf("stderr = %q", h.stderr)
+	}
+}
+
+// Agent tools that truncate long command output show only the start of the
+// skill, so the task-to-command index must end within its first 2,000
+// characters and every row must point to the section that has the details.
+func TestSkillShowIndexFitsInFirstCharacters(t *testing.T) {
+	h := newHarness(t, nil, false)
+	if code := h.run("skill", "show"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	const heading = "## 할 일별 명령\n"
+	start := strings.Index(out, heading)
+	if start < 0 {
+		t.Fatalf("skill show lacks the %q section", heading)
+	}
+	end := strings.Index(out[start+len(heading):], "\n## ")
+	if end < 0 {
+		t.Fatal("index section has no following section")
+	}
+	end += start + len(heading)
+	if n := len([]rune(out[:end])); n > 2000 {
+		t.Errorf("index ends at character %d, want within 2000", n)
+	}
+	index := out[start:end]
+	for _, want := range []string{
+		"agb agenda", "agb project overview", "agb issue create", "agb issue update",
+		"agb issue comment", "agb issue activity", "agb doc new", "agb doc put",
+		"agb doc get -p", "agb search", "--fields", "--text", "agb msg put",
+		"agb msg list", "agb msg ack",
+	} {
+		if !strings.Contains(index, want) {
+			t.Errorf("index lacks %q", want)
+		}
+	}
+	for _, row := range strings.Split(index, "\n") {
+		if !strings.HasPrefix(row, "| ") || strings.HasPrefix(row, "| 할 일 ") {
+			continue
+		}
+		if !strings.HasSuffix(row, "절) |") && !strings.HasSuffix(row, "\") |") {
+			t.Errorf("index row has no section pointer: %s", row)
+		}
+		pointer := row[strings.LastIndex(row, "(")+1:]
+		if strings.HasSuffix(pointer, "절) |") {
+			for _, n := range regexp.MustCompile(`\d+`).FindAllString(pointer, -1) {
+				if !strings.Contains(out, "\n## "+n+". ") {
+					t.Errorf("index row points to section %s, which skill show lacks: %s", n, row)
+				}
+			}
+			continue
+		}
+		for _, q := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(pointer, -1) {
+			if !strings.Contains(out, "\n## "+q[1]+"\n") && !strings.Contains(out, "\n### "+q[1]+"\n") {
+				t.Errorf("index row points to section %q, which skill show lacks: %s", q[1], row)
+			}
+		}
+	}
+	if !strings.Contains(index, "agb msg put -p <KEY> --title") {
+		t.Error("index shows agb msg put without the required --title")
 	}
 }
