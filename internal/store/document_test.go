@@ -31,10 +31,21 @@ func docSHA(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// locArgs reads a location of a v0.8.x client as the arguments it stands for.
+// locArgs turns the shorthand the tests use for a document into arguments:
+// archive is archived, legacy is imported, and a legacy name under archive/
+// is archived too.
 func locArgs(name, location string) model.DocumentArgs {
 	var a model.DocumentArgs
-	a.ApplyLocation(name, model.DocumentLocation(location))
+	t := true
+	switch location {
+	case "archive":
+		a.Archived = &t
+	case "legacy":
+		a.Imported = &t
+		if strings.HasPrefix(name, "archive/") {
+			a.Archived = &t
+		}
+	}
 	return a
 }
 
@@ -93,7 +104,7 @@ func TestPutDocumentStoresTheOriginalBytes(t *testing.T) {
 	if !created {
 		t.Error("a new document must report created")
 	}
-	if d.Project != "AGB" || d.Name != docPriority || d.Location != model.LocationHistory || d.Kind != model.DocumentDecision ||
+	if d.Project != "AGB" || d.Name != docPriority || d.Kind != "decision" ||
 		d.SHA256 != docSHA(content) || d.Size != len(content) || d.CreatedBy != "claude" || d.UpdatedBy != "claude" {
 		t.Errorf("document = %+v", d)
 	}
@@ -176,7 +187,7 @@ func TestPutDocumentRefusesOtherContent(t *testing.T) {
 		}
 	}
 	got, _ := s.GetDocument(ctx, "AGB", docPriority)
-	if *got.Content != content || got.Location != model.LocationHistory || got.UpdatedBy != "owner" || got.UpdatedAt != first.UpdatedAt {
+	if *got.Content != content || got.UpdatedBy != "owner" || got.UpdatedAt != first.UpdatedAt {
 		t.Errorf("a refused put changed the document: %+v", got)
 	}
 }
@@ -286,7 +297,7 @@ func TestListDocuments(t *testing.T) {
 			t.Errorf("a list item has no content or snippet and belongs to the project: %+v", it)
 		}
 	}
-	if items[1].Location != model.LocationArchive || items[1].State != model.StateArchived || !items[1].Archived || items[3].Date == nil || *items[3].Date != "2026-10-20 15:44" {
+	if !items[1].Archived || items[1].State != model.StateArchived || items[3].Date == nil || *items[3].Date != "2026-10-20 15:44" {
 		t.Errorf("list items = %+v", items)
 	}
 
@@ -344,15 +355,15 @@ func TestSearchDocumentsWithoutAQueryNewestFirst(t *testing.T) {
 		"one project":         {DocumentFilter{Projects: []string{"OTH"}}, []string{docLock}},
 		"projects are OR":     {DocumentFilter{Projects: []string{"OTH", "AGB"}}, all},
 		"unknown project":     {DocumentFilter{Projects: []string{"NOPE"}}, []string{}},
-		"one kind":            {DocumentFilter{Kinds: []model.DocumentKind{model.DocumentDecision}}, []string{docPriority, docBare}},
-		"kinds are OR":        {DocumentFilter{Kinds: []model.DocumentKind{model.DocumentDecision, model.DocumentReport}}, []string{docPriority, docLinear, docBare}},
+		"one kind":            {DocumentFilter{Kinds: []model.DocumentKind{"decision"}}, []string{docPriority, docBare}},
+		"kinds are OR":        {DocumentFilter{Kinds: []model.DocumentKind{"decision", "report"}}, []string{docPriority, docLinear, docBare}},
 		"one state":           {DocumentFilter{States: []model.DocumentState{model.StateArchived}}, []string{docRelease}},
 		"states are OR":       {DocumentFilter{States: model.DocumentStates}, all},
 		"current":             {DocumentFilter{States: []model.DocumentState{model.StateCurrent}}, []string{docLock, docPriority, docLinear, docBare}},
 		"imported only":       {DocumentFilter{Imported: boolPtr(true)}, []string{}},
 		"not imported":        {DocumentFilter{Imported: boolPtr(false)}, all},
-		"filters are AND":     {DocumentFilter{Projects: []string{"AGB"}, Kinds: []model.DocumentKind{model.DocumentDecision, model.DocumentReport}, States: []model.DocumentState{model.StateCurrent}}, []string{docPriority, docLinear, docBare}},
-		"nothing matches all": {DocumentFilter{Projects: []string{"OTH"}, Kinds: []model.DocumentKind{model.DocumentDecision}}, []string{}},
+		"filters are AND":     {DocumentFilter{Projects: []string{"AGB"}, Kinds: []model.DocumentKind{"decision", "report"}, States: []model.DocumentState{model.StateCurrent}}, []string{docPriority, docLinear, docBare}},
+		"nothing matches all": {DocumentFilter{Projects: []string{"OTH"}, Kinds: []model.DocumentKind{"decision"}}, []string{}},
 	} {
 		if got := search(c.f); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v, want %v", label, got, c.want)
@@ -410,7 +421,7 @@ func TestSearchDocumentsByRelevance(t *testing.T) {
 		"a phrase that is not there":        {DocumentFilter{Query: `"큐 우선순위"`}, []string{}},
 		"no document has it":                {DocumentFilter{Query: "없는검색어"}, []string{}},
 		"with a project":                    {DocumentFilter{Query: "우선순위", Projects: []string{"OTH"}}, []string{}},
-		"with a kind":                       {DocumentFilter{Query: "우선순위", Kinds: []model.DocumentKind{model.DocumentReport}}, []string{docLinear}},
+		"with a kind":                       {DocumentFilter{Query: "우선순위", Kinds: []model.DocumentKind{"report"}}, []string{docLinear}},
 		"with a state":                      {DocumentFilter{Query: "배포", States: []model.DocumentState{model.StateArchived}}, []string{docRelease}},
 		"with a state that lacks it":        {DocumentFilter{Query: "배포", States: []model.DocumentState{model.StateCurrent}}, []string{}},
 		"in every project":                  {DocumentFilter{Query: "기록"}, []string{docBare}},
@@ -431,7 +442,7 @@ func TestSearchDocumentsByRelevance(t *testing.T) {
 		t.Error("more terms than the issue search allows must be refused")
 	}
 
-	items, total = search(DocumentFilter{Query: "우선순위", Projects: []string{"AGB"}, Kinds: []model.DocumentKind{model.DocumentDecision}})
+	items, total = search(DocumentFilter{Query: "우선순위", Projects: []string{"AGB"}, Kinds: []model.DocumentKind{"decision"}})
 	if total != 1 || docNames(items)[0] != docPriority {
 		t.Errorf("combined = %v (total %d)", docNames(items), total)
 	}

@@ -166,7 +166,7 @@ func (r *Runner) RunOnce(ctx context.Context) (res Result, err error) {
 		}
 		vecs := make([][]float32, 0, len(texts))
 		for b := 0; b < len(texts); b += batchSize {
-			batch, err := r.Embedder.Embed(ctx, texts[b:min(b+batchSize, len(texts))])
+			batch, _, err := r.Embedder.Embed(ctx, texts[b:min(b+batchSize, len(texts))])
 			if err != nil {
 				return res, fmt.Errorf("embed %s %d: %w", group[0].st.Source, group[0].st.ID, err)
 			}

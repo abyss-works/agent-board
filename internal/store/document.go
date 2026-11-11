@@ -45,13 +45,10 @@ func (e *MetadataDiffError) Error() string {
 }
 
 // DocumentInput is a put request: the content, which is stored byte for byte,
-// and the metadata the request carries. LocationOnly marks the request of a
-// v0.8.x client, which names only a location: for a document that exists with
-// the same content it changes nothing.
+// and the metadata the request carries.
 type DocumentInput struct {
-	Content      string
-	Args         model.DocumentArgs
-	LocationOnly bool
+	Content string
+	Args    model.DocumentArgs
 }
 
 // DocumentFilter selects and searches record documents. Values of one field are
@@ -127,14 +124,6 @@ func fillDocuments(ctx context.Context, q querier, docs []*model.Document, ids [
 		default:
 			d.State = model.StateCurrent
 		}
-		switch {
-		case d.Imported:
-			d.Location = model.LocationLegacy
-		case d.Archived:
-			d.Location = model.LocationArchive
-		default:
-			d.Location = model.LocationHistory
-		}
 	}
 	return nil
 }
@@ -182,9 +171,6 @@ func (s *Store) PutDocument(ctx context.Context, tr model.Trace, project, name s
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
-		}
-		if exists && stored == hash && in.LocationOnly {
-			return nil
 		}
 		rels, warns, rerrs, err := resolveRelations(ctx, tx, self, meta)
 		if err != nil {

@@ -1096,7 +1096,7 @@ func TestMigrateRebuildsDocumentInVersion9Database(t *testing.T) {
 	}
 	d, created, err := s.PutDocument(ctx, model.Trace{Actor: "claude", SessionID: "s", ClientHost: "h"}, "AGB", "archive/2026-06-x/notes.md",
 		DocumentInput{Content: "# 이전 체계 조사\n본문", Args: locArgs("archive/2026-06-x/notes.md", "legacy")})
-	if err != nil || !created || d.Kind != model.DocumentOther || d.Location != model.LocationLegacy || d.Title == nil || *d.Title != "이전 체계 조사" {
+	if err != nil || !created || d.Kind != model.DocumentOther || d.Title == nil || *d.Title != "이전 체계 조사" {
 		t.Fatalf("PutDocument of a legacy document = %+v, %v, %v", d, created, err)
 	}
 	if found, total, err := s.SearchDocuments(ctx, DocumentFilter{Query: "이전 체계", Imported: boolPtr(true), Limit: 10}); err != nil || total != 1 || len(found) != 1 {

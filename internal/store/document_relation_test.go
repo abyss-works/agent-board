@@ -348,39 +348,6 @@ func TestPutDocumentMetadataDiffers(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
-func TestPutDocumentLocationOnlyIsAHarmlessNoOp(t *testing.T) {
-	s, ctx := seeded(t)
-	mustProject(t, s, ctx, "AGB")
-	content := docText("decision", "다른 본문")
-	if _, _, err := s.PutDocument(ctx, trOwner, "AGB", relOld, DocumentInput{Content: docText("decision", "옮길 기록")}); err != nil {
-		t.Fatal(err)
-	}
-	first, _ := s.GetDocument(ctx, "AGB", relOld)
-	for _, loc := range []string{"history", "archive", "legacy"} {
-		res, created, err := s.PutDocument(ctx, trClaude, "AGB", relOld, DocumentInput{Content: *first.Content, Args: locArgs(relOld, loc), LocationOnly: true})
-		if err != nil || created || res.Archived || res.Imported || res.UpdatedBy != "owner" || res.UpdatedAt != first.UpdatedAt {
-			t.Errorf("location %s: %+v, %v, %v", loc, res, created, err)
-		}
-	}
-	// Other content is still refused, and a new document takes the location.
-	var imm *ImmutableError
-	if _, _, err := s.PutDocument(ctx, trClaude, "AGB", relOld, DocumentInput{Content: content, LocationOnly: true}); !errors.As(err, &imm) {
-		t.Errorf("other content err = %v", err)
-	}
-	d, created := putDoc(t, s, trClaude, "AGB", relNew, "archive", docText("decision", "새 문서"))
-	if !created || !d.Archived || d.State != model.StateArchived || d.Location != model.LocationArchive {
-		t.Errorf("a new document with a location = %+v", d)
-	}
-	l, created := putDoc(t, s, trClaude, "AGB", "decisions/a.md", "legacy", "# 옛\n")
-	if !created || !l.Imported || l.Kind != model.DocumentOther || l.Location != model.LocationLegacy {
-		t.Errorf("a new legacy document = %+v", l)
-	}
-	// Without the marker the same location is a difference of metadata.
-	if _, _, err := s.PutDocument(ctx, trClaude, "AGB", relOld, DocumentInput{Content: *first.Content, Args: locArgs(relOld, "archive")}); err == nil {
-		t.Error("an archive location with other metadata must differ without LocationOnly")
-	}
-}
-
 func TestDocumentStatePriority(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")

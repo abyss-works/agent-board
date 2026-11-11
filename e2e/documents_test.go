@@ -21,7 +21,6 @@ import (
 type document struct {
 	Project  string   `json:"project"`
 	Name     string   `json:"name"`
-	Location string   `json:"location"`
 	Kind     string   `json:"kind"`
 	Date     *string  `json:"date"`
 	Title    *string  `json:"title"`
@@ -92,9 +91,26 @@ func documentPath(project, name string) string {
 	return "/v1/projects/" + project + "/documents/" + name
 }
 
+// putDocument puts a document. The tests name its place as history, archive or
+// legacy: archive sends archived, legacy sends imported, and a legacy name
+// under archive/ is archived too.
 func putDocument(t testing.TB, c caller, project, name, location, content string) response {
 	t.Helper()
-	return c.do(t, "PUT", documentPath(project, name), map[string]any{"location": location, "content": content})
+	return c.do(t, "PUT", documentPath(project, name), documentBody(name, location, content))
+}
+
+func documentBody(name, location, content string) map[string]any {
+	body := map[string]any{"content": content}
+	switch location {
+	case "archive":
+		body["archived"] = true
+	case "legacy":
+		body["imported"] = true
+		if strings.HasPrefix(name, "archive/") {
+			body["archived"] = true
+		}
+	}
+	return body
 }
 
 // mustPutDocument stores a document and returns it with the status of the put.
@@ -153,13 +169,13 @@ func TestDocuments(t *testing.T) {
 	bare := documentText("decision", "", "메타 없는 결정", "", "메타데이터가 없는 기록 "+word)
 	lock := documentText("incident", "2026-10-21 09:00", "데이터베이스 잠금 사고", "[sqlite, lock]", "쓰기 트랜잭션이 잠겼다. "+word)
 
-	t.Run("register, repeat, location only", func(t *testing.T) {
+	t.Run("register, repeat", func(t *testing.T) {
 		r := putDocument(t, as("claude"), p.Key, nDecision, "history", decision)
 		d := decodeAs[document](t, r, 201)
 		if r.header.Get("Location") != documentPath(p.Key, nDecision) {
 			t.Errorf("Location = %q", r.header.Get("Location"))
 		}
-		if d.Project != p.Key || d.Name != nDecision || d.Location != "history" || d.Kind != "decision" || d.SHA256 != contentSHA(decision) || d.Size != len(decision) ||
+		if d.Project != p.Key || d.Name != nDecision || d.Kind != "decision" || d.SHA256 != contentSHA(decision) || d.Size != len(decision) ||
 			d.CreatedBy != "claude" || d.UpdatedBy != "claude" || d.CreatedAt != d.UpdatedAt || d.Content != nil || d.Snippet != nil {
 			t.Errorf("document = %+v", d)
 		}
@@ -171,7 +187,7 @@ func TestDocuments(t *testing.T) {
 		if d.State != "current" || d.Archived || d.Imported || d.Path != nil || d.Supersedes == nil || d.SupersededBy == nil || d.Related == nil || d.Issues == nil || d.UnresolvedRefs == nil || d.Warnings == nil {
 			t.Errorf("state and relations = %+v", d)
 		}
-		documentKeys := []string{"archived", "created_at", "created_by", "date", "imported", "issues", "kind", "location", "name", "path", "project", "related", "sha256", "size",
+		documentKeys := []string{"archived", "created_at", "created_by", "date", "imported", "issues", "kind", "name", "path", "project", "related", "sha256", "size",
 			"state", "superseded_by", "supersedes", "tags", "title", "unresolved_refs", "updated_at", "updated_by"}
 		wantKeys := append(append([]string{}, documentKeys...), "warnings")
 		sort.Strings(wantKeys)
@@ -179,26 +195,17 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("put result fields = %v, want %v", got, wantKeys)
 		}
 
-		// The same content and location again, by another actor: 200, the same object, no Location.
-		again := owner.do(t, "PUT", documentPath(p.Key, nDecision), map[string]any{"location": "history", "content": decision})
+		// The same content again, by another actor: 200, the same object, no Location.
+		again := owner.do(t, "PUT", documentPath(p.Key, nDecision), documentBody(nDecision, "history", decision))
 		expect(t, again, 200)
 		if string(again.body) != string(r.body) || again.header.Get("Location") != "" {
 			t.Errorf("repeat = %s Location=%q, want %s", again.body, again.header.Get("Location"), r.body)
 		}
 
-		// A client of v0.8.x that sends the same content with another location changes nothing.
-		tick()
-		for _, location := range []string{"archive", "legacy", "history"} {
-			moved := decodeAs[document](t, putDocument(t, owner, p.Key, nDecision, location, decision), 200)
-			if moved.Location != "history" || moved.UpdatedBy != "claude" || moved.CreatedBy != "claude" || moved.UpdatedAt != d.UpdatedAt || moved.SHA256 != d.SHA256 {
-				t.Errorf("location %s: %+v", location, moved)
-			}
-		}
-
 		// The original, byte for byte, in its folder.
 		one := expect(t, owner.do(t, "GET", documentPath(p.Key, nDecision), nil), 200)
 		full := decode[document](t, one)
-		if full.Content == nil || *full.Content != decision || full.SHA256 != d.SHA256 || full.Location != "history" {
+		if full.Content == nil || *full.Content != decision || full.SHA256 != d.SHA256 {
 			t.Errorf("single document = %s", one)
 		}
 		wantFull := append(append([]string{}, documentKeys...), "content")
@@ -281,8 +288,6 @@ func TestDocuments(t *testing.T) {
 			{"empty content", "2026-10-20-1544-decision-x.md", "history", "", "title"},
 			{"one byte over the limit", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("a", maxDocumentBytes-len(head)+1), "content"},
 			{"bytes, not characters", "2026-10-20-1544-decision-x.md", "history", head + strings.Repeat("가", (maxDocumentBytes-len(head))/3+1), "content"},
-			{"unknown location", "2026-10-20-1544-decision-x.md", "draft", ok, "location"},
-			{"empty location", "2026-10-20-1544-decision-x.md", "", ok, "location"},
 		} {
 			e := wantError(t, put(c.name, c.location, c.content), 422, "validation_failed")
 			if !e.hasField(c.field) {
@@ -293,7 +298,7 @@ func TestDocuments(t *testing.T) {
 		if got := e.fields(); !reflect.DeepEqual(got, []string{"name", "title"}) {
 			t.Errorf("every violation at once = %v", got)
 		}
-		wantError(t, owner.do(t, "PUT", documentPath(p.Key, "2026-10-20-1544-decision-x.md"), map[string]any{"location": nil, "content": nil}), 422, "validation_failed")
+		wantError(t, owner.do(t, "PUT", documentPath(p.Key, "2026-10-20-1544-decision-x.md"), map[string]any{"content": nil}), 422, "validation_failed")
 
 		// Exactly the limit is accepted, and 1MB of Korean text, which is three bytes a character.
 		if d, status := mustPutDocument(t, owner, p.Key, nAtLimit, "history", head+strings.Repeat("a", maxDocumentBytes-len(head))); status != 201 || d.Size != maxDocumentBytes {
@@ -307,16 +312,16 @@ func TestDocuments(t *testing.T) {
 		// The body of the request is a JSON object with the fields of a put.
 		path := documentPath(p.Key, "2026-10-20-1544-decision-x.md")
 		for _, body := range []map[string]any{
-			{"location": "history", "content": ok, "sha256": "abc"},
-			{"location": "history", "content": ok, "project": p.Key},
-			{"location": 1, "content": ok},
-			{"location": "history", "content": 5},
+			{"content": ok, "sha256": "abc"},
+			{"content": ok, "project": p.Key},
+			{"location": "history", "content": ok},
+			{"content": 5},
 		} {
 			wantError(t, owner.do(t, "PUT", path, body), 400, "bad_request")
 		}
-		wantError(t, owner.doRaw(t, "PUT", path, []byte(`{"location":"history","content":`)), 400, "bad_request")
+		wantError(t, owner.doRaw(t, "PUT", path, []byte(`{"content":`)), 400, "bad_request")
 		wantError(t, owner.doRaw(t, "PUT", path, []byte(`["history"]`)), 400, "bad_request")
-		huge := owner.do(t, "PUT", path, map[string]any{"location": "history", "content": head + strings.Repeat("a", 7<<20)})
+		huge := owner.do(t, "PUT", path, map[string]any{"content": head + strings.Repeat("a", 7<<20)})
 		wantError(t, huge, 413, "payload_too_large")
 		wantError(t, putDocument(t, owner, projectKey("NOPE"), "2026-10-20-1544-decision-x.md", "history", ok), 404, "not_found")
 
@@ -353,7 +358,7 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("list items carry no content or snippet")
 		}
 		for _, it := range all.Items {
-			if it.Name == nRelease && (it.Location != "archive" || it.Kind != "implementation") {
+			if it.Name == nRelease && (!it.Archived || it.Kind != "implementation") {
 				t.Errorf("release = %+v", it)
 			}
 			if it.Name == nBare && (it.Date == nil || *it.Date != "2026-10-18 10:00" || it.Title == nil || it.Tags == nil || len(it.Tags) != 0) {
@@ -495,7 +500,7 @@ func TestDocuments(t *testing.T) {
 	t.Run("legacy documents", func(t *testing.T) {
 		const nLegacy = "archive/2026-06-hermes-sdlc/agent/notes.md"
 		d, status := mustPutDocument(t, as("claude"), q.Key, nLegacy, "legacy", "# 하네스 조사 "+word+"\n본문\n")
-		if status != 201 || d.Location != "legacy" || d.Kind != "other" || d.Title == nil || *d.Title != "하네스 조사 "+word {
+		if status != 201 || d.Kind != "other" || d.Title == nil || *d.Title != "하네스 조사 "+word {
 			t.Errorf("legacy document = %d %+v", status, d)
 		}
 		dec, status := mustPutDocument(t, as("claude"), q.Key, "decisions/2026-10-17-14-30-scope.md", "legacy", "범위 결정 "+word+"\n")
@@ -560,7 +565,7 @@ func TestDocuments(t *testing.T) {
 			{"GET", "/v1/documents"},
 			{"PUT", documentPath(p.Key, "2026-10-22-0900-report-nobody.md")},
 		}
-		body := []byte(`{"location":"history","content":"x"}`)
+		body := []byte(`{"content":"x"}`)
 		for _, tg := range targets {
 			raw := []byte(nil)
 			if tg.method == "PUT" {
