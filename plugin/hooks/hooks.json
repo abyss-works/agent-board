@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "agb",
-            "args": ["hook", "session-start"],
+            "args": ["hook", "session-start", "--tool", "claude"],
             "timeout": 10
           }
         ]
