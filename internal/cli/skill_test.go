@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -195,6 +196,20 @@ func TestSkillShowIndexFitsInFirstCharacters(t *testing.T) {
 		}
 		if !strings.HasSuffix(row, "절) |") && !strings.HasSuffix(row, "\") |") {
 			t.Errorf("index row has no section pointer: %s", row)
+		}
+		pointer := row[strings.LastIndex(row, "(")+1:]
+		if strings.HasSuffix(pointer, "절) |") {
+			for _, n := range regexp.MustCompile(`\d+`).FindAllString(pointer, -1) {
+				if !strings.Contains(out, "\n## "+n+". ") {
+					t.Errorf("index row points to section %s, which skill show lacks: %s", n, row)
+				}
+			}
+			continue
+		}
+		for _, q := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(pointer, -1) {
+			if !strings.Contains(out, "\n## "+q[1]+"\n") && !strings.Contains(out, "\n### "+q[1]+"\n") {
+				t.Errorf("index row points to section %q, which skill show lacks: %s", q[1], row)
+			}
 		}
 	}
 	if !strings.Contains(index, "agb msg put -p <KEY> --title") {
