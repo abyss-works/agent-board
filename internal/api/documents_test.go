@@ -33,8 +33,21 @@ func apiDocSHA(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func docRequest(location, content string) string {
-	b, err := json.Marshal(map[string]string{"location": location, "content": content})
+// docRequest builds a put request. The tests name a document as history,
+// archive or legacy; archive sends archived, legacy sends imported, and a
+// legacy name under archive/ is archived too.
+func docRequest(name, location, content string) string {
+	body := map[string]any{"content": content}
+	switch location {
+	case "archive":
+		body["archived"] = true
+	case "legacy":
+		body["imported"] = true
+		if strings.HasPrefix(name, "archive/") {
+			body["archived"] = true
+		}
+	}
+	b, err := json.Marshal(body)
 	if err != nil {
 		panic(err)
 	}
@@ -47,7 +60,7 @@ func documentPath(project, name string) string {
 
 func (e *env) putDocument(t *testing.T, project, name, location, content string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	return e.do(t, "PUT", documentPath(project, name), docRequest(location, content), headers)
+	return e.do(t, "PUT", documentPath(project, name), docRequest(name, location, content), headers)
 }
 
 // mustPutDocument stores a document and returns the response document.
@@ -124,7 +137,7 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 	}
 	var d model.Document
 	decodeJSON(t, rec, &d)
-	if d.Project != "AGB" || d.Name != apiDocPriority || d.Location != model.LocationHistory || d.Kind != model.DocumentDecision ||
+	if d.Project != "AGB" || d.Name != apiDocPriority || d.Kind != "decision" ||
 		d.SHA256 != apiDocSHA(content) || d.Size != len(content) || d.CreatedBy != "claude" || d.UpdatedBy != "claude" || d.CreatedAt != d.UpdatedAt {
 		t.Errorf("document = %+v", d)
 	}
@@ -143,7 +156,7 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 		dec.Decode(&skip)
 	}
 	wantKeys := []string{"project", "name", "kind", "date", "title", "tags", "state", "archived", "imported", "path", "supersedes", "superseded_by", "related", "issues", "unresolved_refs",
-		"sha256", "size", "created_at", "created_by", "updated_at", "updated_by", "location", "warnings"}
+		"sha256", "size", "created_at", "created_by", "updated_at", "updated_by", "warnings"}
 	if !reflect.DeepEqual(keys, wantKeys) {
 		t.Errorf("put response fields = %v, want %v", keys, wantKeys)
 	}
@@ -155,15 +168,6 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 	again := e.putDocument(t, "AGB", apiDocPriority, "history", content, map[string]string{"X-Actor": "owner"})
 	if again.Code != 200 || again.Body.String() != rec.Body.String() || again.Header().Get("Location") != "" {
 		t.Errorf("repeat: %d %s Location=%q", again.Code, again.Body.String(), again.Header().Get("Location"))
-	}
-
-	// A v0.8.x client that sends the same content with another location changes nothing.
-	moved := e.putDocument(t, "AGB", apiDocPriority, "archive", content, map[string]string{"X-Actor": "owner"})
-	var m model.Document
-	decodeJSON(t, moved, &m)
-	if moved.Code != 200 || moved.Header().Get("Location") != "" || m.Location != model.LocationHistory || m.UpdatedBy != "claude" ||
-		m.CreatedAt != d.CreatedAt || m.UpdatedAt != d.UpdatedAt || m.SHA256 != d.SHA256 {
-		t.Errorf("location only: %d %s", moved.Code, moved.Body.String())
 	}
 
 	// Other content is refused, with the hash of the stored content in the details.
@@ -190,7 +194,7 @@ func TestPutDocumentCreatesAndRepeats(t *testing.T) {
 	got := e.do(t, "GET", documentPath("AGB", apiDocPriority), "", nil)
 	var full model.Document
 	decodeJSON(t, got, &full)
-	if got.Code != 200 || full.Content == nil || *full.Content != content || full.Location != model.LocationHistory || full.SHA256 != d.SHA256 {
+	if got.Code != 200 || full.Content == nil || *full.Content != content || full.SHA256 != d.SHA256 {
 		t.Errorf("get: %d %s", got.Code, got.Body.String())
 	}
 	if !strings.Contains(got.Body.String(), `"size":`) || !strings.Contains(got.Body.String(), `"content":"---\nkind: decision\n`) {
@@ -216,7 +220,6 @@ func TestPutDocumentRules(t *testing.T) {
 		{"no front matter", apiDocPriority, "history", "# 제목\n본문\n", []string{"title"}},
 		{"empty content", apiDocPriority, "history", "", []string{"title"}},
 		{"one byte over the limit", apiDocPriority, "history", head + strings.Repeat("a", model.MaxDocumentBytes-len(head)+1), []string{"content"}},
-		{"unknown location", apiDocPriority, "draft", ok, []string{"location"}},
 	}
 	for _, c := range cases {
 		rec := e.putDocument(t, "AGB", c.name, c.location, c.content, nil)
@@ -256,12 +259,11 @@ func TestPutDocumentBadRequests(t *testing.T) {
 		body  string
 		field string
 	}{
-		"unknown field":     {`{"location":"history","content":` + jsonString(good) + `,"sha256":"abc"}`, "sha256"},
-		"a project field":   {`{"location":"history","content":` + jsonString(good) + `,"project":"AGB"}`, "project"},
-		"location not text": {`{"location":1,"content":` + jsonString(good) + `}`, "location"},
-		"content not text":  {`{"location":"history","content":5}`, "content"},
-		"content is a list": {`{"location":"history","content":["a"]}`, "content"},
-		"not JSON":          {`{"location":"history","content":`, ""},
+		"unknown field":     {`{"content":` + jsonString(good) + `,"sha256":"abc"}`, "sha256"},
+		"a project field":   {`{"content":` + jsonString(good) + `,"project":"AGB"}`, "project"},
+		"content not text":  {`{"content":5}`, "content"},
+		"content is a list": {`{"content":["a"]}`, "content"},
+		"not JSON":          {`{"content":`, ""},
 		"not an object":     {`["history"]`, ""},
 		"null body":         {`null`, ""},
 	} {
@@ -276,13 +278,13 @@ func TestPutDocumentBadRequests(t *testing.T) {
 		t.Errorf("empty body: %d", rec.Code)
 	}
 	// A null field is a field that was not sent; the content then lacks its title.
-	rec := e.do(t, "PUT", documentPath("AGB", apiDocPriority), `{"location":null,"content":null}`, nil)
+	rec := e.do(t, "PUT", documentPath("AGB", apiDocPriority), `{"content":null}`, nil)
 	b := decodeErr(t, rec)
 	if rec.Code != 422 || len(b.Error.Details) != 1 || b.Error.Details[0].Field != "title" {
 		t.Errorf("null fields: %d %s", rec.Code, rec.Body.String())
 	}
 	// A body far over the largest escaped document is refused before anything else.
-	big := e.do(t, "PUT", documentPath("AGB", apiDocPriority), docRequest("history", good+strings.Repeat("a", 7<<20)), nil)
+	big := e.do(t, "PUT", documentPath("AGB", apiDocPriority), docRequest(apiDocPriority, "history", good+strings.Repeat("a", 7<<20)), nil)
 	if big.Code != 413 || decodeErr(t, big).Error.Code != "payload_too_large" {
 		t.Errorf("large body: %d", big.Code)
 	}
@@ -372,7 +374,7 @@ func TestListProjectDocuments(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `"content"`) || strings.Contains(rec.Body.String(), `"snippet"`) {
 		t.Errorf("list items carry no content: %s", rec.Body.String())
 	}
-	if l.Items[1].Location != model.LocationArchive || l.Items[3].SHA256 == "" || l.Items[3].Size == 0 {
+	if !l.Items[1].Archived || l.Items[3].SHA256 == "" || l.Items[3].Size == 0 {
 		t.Errorf("items = %+v", l.Items)
 	}
 
@@ -549,7 +551,7 @@ func TestDocumentRoutesFollowTheConventions(t *testing.T) {
 	}
 	for _, c := range []struct{ method, target, body string }{
 		{"GET", documentPath("AGB", apiDocPriority), ""},
-		{"PUT", documentPath("AGB", apiDocPriority), docRequest("history", apiDocText("decision", "본문"))},
+		{"PUT", documentPath("AGB", apiDocPriority), docRequest(apiDocPriority, "history", apiDocText("decision", "본문"))},
 		{"GET", "/v1/projects/AGB/documents", ""},
 		{"GET", "/v1/documents", ""},
 	} {
@@ -583,7 +585,7 @@ func TestLegacyDocument(t *testing.T) {
 	rec := e.putDocument(t, "AGB", name, "legacy", "# 하네스 조사\n본문\n", nil)
 	var d model.Document
 	decodeJSON(t, rec, &d)
-	if rec.Code != 201 || d.Name != name || d.Location != model.LocationLegacy || d.Kind != model.DocumentOther ||
+	if rec.Code != 201 || d.Name != name || d.Kind != model.DocumentOther ||
 		d.Title == nil || *d.Title != "하네스 조사" || rec.Header().Get("Location") != documentPath("AGB", name) {
 		t.Fatalf("put legacy: %d %s Location=%q", rec.Code, rec.Body.String(), rec.Header().Get("Location"))
 	}

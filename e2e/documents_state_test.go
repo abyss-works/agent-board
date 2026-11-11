@@ -74,7 +74,7 @@ func TestDocumentState(t *testing.T) {
 	// An imported document may name what is not there yet; the relation resolves when the target comes.
 	imp := decodeAs[document](t, put(as("claude"), p.Key, nLegacy, map[string]any{
 		"content": "# 범위 결정 " + word + "\n", "imported": true, "related": []string{nNotes}, "path": nLegacy}), 201)
-	if !imp.Imported || imp.Kind != "other" || imp.Location != "legacy" || len(imp.Warnings) != 1 || len(imp.UnresolvedRefs) != 1 || imp.Path == nil {
+	if !imp.Imported || imp.Kind != "other" || len(imp.Warnings) != 1 || len(imp.UnresolvedRefs) != 1 || imp.Path == nil {
 		t.Errorf("imported = %+v", imp)
 	}
 	decodeAs[document](t, put(as("claude"), p.Key, nNotes, map[string]any{"content": body("report", "메모"), "archived": true}), 201)

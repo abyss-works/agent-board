@@ -134,9 +134,6 @@ func TestPutDocumentRefusals(t *testing.T) {
 			t.Errorf("%s: %d %s", label, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":"x","location":"draft"}`, nil); rec.Code != 422 || !reflect.DeepEqual(details(t, rec), []string{"location:"}) {
-		t.Errorf("unknown location: %d %s", rec.Code, rec.Body.String())
-	}
 }
 
 func TestPutDocumentMetadataDiffers(t *testing.T) {
@@ -164,7 +161,7 @@ func TestPutDocumentOfAnImportedDocumentWarns(t *testing.T) {
 	content := "---\nrelated: [later.md]\n---\n# 가져온 문서\n"
 	rec := e.putFields(t, "AGB", "notes/a.md", map[string]any{"content": content, "imported": true, "path": "notes/a.md"}, nil)
 	d := decodeDoc(t, rec)
-	if rec.Code != 201 || !d.Imported || d.Kind != model.DocumentOther || d.Title == nil || *d.Title != "가져온 문서" || d.Location != model.LocationLegacy ||
+	if rec.Code != 201 || !d.Imported || d.Kind != model.DocumentOther || d.Title == nil || *d.Title != "가져온 문서" ||
 		len(d.Warnings) != 1 || d.Warnings[0].Field != "related[0]" || d.Warnings[0].Reason != "unresolved" ||
 		!reflect.DeepEqual(d.UnresolvedRefs, []model.UnresolvedRef{{Kind: model.RelRelated, Target: "later.md"}}) {
 		t.Fatalf("imported put: %d %s", rec.Code, rec.Body.String())
@@ -177,41 +174,16 @@ func TestPutDocumentOfAnImportedDocumentWarns(t *testing.T) {
 	}
 }
 
-func TestPutDocumentLocationCompatibility(t *testing.T) {
+func TestPutDocumentRefusesLocation(t *testing.T) {
 	e := newEnv(t)
 	e.createProject(t, "AGB", "agent-board")
-	content := apiDocText("decision", "본문")
-	first := e.putDocument(t, "AGB", stOld, "history", content, nil)
-
-	// Only a location, the same content: nothing changes, whatever the location says.
-	for _, loc := range []string{"history", "archive", "legacy"} {
-		rec := e.putDocument(t, "AGB", stOld, loc, content, map[string]string{"X-Actor": "owner"})
-		if rec.Code != 200 || rec.Body.String() != first.Body.String() {
+	content := jsonString(apiDocText("decision", "본문"))
+	for _, loc := range []string{`"history"`, `"archive"`, `""`, `null`} {
+		rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":`+content+`,"location":`+loc+`}`, nil)
+		if rec.Code != 400 || !reflect.DeepEqual(details(t, rec), []string{"location:unknown_field"}) ||
+			!strings.Contains(rec.Body.String(), "location은 더 이상 받지 않습니다. CLI를 v0.9 이상으로 갱신하세요.") {
 			t.Errorf("location %s: %d %s", loc, rec.Code, rec.Body.String())
 		}
-	}
-	// Without a location and without metadata it is an ordinary put of the same document.
-	if rec := e.do(t, "PUT", documentPath("AGB", stOld), `{"content":`+jsonString(content)+`}`, nil); rec.Code != 200 || rec.Body.String() != first.Body.String() {
-		t.Errorf("content only: %d %s", rec.Code, rec.Body.String())
-	}
-	// A location with metadata is compared like any other: archive says archived.
-	rec := e.do(t, "PUT", documentPath("AGB", stOld), `{"content":`+jsonString(content)+`,"location":"archive","title":"제목"}`, nil)
-	if rec.Code != 409 || !reflect.DeepEqual(details(t, rec), []string{"archived:metadata_differs"}) {
-		t.Errorf("location with metadata: %d %s", rec.Code, rec.Body.String())
-	}
-	// For a new document the location reads as the metadata it stands for.
-	rec = e.putDocument(t, "AGB", stNew, "archive", apiDocText("decision", "보관"), nil)
-	if d := decodeDoc(t, rec); rec.Code != 201 || !d.Archived || d.State != model.StateArchived || d.Location != model.LocationArchive {
-		t.Errorf("new archive: %d %s", rec.Code, rec.Body.String())
-	}
-	rec = e.putDocument(t, "AGB", "archive/2026-06-x/notes.md", "legacy", "# 조사\n", nil)
-	if d := decodeDoc(t, rec); rec.Code != 201 || !d.Imported || !d.Archived || d.Kind != model.DocumentOther || d.Location != model.LocationLegacy {
-		t.Errorf("new legacy archive: %d %s", rec.Code, rec.Body.String())
-	}
-	// archived and imported sent explicitly stop the location from being read.
-	rec = e.do(t, "PUT", documentPath("AGB", stRep), `{"content":`+jsonString(apiDocText("report", "보고"))+`,"location":"archive","archived":false}`, nil)
-	if d := decodeDoc(t, rec); rec.Code != 201 || d.Archived {
-		t.Errorf("explicit archived: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -524,36 +496,6 @@ func sameSet(a, b string) bool {
 		}
 	}
 	return true
-}
-
-func TestPutDocumentLocationValidation(t *testing.T) {
-	e := newEnv(t)
-	e.createProject(t, "AGB", "agent-board")
-	content := jsonString(apiDocText("decision", "본문"))
-
-	// A location that is sent but empty is not a location: 422, not a skipped compatibility branch.
-	for _, loc := range []string{`""`, `"stuff"`, `"History"`} {
-		rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":`+content+`,"location":`+loc+`}`, nil)
-		if rec.Code != 422 || !reflect.DeepEqual(details(t, rec), []string{"location:"}) {
-			t.Errorf("location %s: %d %s", loc, rec.Code, rec.Body.String())
-		}
-	}
-	// A null location is a location that was not sent.
-	if rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":`+content+`,"location":null}`, nil); rec.Code != 201 {
-		t.Errorf("null location: %d %s", rec.Code, rec.Body.String())
-	}
-
-	// The checks run in the order of the specification: project (404), activity (409), then values (422).
-	bad := `{"content":` + content + `,"location":"stuff"}`
-	if rec := e.do(t, "PUT", documentPath("NONE", stNew), bad, nil); rec.Code != 404 {
-		t.Errorf("unknown project: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := e.do(t, "PATCH", "/v1/projects/AGB", `{"status":"archived"}`, nil); rec.Code != 200 {
-		t.Fatalf("archive project: %d", rec.Code)
-	}
-	if rec := e.do(t, "PUT", documentPath("AGB", stNew), bad, nil); rec.Code != 409 || !reflect.DeepEqual(details(t, rec), []string{":project_not_active"}) {
-		t.Errorf("archived project: %d %s", rec.Code, rec.Body.String())
-	}
 }
 
 func TestPutDocumentNoRelationValues(t *testing.T) {
