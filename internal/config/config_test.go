@@ -154,17 +154,30 @@ func TestLoadEmbedding(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := cfg.Embedding
+	if e.Provider != nil {
+		t.Errorf("Provider = %s, want nil when unset", e.Provider)
+	}
 	if !e.Enabled() || e.APIKey != "k" || e.URL != "https://example.test/v1/embeddings" || e.Model != "m" || e.QueryPrefix != "Instruct: x\nQuery: " || e.Interval != 5*time.Minute {
 		t.Errorf("Embedding = %+v", e)
+	}
+
+	cfg, err = Load(with("AGB_EMBEDDING_PROVIDER", `{"order":["x"]}`))
+	if err != nil || string(cfg.Embedding.Provider) != `{"order":["x"]}` {
+		t.Errorf("Provider = %s, %v", cfg.Embedding.Provider, err)
 	}
 
 	for name, tc := range map[string]struct {
 		kv   []string
 		want string
 	}{
-		"url":      {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_MODEL", "m"}, "AGB_EMBEDDING_URL"},
-		"model":    {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_URL", "https://example.test"}, "AGB_EMBEDDING_MODEL"},
-		"interval": {[]string{"AGB_EMBEDDING_INTERVAL", "soon"}, "AGB_EMBEDDING_INTERVAL"},
+		"url":             {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_MODEL", "m"}, "AGB_EMBEDDING_URL"},
+		"model":           {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_URL", "https://example.test"}, "AGB_EMBEDDING_MODEL"},
+		"interval":        {[]string{"AGB_EMBEDDING_INTERVAL", "soon"}, "AGB_EMBEDDING_INTERVAL"},
+		"provider broken": {[]string{"AGB_EMBEDDING_PROVIDER", `{"order":`}, "AGB_EMBEDDING_PROVIDER"},
+		"provider array":  {[]string{"AGB_EMBEDDING_PROVIDER", `["x"]`}, "AGB_EMBEDDING_PROVIDER"},
+		"provider string": {[]string{"AGB_EMBEDDING_PROVIDER", `"x"`}, "AGB_EMBEDDING_PROVIDER"},
+		"provider number": {[]string{"AGB_EMBEDDING_PROVIDER", `1`}, "AGB_EMBEDDING_PROVIDER"},
+		"provider null":   {[]string{"AGB_EMBEDDING_PROVIDER", `null`}, "AGB_EMBEDDING_PROVIDER"},
 	} {
 		_, err := Load(with(tc.kv...))
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret-key") {

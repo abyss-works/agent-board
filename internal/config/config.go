@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -46,6 +47,9 @@ type Embedding struct {
 	Model       string
 	QueryPrefix string // prepended to the query text only
 	Interval    time.Duration
+	// Provider is a JSON object sent as the "provider" field of each
+	// embeddings request; nil leaves the field out.
+	Provider json.RawMessage
 }
 
 // Enabled reports whether the search by meaning should run.
@@ -137,6 +141,14 @@ func Load(getenv func(string) string) (*Config, error) {
 			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_INTERVAL must be a positive duration, got %q", v))
 		} else {
 			cfg.Embedding.Interval = d
+		}
+	}
+	if v := getenv("AGB_EMBEDDING_PROVIDER"); v != "" {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(v), &obj); err != nil || obj == nil {
+			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_PROVIDER must be a JSON object, got %q", v))
+		} else {
+			cfg.Embedding.Provider = json.RawMessage(v)
 		}
 	}
 	if cfg.Embedding.Enabled() {

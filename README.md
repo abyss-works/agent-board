@@ -185,6 +185,7 @@ curl http://127.0.0.1:8420/v1/health
 | `AGB_EMBEDDING_MODEL` | 의미 검색 시 | 임베딩 모델 이름 |
 | `AGB_EMBEDDING_QUERY_PREFIX` | | 검색어에만 앞에 붙이는 문자열. 값에 적은 `\n` 두 글자는 줄바꿈으로 읽음 |
 | `AGB_EMBEDDING_INTERVAL` | | 색인 주기. Go duration 형식, 기본 `1m` |
+| `AGB_EMBEDDING_PROVIDER` | | 임베딩 요청 본문의 `provider` 필드에 그대로 싣는 JSON 객체. 예: `{"order":["<공급자>"]}`. 비우면 필드를 보내지 않음 |
 
 의미 검색의 유사도 하한은 특정 임베딩 모델에 맞춘 값입니다. 다른 모델을 쓰면 검색 결과의 범위가 달라질 수 있습니다. 검색 응답의 `semantic` 필드(`ok`, `disabled`, `failed`)로 의미 검색이 실제로 쓰였는지 알 수 있습니다.
 
