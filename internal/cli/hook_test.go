@@ -50,10 +50,10 @@ func msgItems(n, total int, title string) string {
 
 // runHook runs the session start hook with stdin and requires silence on
 // standard error and exit code 0, which hold whatever happens.
-func runHook(t *testing.T, h *harness, stdin string) string {
+func runHook(t *testing.T, h *harness, stdin string, args ...string) string {
 	t.Helper()
 	h.app.Stdin = strings.NewReader(stdin)
-	if code := h.run("hook", "session-start"); code != 0 || h.stderr.Len() != 0 {
+	if code := h.run(append([]string{"hook", "session-start"}, args...)...); code != 0 || h.stderr.Len() != 0 {
 		t.Fatalf("code=%d stderr=%q", code, h.stderr)
 	}
 	return h.stdout.String()
@@ -252,5 +252,148 @@ func TestHookUsage(t *testing.T) {
 	}
 	if !strings.Contains(Usage, "  hook ") {
 		t.Errorf("the top-level help lacks hook")
+	}
+}
+
+// newHookActorHarness is a harness without AGB_ACTOR whose config file holds
+// cfg, as in a session that the agent tool starts.
+func newHookActorHarness(t *testing.T, cfg Config) (*harness, *fakeServer) {
+	t.Helper()
+	h, srv := newMsgHarness(t, false)
+	delete(h.env, "AGB_ACTOR")
+	if err := saveConfig(h.app.ConfigPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return h, srv
+}
+
+func TestHookSessionStartActsAsTheHookActorOfTheTool(t *testing.T) {
+	h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{"claude": "reviewer"}})
+	out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", "claude")
+	if !strings.HasPrefix(out, "확인하지 않은 메시지 2건 (프로젝트 CLI)\n") {
+		t.Errorf("stdout = %q", out)
+	}
+	if got := srv.last().Header.Get("X-Actor"); got != "reviewer" {
+		t.Errorf("X-Actor = %q", got)
+	}
+}
+
+func TestHookSessionStartActorOrder(t *testing.T) {
+	both := Config{Actor: "base", HookActors: map[string]string{"claude": "reviewer"}}
+	cases := map[string]struct {
+		cfg  Config
+		env  string
+		args []string
+		want string // the actor of the request; "" when the hook stays silent
+	}{
+		"the flag comes first":                     {cfg: both, env: "fromenv", args: []string{"--tool", "claude", "--actor", "fromflag"}, want: "fromflag"},
+		"AGB_ACTOR comes before the hook actor":    {cfg: both, env: "fromenv", args: []string{"--tool", "claude"}, want: "fromenv"},
+		"the hook actor comes before the default":  {cfg: both, args: []string{"--tool", "claude"}, want: "reviewer"},
+		"without --tool the default actor is used": {cfg: both, args: nil, want: "base"},
+		"a tool without a hook actor":              {cfg: both, args: []string{"--tool", "other"}, want: "base"},
+		"without --tool and without a default":     {cfg: Config{HookActors: map[string]string{"claude": "reviewer"}}},
+		"no actor anywhere":                        {args: []string{"--tool", "claude"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, srv := newHookActorHarness(t, c.cfg)
+			if c.env != "" {
+				h.env["AGB_ACTOR"] = c.env
+			}
+			out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), c.args...)
+			if c.want == "" {
+				if out != "" || len(srv.reqs) != 0 {
+					t.Errorf("stdout = %q, requests = %+v", out, srv.reqs)
+				}
+				return
+			}
+			if out == "" || srv.last().Header.Get("X-Actor") != c.want {
+				t.Errorf("stdout = %q, X-Actor = %q, want %q", out, srv.last().Header.Get("X-Actor"), c.want)
+			}
+		})
+	}
+}
+
+// The hook actor is for the hook alone: another command without an actor
+// still has none.
+func TestHookActorIsNotTheActorOfOtherCommands(t *testing.T) {
+	h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{"claude": "reviewer"}})
+	for _, args := range [][]string{{"msg", "list", "-p", "CLI"}, {"msg", "list", "-p", "CLI", "--tool", "claude"}} {
+		if code := h.run(args...); code != 2 || len(srv.reqs) != 0 {
+			t.Errorf("%v: code=%d requests=%+v stderr=%s", args, code, srv.reqs, h.stderr)
+		}
+	}
+	if code := h.run("msg", "list", "-p", "CLI"); code != 2 || !strings.Contains(h.stderr.String(), "행위자가 없습니다") {
+		t.Errorf("code=%d stderr=%s", code, h.stderr)
+	}
+}
+
+func TestHookSessionStartSendsTheSessionIDOfTheInput(t *testing.T) {
+	cases := map[string]struct {
+		id   string // the session_id member as JSON; "" leaves it out
+		args []string
+		want string
+	}{
+		"a session ID":         {id: `"0a1b2c3d-4e5f-6789-abcd-ef0123456789"`, want: "0a1b2c3d-4e5f-6789-abcd-ef0123456789"},
+		"128 characters":       {id: `"` + strings.Repeat("a", 128) + `"`, want: strings.Repeat("a", 128)},
+		"129 characters":       {id: `"` + strings.Repeat("a", 129) + `"`, want: "sess-1"},
+		"a space":              {id: `"has space"`, want: "sess-1"},
+		"empty":                {id: `""`, want: "sess-1"},
+		"not a string":         {id: `12`, want: "sess-1"},
+		"none":                 {want: "sess-1"},
+		"the flag comes first": {id: `"fromstdin"`, args: []string{"--session-id", "fromflag"}, want: "fromflag"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, srv := newMsgHarness(t, false)
+			cwd, err := json.Marshal(hookRepo(t, "CLI"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			stdin := `{"cwd":` + string(cwd) + `}`
+			if c.id != "" {
+				stdin = `{"session_id":` + c.id + `,"cwd":` + string(cwd) + `}`
+			}
+			if out := runHook(t, h, stdin, c.args...); out == "" {
+				t.Fatalf("no output")
+			}
+			if got := srv.last().Header.Get("X-Session-Id"); got != c.want {
+				t.Errorf("X-Session-Id = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestHookSessionStartIgnoresAByteOrderMark(t *testing.T) {
+	h, srv := newMsgHarness(t, false)
+	out := runHook(t, h, "\ufeff"+hookInput(t, hookRepo(t, "CLI")))
+	if !strings.HasPrefix(out, "확인하지 않은 메시지 2건 (프로젝트 CLI)\n") || srv.last().Header.Get("X-Session-Id") != "s" {
+		t.Errorf("stdout = %q", out)
+	}
+}
+
+func TestHookSessionStartIgnoresWhatItDoesNotKnow(t *testing.T) {
+	h, _ := newMsgHarness(t, false)
+	for _, args := range [][]string{{"--bogus"}, {"extra"}, {"--tool"}, {"--tool", "claude", "--later-flag", "v", "extra"}} {
+		if out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), args...); out == "" {
+			t.Errorf("%v: no output", args)
+		}
+	}
+}
+
+func TestConfigShowListsTheHookActors(t *testing.T) {
+	h := newHarness(t, nil, true)
+	if code := h.run("config", "show"); code != 0 || fieldValue(h.stdout.String(), "hook_actors") != "(없음)" {
+		t.Errorf("empty table: code=%d\n%s", code, h.stdout)
+	}
+	if code := h.run("config", "show", "--json"); code != 0 || !strings.Contains(h.stdout.String(), `"hook_actors":{}`) {
+		t.Errorf("empty json: code=%d %s", code, h.stdout)
+	}
+	saveConfig(h.app.ConfigPath, Config{HookActors: map[string]string{"claude": "reviewer", "another": "base"}})
+	if code := h.run("config", "show"); code != 0 || fieldValue(h.stdout.String(), "hook_actors") != "another=base, claude=reviewer" {
+		t.Errorf("table: code=%d\n%s", code, h.stdout)
+	}
+	if code := h.run("config", "show", "--json"); code != 0 || !strings.Contains(h.stdout.String(), `"hook_actors":{"another":"base","claude":"reviewer"}`) {
+		t.Errorf("json: code=%d %s", code, h.stdout)
 	}
 }

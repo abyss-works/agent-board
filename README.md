@@ -144,30 +144,43 @@ go build -ldflags "-X main.version=<버전> -X main.release=<vX.Y.Z>" -o agb ./c
 Claude Code를 쓰는 기기에서는 CLI를 설치한 뒤 한 명령으로 플러그인과 스킬을 함께 설치합니다.
 
 ```bash
-agb setup claude
+agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실행
 ```
 
-이 명령은 다음 셋을 차례로 하고, 하나가 실패하면 그 단계 이름과 `claude`의 오류를 보이고 멈춥니다.
+설치를 실행하는 행위자가 있어야 합니다. 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일의 `actor` 순서로 정합니다. 훅은 이 명령을 실행한 셸의 환경변수 없이 실행되므로, 그 행위자가 쓸 토큰과 서버 주소가 설정 파일에 있어야 합니다. `AGB_TOKEN`, `AGB_URL`, `--url`로만 준 값은 세지 않습니다. 행위자, 토큰, 주소 중 하나가 없으면 아무 단계도 실행하지 않고 종료 코드 2로 끝납니다. 토큰은 `agb login --actor <ID>`로 먼저 받고, 주소는 `agb config set url <주소>`로 저장합니다. 훅은 기본 설정 파일만 읽으므로 `--config`를 주면 아무 단계도 실행하지 않고 종료 코드 2로 끝납니다.
+
+이 명령은 다음을 차례로 하고, 하나가 실패하면 그 단계 이름과 `claude`의 오류를 보이고 멈춥니다.
 
 1. 마켓플레이스 등록: `claude plugin marketplace add abyss-works/agent-board#main`. 이 저장소가 마켓플레이스를 겸하고, 릴리즈 브랜치 `main`에 고정합니다.
 2. 플러그인 설치: `claude plugin install agb@agent-board` (사용자 범위)
 3. 스킬 설치: `agb skill install`과 같습니다. `~/.agents/skills/tool-agb`에 쓰고, `~/.claude/skills`가 다른 폴더이면 거기에도 씁니다. `~/.claude/skills/tool-agb`가 링크이면 그대로 둡니다.
+4. 훅 행위자 저장: 설정 파일의 `hook_actors`에 `claude`의 값으로 이 실행의 행위자를 쓰고 `훅 행위자 저장: claude → <ID>` 줄로 알립니다. 이 값은 훅만 씁니다. 행위자를 주지 않은 다른 명령은 전과 같이 행위자 없음 오류로 끝납니다.
+5. 훅 점검: 훅과 같은 조회를 현재 폴더에서 한 번 하고 결과를 `훅 점검:` 한 줄로 알립니다. 환경변수와 옵션 없이 설정 파일의 값(훅 행위자, 토큰, 주소)만으로 조회합니다. 점검 결과는 종료 코드를 바꾸지 않습니다.
+   - `프로젝트 <KEY>의 확인하지 않은 메시지 N건`: 이 폴더에서 시작한 세션에 그 N건이 보입니다. 0건이면 훅은 아무것도 출력하지 않습니다.
+   - `이 폴더에서는 프로젝트를 판정할 수 없습니다`: 현재 폴더 위에 `.agb.json`이 없습니다. `.agb.json`이 있는 저장소에서 시작한 세션에만 알림이 나옵니다.
+   - `서버에 닿지 않습니다`, `서버가 오류를 돌려주었습니다 (...)`, `서버의 응답을 읽지 못했습니다`, 설정 오류 문구: 그 상태로는 세션에 알림이 나오지 않습니다.
 
 - `claude` 실행 파일이 `PATH`에 없으면 아무것도 설치하지 않고 종료 코드 2로 끝납니다.
-- 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 CLI에 내장된 것으로 맞춥니다.
+- 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 CLI에 내장된 것으로 맞추고, 훅 행위자는 그 실행의 행위자로 바꿉니다.
 - 설치한 플러그인은 새 세션부터 동작합니다.
 
 플러그인이 하는 일:
 
 - 플러그인은 훅 설정만 담습니다. 스킬과 실행 파일은 담지 않으며, 훅은 `PATH`의 `agb`를 셸 없이 직접 실행합니다. Windows에서는 `agb.exe`가 `PATH`에 있어야 합니다.
-- 세션을 시작할 때(새 세션, 재개, `/clear`, 압축 뒤) `agb hook session-start`를 부릅니다. 이 명령은 세션의 작업 폴더가 속한 저장소의 `.agb.json`에서 프로젝트를 찾아, 그 프로젝트 키가 확인하지 않은 메시지를 최대 20건 알립니다. `agb msg list --unread`와 같은 조회이고 확인 표시를 만들지 않습니다.
-- `.agb.json`이 없거나, 설정이나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
+- 세션을 시작할 때(새 세션, 재개, `/clear`, 압축 뒤) `agb hook session-start --tool claude`를 부릅니다. 이 명령은 세션의 작업 폴더가 속한 저장소의 `.agb.json`에서 프로젝트를 찾아, 그 프로젝트 키가 확인하지 않은 메시지를 최대 20건 알립니다. `agb msg list --unread`와 같은 조회이고 확인 표시를 만들지 않습니다.
+- 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값, 설정 파일의 `actor` 순서로 정합니다. Claude Code가 훅을 직접 실행하므로 평소에는 `agb setup claude`가 저장한 훅 행위자로 조회합니다.
+- 훅은 Claude Code가 표준 입력으로 준 `session_id`를 요청의 세션 ID로 씁니다. 세션 ID 형식(영숫자로 시작하는 영숫자, `.`, `_`, `-` 1~128자)에 맞지 않으면 `AGB_SESSION_ID`, 설정 파일의 `session_id`, 기본값 순서로 정합니다.
+- `.agb.json`이 없거나, 설정이나 행위자나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
+- 알림이 나오지 않으면 다음을 확인합니다.
+  1. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 봅니다.
+  2. `agb config show`의 `hook_actors`에 `claude=<ID>`가 있고 `actor_tokens`에 그 행위자가 있는지 봅니다.
+  3. 플러그인이 옛 판이면 훅이 `--tool claude` 없이 불려 훅 행위자를 쓰지 않습니다. 아래 순서로 플러그인을 갱신합니다.
 
 갱신은 CLI를 먼저, 플러그인을 나중에 합니다. 새 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서입니다. `hook` 명령을 모르는 옛 CLI에서는 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보입니다. 세션 시작은 막지 않습니다.
 
 ```bash
 go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main   # 1. CLI
-agb setup claude                                      # 2. 스킬을 새 CLI의 것으로 맞춤
+agb setup claude --actor <ID>                         # 2. 스킬을 새 CLI의 것으로 맞추고 훅 행위자를 저장
 claude plugin marketplace update agent-board          # 3. 마켓플레이스 목록 갱신
 claude plugin update agb@agent-board                  # 4. 플러그인 갱신 (새 세션부터 적용)
 ```
@@ -264,7 +277,7 @@ agb --actor owner project create APP "예제 앱"
 ```bash
 agb --actor claude login             # 승인 주소와 코드가 나오면 사용자가 웹 /device 에서 승인
 agb skill install                    # CLI와 같은 판의 사용 절차를 설치 (갱신 상세는 skills/tool-agb/references/setup.md)
-agb setup claude                     # Claude Code 이면 위 줄 대신: 플러그인과 스킬을 함께 설치
+agb --actor claude setup claude      # Claude Code 이면 위 줄 대신: 플러그인과 스킬을 함께 설치
 export AGB_ACTOR=claude AGB_SESSION_ID=<세션 ID>
 ```
 
