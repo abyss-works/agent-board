@@ -180,7 +180,8 @@ func TestPutDocumentRefusesLocation(t *testing.T) {
 	content := jsonString(apiDocText("decision", "본문"))
 	for _, loc := range []string{`"history"`, `"archive"`, `""`, `null`} {
 		rec := e.do(t, "PUT", documentPath("AGB", stNew), `{"content":`+content+`,"location":`+loc+`}`, nil)
-		if rec.Code != 400 || !reflect.DeepEqual(details(t, rec), []string{"location:unknown_field"}) {
+		if rec.Code != 400 || !reflect.DeepEqual(details(t, rec), []string{"location:unknown_field"}) ||
+			!strings.Contains(rec.Body.String(), "location은 더 이상 받지 않습니다. CLI를 v0.9 이상으로 갱신하세요.") {
 			t.Errorf("location %s: %d %s", loc, rec.Code, rec.Body.String())
 		}
 	}

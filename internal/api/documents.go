@@ -47,6 +47,11 @@ var documentFields = map[string]bool{
 func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 	b, aerr := readBodyLimit(w, r, documentFields, maxDocumentBodyBytes, errDocumentTooLarge)
 	if aerr != nil {
+		for i, d := range aerr.Details {
+			if d.Field == "location" && d.Reason == "unknown_field" {
+				aerr.Details[i].Message = "location은 더 이상 받지 않습니다. CLI를 v0.9 이상으로 갱신하세요."
+			}
+		}
 		writeError(w, aerr)
 		return
 	}

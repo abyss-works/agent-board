@@ -261,7 +261,6 @@ func TestPutDocumentBadRequests(t *testing.T) {
 	}{
 		"unknown field":     {`{"content":` + jsonString(good) + `,"sha256":"abc"}`, "sha256"},
 		"a project field":   {`{"content":` + jsonString(good) + `,"project":"AGB"}`, "project"},
-		"location not text": {`{"location":1,"content":` + jsonString(good) + `}`, "location"},
 		"content not text":  {`{"content":5}`, "content"},
 		"content is a list": {`{"content":["a"]}`, "content"},
 		"not JSON":          {`{"content":`, ""},

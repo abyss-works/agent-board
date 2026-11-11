@@ -321,7 +321,7 @@ func TestDocuments(t *testing.T) {
 		}
 		wantError(t, owner.doRaw(t, "PUT", path, []byte(`{"content":`)), 400, "bad_request")
 		wantError(t, owner.doRaw(t, "PUT", path, []byte(`["history"]`)), 400, "bad_request")
-		huge := owner.do(t, "PUT", path, map[string]any{"location": "history", "content": head + strings.Repeat("a", 7<<20)})
+		huge := owner.do(t, "PUT", path, map[string]any{"content": head + strings.Repeat("a", 7<<20)})
 		wantError(t, huge, 413, "payload_too_large")
 		wantError(t, putDocument(t, owner, projectKey("NOPE"), "2026-10-20-1544-decision-x.md", "history", ok), 404, "not_found")
 
@@ -565,7 +565,7 @@ func TestDocuments(t *testing.T) {
 			{"GET", "/v1/documents"},
 			{"PUT", documentPath(p.Key, "2026-10-22-0900-report-nobody.md")},
 		}
-		body := []byte(`{"location":"history","content":"x"}`)
+		body := []byte(`{"content":"x"}`)
 		for _, tg := range targets {
 			raw := []byte(nil)
 			if tg.method == "PUT" {
