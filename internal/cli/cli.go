@@ -30,8 +30,13 @@ type App struct {
 	SkillsDir  string // default global skills folder for agb skill install; empty when the home folder is unknown
 	HTTP       *http.Client
 
+	// ClaudeSkillsDir is the global skills folder of Claude Code, for agb setup claude; empty when the home folder is unknown
+	ClaudeSkillsDir string
+
 	Sleep       func(ctx context.Context, d time.Duration) error // waits for d, or until ctx ends with its error; nil waits in real time
 	OpenBrowser func(url string) error                           // starts the user's browser on url without waiting for it; nil opens nothing
+	// RunClaude runs the claude executable with args and returns its combined output; nil runs the one on PATH
+	RunClaude func(ctx context.Context, args ...string) ([]byte, error)
 
 	Stdin            io.Reader
 	Stdout           io.Writer
@@ -69,6 +74,9 @@ func New(version string, getenv func(string) string) *App {
 	}
 	if d, err := defaultSkillsDir(); err == nil {
 		a.SkillsDir = d
+	}
+	if d, err := defaultClaudeSkillsDir(); err == nil {
+		a.ClaudeSkillsDir = d
 	}
 	return a
 }
@@ -176,6 +184,7 @@ const Usage = `사용법: agb <명령> [옵션]
   login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
   logout            이 행위자의 토큰 폐기와 로컬 삭제
   skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
+  setup             에이전트 도구에 agb 연결: 플러그인과 스킬 설치 (setup claude)
   hook              에이전트 도구의 훅이 부르는 명령 (session-start)
 
 상태:
@@ -253,7 +262,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb hel
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, skillCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, setupCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
 	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
