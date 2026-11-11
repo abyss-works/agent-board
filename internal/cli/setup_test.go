@@ -427,3 +427,25 @@ func TestSetupClaudeChecksTheHook(t *testing.T) {
 		})
 	}
 }
+
+// The hook reads the default config file alone, so a setup against another
+// file would save and check what the hook never sees.
+func TestSetupClaudeRefusesAnotherConfigFile(t *testing.T) {
+	h, f := newSetupHarness(t)
+	other := filepath.Join(t.TempDir(), "config.json")
+	full := Config{URL: "http://127.0.0.1:1", Tokens: map[string]string{"claude": "agb_file-token-of-claude"}}
+	if err := saveConfig(other, full); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"setup", "claude", "--config", other}, {"--config", other, "setup", "claude"}, {"setup", "claude", "--config", h.app.ConfigPath}} {
+		if code := h.run(args...); code != 2 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, h.stderr)
+		}
+		if !strings.Contains(h.stderr.String(), "--config") {
+			t.Errorf("%v: stderr = %s", args, h.stderr)
+		}
+		if cfg, err := loadConfig(other); !ranNothing(h, f) || err != nil || !reflect.DeepEqual(cfg, full) {
+			t.Errorf("%v: a step ran or a config file changed: calls=%v other=%+v (%v)", args, f.calls, cfg, err)
+		}
+	}
+}

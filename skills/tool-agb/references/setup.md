@@ -65,7 +65,7 @@ Claude Code를 쓰는 기기에서는 `agb skill install` 대신 `agb setup clau
 agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실행
 ```
 
-- 설치를 실행하는 행위자가 있어야 한다(`--actor`, `AGB_ACTOR`, 설정 파일의 `actor` 순서). 훅은 이 명령을 실행한 셸의 환경변수 없이 실행되므로, 그 행위자가 쓸 토큰과 서버 주소가 설정 파일에 있어야 한다. `AGB_TOKEN`, `AGB_URL`, `--url`로만 준 값은 세지 않는다. 행위자, 토큰, 주소 중 하나가 없으면 아무 단계도 실행하지 않고 종료 코드 2로 끝난다. 토큰이 없으면 `agb login --actor <ID>`를, 주소가 없으면 `agb config set url <주소>`를 먼저 한다.
+- 설치를 실행하는 행위자가 있어야 한다(`--actor`, `AGB_ACTOR`, 설정 파일의 `actor` 순서). 훅은 이 명령을 실행한 셸의 환경변수 없이 실행되므로, 그 행위자가 쓸 토큰과 서버 주소가 설정 파일에 있어야 한다. `AGB_TOKEN`, `AGB_URL`, `--url`로만 준 값은 세지 않는다. 행위자, 토큰, 주소 중 하나가 없으면 아무 단계도 실행하지 않고 종료 코드 2로 끝난다. 토큰이 없으면 `agb login --actor <ID>`를, 주소가 없으면 `agb config set url <주소>`를 먼저 한다. 훅은 기본 설정 파일만 읽으므로 `--config`를 주면 아무 단계도 실행하지 않고 종료 코드 2로 끝난다.
 - 하는 일: `claude plugin marketplace add abyss-works/agent-board#main`, `claude plugin install agb@agent-board`, 스킬 설치, 훅 행위자 저장, 훅 점검을 차례로 한다. 스킬은 `~/.agents/skills/tool-agb/`에 쓰고, `~/.claude/skills`가 다른 폴더이면 거기에도 쓴다. `~/.claude/skills/tool-agb`가 링크이면 그대로 둔다.
 - 훅 행위자: 설정 파일의 `hook_actors`에 `claude`의 값으로 이 실행의 행위자를 쓴다. 훅만 이 값을 쓰고, 다른 명령의 행위자는 바뀌지 않는다. 다시 실행하면 그 실행의 행위자로 바꾼다.
 - Expected: 단계마다 `claude`의 출력과 `설치했습니다:` 또는 `변경 없음:` 줄, `훅 행위자 저장: claude → <ID>` 줄, `훅 점검:` 줄이 나오고 종료 코드 0이다. 다시 실행해도 된다.

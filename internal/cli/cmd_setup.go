@@ -27,7 +27,8 @@ const (
 
 var setupCmd = &command{name: "setup", summary: "에이전트 도구에 agb 연결 (플러그인과 스킬 설치)", subs: []*command{
 	setupClaudeCmd,
-}, note: `설치를 실행하는 행위자(--actor <ID> 나 AGB_ACTOR)와 그 행위자의 토큰이 있어야 합니다. 설치한 훅은 그 행위자로 조회합니다.
+}, note: `설치를 실행하는 행위자(--actor <ID> 나 AGB_ACTOR)가 있어야 하고, 기본 설정 파일에 서버 주소와 그 행위자가 쓸 토큰이
+있어야 합니다. 설치한 훅은 그 행위자로, 기본 설정 파일의 주소와 토큰으로 조회합니다.
 `}
 
 var setupClaudeCmd = &command{
@@ -38,6 +39,7 @@ Claude Code 에 agb 를 연결합니다. 설치를 실행하는 행위자가 있
 훅은 이 셸의 환경변수 없이 실행되므로, 그 행위자가 쓸 토큰과 서버 주소가 설정 파일에 있어야 합니다(AGB_TOKEN,
 AGB_URL, --url 은 세지 않습니다). 행위자, 토큰, 주소 중 하나가 없으면 아무것도 하지 않습니다. 토큰은
 agb login --actor <ID> 로 받고, 주소는 agb config set url <주소> 로 저장합니다.
+훅은 기본 설정 파일만 읽으므로 --config 를 주면 아무것도 하지 않고 사용법 오류로 끝납니다.
 
 다음을 차례로 하고, 하나가 실패하면 거기서 멈춥니다.
 
@@ -74,6 +76,9 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		if a.SkillsDir == "" {
 			return usageErrorf("홈 폴더를 알 수 없어 스킬을 둘 곳이 없습니다.")
 		}
+		if g.config != "" {
+			return usageErrorf("--config 와 함께 쓸 수 없습니다. 훅은 기본 설정 파일만 읽으므로 다른 설정 파일에 저장한 훅 행위자를 쓰지 못합니다. --config 없이 다시 실행하세요.")
+		}
 		path, err := a.configPath(g)
 		if err != nil {
 			return err
@@ -92,10 +97,10 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		// The agent tool runs the hook without the environment of this
 		// shell, so the hook gets its token and its address from the file.
 		if tokenOf(actor, noEnv, file) == "" {
-			return usageErrorf("설정 파일에 행위자 %s 가 쓸 토큰이 없습니다. 훅은 이 셸의 환경변수 없이 실행되므로 AGB_TOKEN 을 쓸 수 없습니다. `agb login --actor %s`로 토큰을 설정 파일에 받은 뒤 다시 실행하세요.", actor, actor)
+			return usageErrorf("설정 파일에 행위자 %s 가 쓸 토큰이 없습니다. 훅은 이 셸의 환경변수를 물려받지 않으므로 토큰이 설정 파일에 있어야 합니다(AGB_TOKEN 만으로는 부족합니다). `agb login --actor %s`로 토큰을 설정 파일에 받은 뒤 다시 실행하세요.", actor, actor)
 		}
 		if file.URL == "" {
-			return usageErrorf("설정 파일에 서버 주소가 없습니다. 훅은 이 셸의 환경변수 없이 실행되므로 AGB_URL 과 --url 을 쓸 수 없습니다. `agb config set url <주소>`로 저장한 뒤 다시 실행하세요.")
+			return usageErrorf("설정 파일에 서버 주소가 없습니다. 훅은 이 셸의 환경변수와 옵션을 물려받지 않으므로 주소가 설정 파일에 있어야 합니다(AGB_URL 이나 --url 만으로는 부족합니다). `agb config set url <주소>`로 저장한 뒤 다시 실행하세요.")
 		}
 		run := a.RunClaude
 		if run == nil {
@@ -143,7 +148,7 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		// not change how the setup ends.
 		hook := *a
 		hook.Getenv = noEnv
-		_, summary := hook.unreadNotice(ctx, &globals{config: g.config}, claudeTool, hookStdin{})
+		_, summary := hook.unreadNotice(ctx, &globals{}, claudeTool, hookStdin{})
 		_, err = fmt.Fprintf(a.Stdout, "훅 점검: %s\n", summary)
 		return err
 	},
