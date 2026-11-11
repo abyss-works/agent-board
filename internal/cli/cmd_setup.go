@@ -54,7 +54,8 @@ agb login --actor <ID> 로 받고, 주소는 agb config set url <주소> 로 저
                       건수이거나, 보이지 않을 이유(프로젝트를 판정할 수 없음, 서버에 닿지 않음 등)입니다.
                       점검 결과는 종료 코드를 바꾸지 않습니다.
 
-플러그인은 세션을 시작할 때 agb hook session-start --tool ` + claudeTool + ` 를 불러 확인하지 않은 메시지를 알립니다.
+플러그인은 세션을 시작할 때 agb hook session-start --tool ` + claudeTool + ` 를 불러 확인하지 않은 메시지를 알리고,
+Bash 도구 호출 전에 agb hook pre-commit --tool ` + claudeTool + ` 를 불러 git commit 전에 기록 문서를 검사합니다.
 훅은 저장된 훅 행위자와 Claude Code 의 세션 ID 로 조회합니다. 새 세션부터 적용됩니다.
 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 이 CLI 에 내장된 것으로 맞추고, 훅 행위자는
 이 실행의 행위자로 바꿉니다.
