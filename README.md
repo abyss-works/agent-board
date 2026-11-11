@@ -15,13 +15,13 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 사용자가 답할 것(검토 대기, 결정이 필요한 질문, 아직 확인하지 않은 이슈, 사용자가 직접 할 일)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`).
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
 - 이슈, 댓글, 기록 문서를 키워드(SQLite FTS5)로 찾고, 임베딩 API를 설정하면 의미 검색을 섞어 찾습니다. 이슈와 문서의 연결을 따라가 선례를 모아 봅니다(`agb recall`, `agb graph`).
-- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`).
+- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
 
 ## 설계 원칙
 
 - API가 먼저입니다. CLI와 웹은 같은 REST API를 쓰는 클라이언트이고, 업무 규칙은 서버에만 있습니다.
 - 서버가 데이터를 단독으로 소유합니다. SQLite 파일 하나를 서버만 열고, 여러 기기는 API로만 접근합니다.
-- 기록은 지우지 않습니다. 이슈, 프로젝트, 주제, 마일스톤의 변경은 행위자, 세션, 기기, 시각, 바뀐 필드의 이전 값과 함께 남습니다. 문서의 아카이브와 관계 변경도 같은 방식으로 남고, 메시지 삭제는 삭제한 행위자와 시각만 남깁니다. 이슈, 프로젝트, 주제, 마일스톤의 삭제는 행을 지우지 않는 상태 변경이라 다른 상태로 되돌릴 수 있습니다. 메시지는 행을 지우지 않지만, 짧게 사는 만료형 데이터라 변경의 이전 값을 남기지 않고 삭제를 되돌리는 경로도 두지 않습니다. 이 두 가지가 보존 원칙의 예외입니다. 지운 메시지와 기간이 지난 메시지는 기본 목록에서만 빠지고, `agb msg list --all`과 `agb msg get`으로 볼 수 있습니다.
+- 기록은 지우지 않습니다. 이슈, 프로젝트, 주제, 마일스톤의 변경은 행위자, 세션, 기기, 시각, 바뀐 필드의 이전 값과 함께 남습니다. 문서의 아카이브와 관계 변경도 같은 방식으로 남고, 메시지 삭제는 삭제한 행위자와 시각만 남깁니다. 이슈, 프로젝트, 주제, 마일스톤의 삭제는 행을 지우지 않는 상태 변경이라 다른 상태로 되돌릴 수 있습니다. 메시지는 행을 지우지 않지만, 짧게 사는 만료형 데이터라 변경의 이전 값을 남기지 않고 삭제를 되돌리는 경로도 두지 않습니다. 이 두 가지가 보존 원칙의 예외입니다. 지운 메시지와 기간이 지난 메시지는 기본 목록에서만 빠지고, `agb msg list --all`과 `agb msg get`으로 볼 수 있습니다. 메시지의 확인 표시(`agb msg ack`)는 읽은 쪽 이름마다 한 번 남기고 고치거나 지우지 않으며, 메시지를 지우지도 않습니다.
 - 데이터를 주고, 판단은 하지 않습니다. agb는 저장하고 꺼내 줍니다. 반복되는 문제를 규칙으로 올릴지 같은 판단은 읽는 쪽(사용자나 에이전트)이 합니다.
 - 외부 도구가 아는 상태는 저장하지 않습니다. git 브랜치, 커밋, PR은 참조(`refs`)로만 가리킵니다.
 - 규범은 저장소에 둡니다. 에이전트가 따를 규칙과 명세는 각 프로젝트의 git 저장소가 정본이고, agb에는 선례와 근거가 되는 기록만 모읍니다.
@@ -47,7 +47,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 이슈 (issue) | `key`(`APP-12` 형식), `title`, `body`, `type`, `priority`, `labels`, `refs`, `decision_needed`, `recheck_condition`, `version` | `backlog`, `doing`, `review`, `done`, `cancelled`, `deleted` | 상위 이슈(`parent`), 선행 이슈(`depends_on`), 참조(`refs`), 주제, 마일스톤 |
 | 활동 (activity) | `kind`(`created`/`updated`/`commented`), `changes`, `summary`, `comment_kind`, `body` | 추가만 함 | 이슈 하나에 속함. 댓글도 활동 행 |
 | 기록 문서 (document) | `name`, `kind`, `date`, `title`, `tags`, `archived`, `imported`, `sha256`, 원문 | `current`, `superseded`, `archived`(계산값) | `supersedes`, `related`(문서), `about`(이슈) |
-| 메시지 (message) | `to`, `title`, `body`, `expires_at` | `active`, `expired`, `deleted` | 프로젝트에 속함 |
+| 메시지 (message) | `to`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함 |
 | 토큰 (token) | `actor`, `client_host`, `last_used_at`, `revoked_at` | 활성, 폐기 | 에이전트 행위자 하나 |
 | 임베딩, 유사 문서 | 청크별 벡터, 문서 쌍과 점수 | 파생 데이터 | 의미 검색과 `similar` 그래프 간선 |
 
@@ -256,6 +256,8 @@ agb graph APP-12 --depth 2
 
 ```bash
 agb msg put -p APP --to codex -t "배포 끝" --ttl 3d
+agb msg list -p APP --unread          # 내가 확인하지 않은 메시지
+agb msg ack 12 13                     # 처리한 뒤 확인 표시
 agb digest --since 3d
 agb stats
 ```
@@ -276,7 +278,7 @@ agb stats
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
 | 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
 | 기록 문서 | `GET /projects/{key}/documents`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
-| 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}` |
+| 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |
 | 로그인과 토큰 | `POST /device-authorizations`, `GET, PATCH /device-authorizations/{user_code}`(사용자 전용), `GET /tokens`(사용자 전용), `POST /tokens`, `DELETE /tokens/current`, `DELETE /tokens/{id}`(사용자 전용) |
 

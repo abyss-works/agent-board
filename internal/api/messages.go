@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
 func (h *handler) registerMessages(mux *http.ServeMux) {
 	route(mux, "/v1/projects/{key}/messages", methods{"GET": h.listMessages, "POST": h.createMessage})
 	route(mux, "/v1/messages/{id}", methods{"GET": h.getMessage, "DELETE": h.deleteMessage})
+	route(mux, "/v1/messages/{id}/ack", methods{"POST": h.ackMessage})
 }
 
 // messageID reads the {id} path value. An id that is not a positive integer
@@ -25,7 +27,10 @@ func messageID(r *http.Request) (int64, *apiError) {
 
 func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	f := store.MessageFilter{Project: r.PathValue("key"), To: q.one("to")}
+	f := store.MessageFilter{Project: r.PathValue("key"), To: q.one("to"), UnreadBy: q.one("unread_by")}
+	if f.UnreadBy != "" && model.ValidateMessageReader(f.UnreadBy) != nil {
+		q.add("unread_by", fmt.Sprintf("공백과 제어 문자 없이 1~%d자여야 합니다.", model.MaxMessageToRunes))
+	}
 	if all := parseBool(q, "all"); all != nil {
 		f.All = *all
 	}
@@ -100,4 +105,34 @@ func (h *handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// ackMessage records that the reader named in the body acknowledged a
+// message. A null or missing reader is left empty for validation to report.
+func (h *handler) ackMessage(w http.ResponseWriter, r *http.Request) {
+	id, aerr := messageID(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	b, aerr := readBody(w, r, map[string]bool{"reader": true})
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var reader string
+	if _, _, aerr := field(b, "reader", &reader); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	read, err := h.store.AckMessage(r.Context(), TraceFrom(r.Context()), id, reader)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, read)
 }

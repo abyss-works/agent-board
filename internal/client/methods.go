@@ -369,11 +369,13 @@ func (c *Client) PutMessage(ctx context.Context, project string, in map[string]a
 }
 
 // ListMessages lists the messages of a project, newest first. An empty to
-// matches every addressee; all adds the expired and deleted messages. A zero
-// page field is left to the server default.
-func (c *Client) ListMessages(ctx context.Context, project, to string, all bool, page Page) (*Response, error) {
+// matches every addressee; a unreadBy leaves out the messages that reader
+// acknowledged; all adds the expired and deleted messages. A zero page field
+// is left to the server default.
+func (c *Client) ListMessages(ctx context.Context, project, to, unreadBy string, all bool, page Page) (*Response, error) {
 	v := url.Values{}
 	set(v, "to", to)
+	set(v, "unread_by", unreadBy)
 	page.addTo(v)
 	if all {
 		v.Set("all", "true")
@@ -384,6 +386,11 @@ func (c *Client) ListMessages(ctx context.Context, project, to string, all bool,
 // GetMessage fetches one message with its body, whatever its state.
 func (c *Client) GetMessage(ctx context.Context, id int64) (*Response, error) {
 	return c.Request(ctx, http.MethodGet, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// AckMessage records that reader acknowledged a message.
+func (c *Client) AckMessage(ctx context.Context, id int64, reader string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/messages/"+strconv.FormatInt(id, 10)+"/ack", map[string]any{"reader": reader}, nil)
 }
 
 // DeleteMessage soft deletes a message.

@@ -41,6 +41,19 @@ type Message struct {
 	ExpiresAt      Time    `json:"expires_at"`
 	DeletedAt      *Time   `json:"deleted_at"`
 	DeletedBy      *string `json:"deleted_by"`
+	// Reads is nil in lists, which leave the reads out.
+	Reads []MessageRead `json:"reads,omitzero"`
+}
+
+// MessageRead is the mark of one reader on one message: who acknowledged it
+// under that reader name, when, and from which session and host.
+type MessageRead struct {
+	MessageID   int64  `json:"message_id"`
+	Reader      string `json:"reader"`
+	ReadAt      Time   `json:"read_at"`
+	ReadBy      string `json:"read_by"`
+	ReadSession string `json:"read_session"`
+	ReadHost    string `json:"read_host"`
 }
 
 // MessageTTL reads a time to live: a whole number of days such as 3d, or a
@@ -69,15 +82,29 @@ func MessageTTL(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// validMessageLabel reports whether s can name an addressee or a reader: 1 to
+// MaxMessageToRunes characters without spaces or control characters.
+func validMessageLabel(s string) bool {
+	n := utf8.RuneCountInString(s)
+	return n >= 1 && n <= MaxMessageToRunes && strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+}
+
+// ValidateMessageReader checks the reader name of a read mark. It follows the
+// rule of the to label of a message, and it cannot be empty.
+func ValidateMessageReader(reader string) error {
+	var e ValidationError
+	if !validMessageLabel(reader) {
+		e.add("reader", "공백과 제어 문자 없이 1~%d자여야 합니다.", MaxMessageToRunes)
+	}
+	return e.orNil()
+}
+
 // ValidateMessage checks the fields of a new message. An empty to means the
 // message has no addressee and an empty ttl the default.
 func ValidateMessage(to, title, body, ttl string) error {
 	var e ValidationError
-	if to != "" {
-		n := utf8.RuneCountInString(to)
-		if n > MaxMessageToRunes || strings.IndexFunc(to, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-			e.add("to", "공백과 제어 문자 없이 1~%d자여야 합니다.", MaxMessageToRunes)
-		}
+	if to != "" && !validMessageLabel(to) {
+		e.add("to", "공백과 제어 문자 없이 1~%d자여야 합니다.", MaxMessageToRunes)
 	}
 	if n := utf8.RuneCountInString(title); n < 1 || n > MaxTitleRunes {
 		e.add("title", "1~%d자여야 합니다.", MaxTitleRunes)
