@@ -14,7 +14,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 | 할 일 | 명령 |
 |---|---|
 | 현황, 다음 할 일 | `agb agenda -p <KEY>`, `agb project overview <KEY>` (1절) |
-| 이슈 등록 | `agb issue create -p <KEY> -t "<제목>" --type <종류> --body-file -` (2절) |
+| 이슈 등록 | `agb issue create -p <KEY> -t "<제목>" --type <종류> --body-file -` (observation은 `--recheck` 필수, 2절) |
 | 상태 변경 | `agb issue update <ISSUE> --status doing` (3절) |
 | 댓글 쓰기, 완료 | `agb issue comment <ISSUE> --summary "<요약>" --body "<내용>"`, `--status done` (4, 5절) |
 | 댓글 읽기 | `agb issue activity <ISSUE> --fields kind,actor,at,body --text` ("출력과 종료 코드") |
@@ -175,7 +175,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 3. 등록한다. 제목과 본문은 "이슈 템플릿"의 해당 종류를 따른다. 공통 필수는 `-p`, `-t`, 본문이다. 종류에 따라 필수가 더해진다(`observation`은 `--recheck`). `--type`은 생략하면 `feature`다.
    ```
-   agb issue create -p <KEY> -t "<제목>" --type <종류> [--priority <P0~P3>] [--label <라벨>] [--ref <종류:값>] --body-file - <<'EOF'
+   agb issue create -p <KEY> -t "<제목>" --type <종류> [--priority <P0~P3>] [--label <라벨>] [--ref <종류:값>] [--recheck "<조건>"] --body-file - <<'EOF'
    <종류별 템플릿을 채운 본문>
    EOF
    ```
@@ -224,7 +224,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 
 ### 선택 단계: 마일스톤
 
-최소 경로를 마친 뒤, 이 이슈가 들어갈 버전이 분명할 때 한다. `agb issue create`에 `--milestone "<이름>"`으로 함께 줄 수도 있다.
+이 이슈가 들어갈 버전이 분명할 때 한다. 등록할 때 `agb issue create`에 `--milestone "<이름>"`으로 함께 주거나, 최소 경로로 등록한 뒤 붙일 수 있다.
 
 마일스톤은 사용자가 정한 로드맵 버전이다. 목록에서 고른다.
 ```
@@ -256,7 +256,7 @@ agb milestone list -p <KEY>
      EOF
      agb issue update <ISSUE> [--add-ref doc:<반영한 문서 파일명>] --decision-needed none
      ```
-   - 답을 받지 못하면 표시를 그대로 두고 그 이슈의 작업을 진행하지 않는다.
+   - 답을 받기 전에는 표시를 그대로 두고 그 이슈의 작업을 진행하지 않는다.
 
 ### 결정 필요 표시
 
@@ -417,9 +417,11 @@ agb milestone list -p <KEY>
 | `decisions` | 이슈의 `decision_needed` 질문 |
 | `unacknowledged` | 등록된 이슈를 확인했는지 |
 
-- 기본값으로 정한 시점 중 최종 보고 전에는 이번 세션에서 만들었거나 맡았거나 상태를 바꾼 이슈만 묻는다.
-- 그 밖의 항목은 묻지 않고 보고에 칸별 개수를 한 줄로 쓴다. 예: `남은 사용자 차례(AGB): 검토 2, 결정 필요 1, 미확인 3`
-- 기본값으로 정한 시점 중 사용자가 현황이나 남은 일을 물을 때는 그 프로젝트의 항목을 모두 묻는다.
+묻는 범위는 시점과 관계없이 다음과 같다.
+
+- 최종 보고 전에는 이번 세션에서 만들었거나 맡았거나 상태를 바꾼 이슈의 항목만 묻는다.
+- 최종 보고 전에 묻지 않은 그 밖의 항목은 보고에 칸별 개수를 한 줄로 쓴다. 예: `남은 사용자 차례(AGB): 검토 2, 결정 필요 1, 미확인 3`
+- 사용자가 현황이나 남은 일을 물으면 그 프로젝트의 항목을 모두 묻는다.
 - 이번 대화에서 이미 답을 받은 항목은 다시 묻지 않는다.
 - 항목이 없으면 묻지 않고 보고에 "사용자 차례 없음"이라고 쓴다.
 
