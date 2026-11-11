@@ -21,12 +21,14 @@ type MessageInput struct {
 
 // MessageFilter selects the messages of a project. Without All, messages that
 // are deleted or expired are left out. An empty To matches every addressee.
+// A UnreadBy leaves out the messages that reader acknowledged.
 type MessageFilter struct {
-	Project string
-	To      string
-	All     bool
-	Limit   int
-	Offset  int
+	Project  string
+	To       string
+	UnreadBy string
+	All      bool
+	Limit    int
+	Offset   int
 }
 
 const messageCols = `m.id, p.key, m.to_label, m.title, m.body, m.created_at, m.created_by, m.created_session, m.created_host,
@@ -85,9 +87,27 @@ func scanMessage(sc rowScanner, now model.Time, withBody bool) (*model.Message, 
 	return &m, nil
 }
 
-// GetMessage returns a message by id, deleted or expired ones included.
+// GetMessage returns a message by id with its reads, deleted or expired ones
+// included.
 func (s *Store) GetMessage(ctx context.Context, id int64) (*model.Message, error) {
-	return getMessage(ctx, s.db, id, s.stamp())
+	m, err := getMessage(ctx, s.db, id, s.stamp())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `select `+messageReadCols+` from message_read where message_id = ? order by read_at, reader`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m.Reads = []model.MessageRead{}
+	for rows.Next() {
+		r, err := scanMessageRead(rows)
+		if err != nil {
+			return nil, err
+		}
+		m.Reads = append(m.Reads, *r)
+	}
+	return m, rows.Err()
 }
 
 func getMessage(ctx context.Context, q querier, id int64, now model.Time) (*model.Message, error) {
@@ -114,6 +134,10 @@ func (s *Store) ListMessages(ctx context.Context, f MessageFilter) ([]model.Mess
 	if !f.All {
 		cond += ` and m.deleted_at is null and m.expires_at > ?`
 		args = append(args, now.String())
+	}
+	if f.UnreadBy != "" {
+		cond += ` and not exists (select 1 from message_read r where r.message_id = m.id and r.reader = ?)`
+		args = append(args, f.UnreadBy)
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `select count(*)`+messageFrom+cond, args...).Scan(&total); err != nil {
@@ -204,4 +228,53 @@ func (s *Store) DeleteMessage(ctx context.Context, tr model.Trace, id int64) (*m
 		return nil, err
 	}
 	return s.GetMessage(ctx, id)
+}
+
+const messageReadCols = `message_id, reader, read_at, read_by, read_session, read_host`
+
+func scanMessageRead(sc rowScanner) (*model.MessageRead, error) {
+	var r model.MessageRead
+	var at string
+	if err := sc.Scan(&r.MessageID, &r.Reader, &at, &r.ReadBy, &r.ReadSession, &r.ReadHost); err != nil {
+		return nil, err
+	}
+	var err error
+	r.ReadAt, err = model.ParseTime(at)
+	return &r, err
+}
+
+// AckMessage records that reader acknowledged a message, whatever the state
+// of the message, and returns the record. The actor, session and host of the
+// trace are kept with it. Acknowledging again writes nothing and returns the
+// first record. A project that is not active takes no new record, like any
+// other write.
+func (s *Store) AckMessage(ctx context.Context, tr model.Trace, id int64, reader string) (*model.MessageRead, error) {
+	const get = `select ` + messageReadCols + ` from message_read where message_id = ? and reader = ?`
+	now := s.stamp()
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		var status string
+		err := tx.QueryRowContext(ctx, `select p.status from message m join project p on p.id = m.project_id where m.id = ?`, id).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := model.ValidateMessageReader(reader); err != nil {
+			return err
+		}
+		if _, err := scanMessageRead(tx.QueryRowContext(ctx, get, id, reader)); !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if model.ProjectStatus(status) != model.ProjectActive {
+			return ErrProjectNotActive
+		}
+		_, err = tx.ExecContext(ctx, `insert into message_read(`+messageReadCols+`) values (?, ?, ?, ?, ?, ?)`,
+			id, reader, now.String(), tr.Actor, tr.SessionID, tr.ClientHost)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return scanMessageRead(s.db.QueryRowContext(ctx, get, id, reader))
 }

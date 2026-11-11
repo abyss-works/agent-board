@@ -40,3 +40,27 @@ func TestFingerprintAndSnapshotCoverMessages(t *testing.T) {
 		t.Errorf("snapshot message = %q %v, %v", title, deletedAt, err)
 	}
 }
+
+func TestFingerprintCoversMessageReads(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "AGB")
+	m := putMessage(t, s, "AGB", "desk", "지문", "")
+	before, err := s.FingerprintNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AckMessage(ctx, trOwner, m.ID, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.FingerprintNow(ctx)
+	if after == before {
+		t.Errorf("acknowledging a message left the fingerprint %q", before)
+	}
+	// Acknowledging again writes nothing.
+	if _, err := s.AckMessage(ctx, trOwner, m.ID, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.FingerprintNow(ctx); again != after {
+		t.Errorf("fingerprint changed without a write: %q, %q", after, again)
+	}
+}

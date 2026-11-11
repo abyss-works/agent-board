@@ -27,22 +27,23 @@ func (s *Store) Snapshot(ctx context.Context, dst string) error {
 // document raises the number of documents), a change of the archive mark or the relations of
 // a document appends a document activity record, a token write
 // raises the highest token id or the number of revoked tokens, posting a message raises the highest message id and
-// deleting one the number of deleted messages, a write to a project, topic or
+// deleting one the number of deleted messages, acknowledging one the number of message reads, a write to a project, topic or
 // milestone appends a resource activity record, and migrations
 // bump user_version. A write of embeddings or similar documents changes a
 // digest over the keys, hashes and scores of their rows. Recording the last use of a token changes none of these.
 func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 	var maxActivity, maxDocActivity, maxToken, maxMessage, maxResourceActivity sql.NullInt64
 	var maxProject, maxTopic, maxMilestone, maxDocument sql.NullString
-	var projects, actors, topics, milestones, documents, revokedTokens, deletedMessages int
+	var projects, actors, topics, milestones, documents, revokedTokens, deletedMessages, messageReads int
 	var version int
 	if err := s.db.QueryRowContext(ctx, `select (select max(id) from activity), (select max(updated_at) from project),
 		(select count(*) from project), (select count(*) from actor), (select max(updated_at) from topic), (select count(*) from topic),
 		(select max(updated_at) from milestone), (select count(*) from milestone),
 		(select max(updated_at) from document), (select count(*) from document),
 		(select max(id) from document_activity), (select max(id) from token), (select count(*) from token where revoked_at is not null),
-		(select max(id) from message), (select count(deleted_at) from message), (select max(id) from resource_activity)`).
-		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics, &maxMilestone, &milestones, &maxDocument, &documents, &maxDocActivity, &maxToken, &revokedTokens, &maxMessage, &deletedMessages, &maxResourceActivity); err != nil {
+		(select max(id) from message), (select count(deleted_at) from message), (select max(id) from resource_activity),
+		(select count(*) from message_read)`).
+		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics, &maxMilestone, &milestones, &maxDocument, &documents, &maxDocActivity, &maxToken, &revokedTokens, &maxMessage, &deletedMessages, &maxResourceActivity, &messageReads); err != nil {
 		return "", err
 	}
 	if err := s.db.QueryRowContext(ctx, `pragma user_version`).Scan(&version); err != nil {
@@ -56,7 +57,7 @@ func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(embeddingRows.String + "\n" + similarRows.String))
-	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:ds%s:dc%d:da%d:k%d:kr%d:g%d:gd%d:ra%d:e%x",
+	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:ds%s:dc%d:da%d:k%d:kr%d:g%d:gd%d:gr%d:ra%d:e%x",
 		version, maxActivity.Int64, maxProject.String, projects, actors, maxTopic.String, topics, maxMilestone.String, milestones,
-		maxDocument.String, documents, maxDocActivity.Int64, maxToken.Int64, revokedTokens, maxMessage.Int64, deletedMessages, maxResourceActivity.Int64, digest[:8]), nil
+		maxDocument.String, documents, maxDocActivity.Int64, maxToken.Int64, revokedTokens, maxMessage.Int64, deletedMessages, messageReads, maxResourceActivity.Int64, digest[:8]), nil
 }
