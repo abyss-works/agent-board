@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/wsk0715/agent-board/internal/client"
 )
@@ -26,10 +27,29 @@ var hookQueryTimeout = 5 * time.Second
 // hookListMax is how many messages the session start hook lists.
 const hookListMax = 20
 
-// hookTitleMax is how many characters of a title the session start hook
-// shows. With hookListMax lines and the 64 characters the server allows a to
-// label, the output stays far below 10,000 characters.
-const hookTitleMax = 300
+// hookTitleMax and hookToMax are how many characters of a title and of a to
+// label the session start hook shows. With hookListMax lines the output stays
+// far below 10,000 characters. The server allows a to label 64 characters.
+const (
+	hookTitleMax = 300
+	hookToMax    = 64
+)
+
+// hookText makes text from the server fit into one line of hook output: each
+// control character and each line or paragraph separator becomes a space, and
+// what goes beyond max characters is cut.
+func hookText(s string, max int) string {
+	r := []rune(strings.Map(func(c rune) rune {
+		if unicode.IsControl(c) || c == '\u2028' || c == '\u2029' {
+			return ' '
+		}
+		return c
+	}, s))
+	if len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return string(r)
+}
 
 var hookSessionStartCmd = &command{
 	name: "session-start", summary: "세션을 시작할 때 확인하지 않은 메시지를 알림",
@@ -99,13 +119,9 @@ func (a *App) unreadNotice(ctx context.Context, g *globals) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "확인하지 않은 메시지 %d건 (프로젝트 %s)\n", max(l.Total, len(items)), cfg.Project)
 	for _, m := range items {
-		title := m.Title
-		if r := []rune(title); len(r) > hookTitleMax {
-			title = string(r[:hookTitleMax]) + "…"
-		}
-		fmt.Fprintf(&b, "#%d (%s 전) %s", m.ID, m.Age, title)
+		fmt.Fprintf(&b, "#%d (%s 전) %s", m.ID, m.Age, hookText(m.Title, hookTitleMax))
 		if m.To != nil {
-			fmt.Fprintf(&b, " [to: %s]", *m.To)
+			fmt.Fprintf(&b, " [to: %s]", hookText(*m.To, hookToMax))
 		}
 		b.WriteString("\n")
 	}
