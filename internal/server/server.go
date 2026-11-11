@@ -69,7 +69,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	var embedder *embed.Runner
 	var searcher *embed.Searcher
 	if cfg.Embedding.Enabled() {
-		client := embed.NewClient(cfg.Embedding.URL, cfg.Embedding.APIKey, cfg.Embedding.Model)
+		client := embed.NewClient(cfg.Embedding.URL, cfg.Embedding.APIKey, cfg.Embedding.Model, cfg.Embedding.Provider)
 		index := &embed.Index{}
 		rows, err := st.LoadEmbeddings(context.Background(), cfg.Embedding.Model)
 		if err != nil {

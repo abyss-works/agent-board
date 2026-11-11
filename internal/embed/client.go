@@ -21,19 +21,25 @@ type Embedder interface {
 // Client calls an OpenAI compatible embeddings endpoint.
 type Client struct {
 	url, key, model string
+	provider        json.RawMessage
 	http            *http.Client
 }
 
 // NewClient returns a client for the endpoint at url, which is the full URL of
-// the embeddings resource.
-func NewClient(url, key, model string) *Client {
-	return &Client{url: url, key: key, model: model, http: &http.Client{Timeout: 60 * time.Second}}
+// the embeddings resource. A non-empty provider is a JSON object sent as the
+// "provider" field of every request; an empty one leaves the field out.
+func NewClient(url, key, model string, provider json.RawMessage) *Client {
+	return &Client{url: url, key: key, model: model, provider: provider, http: &http.Client{Timeout: 60 * time.Second}}
 }
 
 // Embed returns the vectors of texts in the order of texts and the "id" of the
 // response, which is empty when the endpoint sends none.
 func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, string, error) {
-	body, err := json.Marshal(map[string]any{"model": c.model, "input": texts})
+	fields := map[string]any{"model": c.model, "input": texts}
+	if len(c.provider) > 0 {
+		fields["provider"] = c.provider
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return nil, "", err
 	}

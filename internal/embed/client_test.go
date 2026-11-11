@@ -30,7 +30,7 @@ func TestClientEmbed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	vecs, id, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
+	vecs, id, err := NewClient(srv.URL, testKey, "m", nil).Embed(context.Background(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestClientEmbedReadsTheResponseID(t *testing.T) {
 		w.Write([]byte(`{"id":"embd-1","data":[{"index":0,"embedding":[1]}]}`))
 	}))
 	defer srv.Close()
-	_, id, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a"})
+	_, id, err := NewClient(srv.URL, testKey, "m", nil).Embed(context.Background(), []string{"a"})
 	if err != nil || id != "embd-1" {
 		t.Errorf("response id %q, err %v", id, err)
 	}
@@ -64,7 +64,7 @@ func TestClientTimeoutIsLoggedAsTimeout(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
-	lines := logged(NewClient(srv.URL, testKey, "m"), 50*time.Millisecond, "q")
+	lines := logged(NewClient(srv.URL, testKey, "m", nil), 50*time.Millisecond, "q")
 	if len(lines) != 1 || lines[0]["result"] != "timeout" {
 		t.Errorf("lines = %v", lines)
 	}
@@ -89,14 +89,40 @@ func TestClientEmbedErrors(t *testing.T) {
 			w.WriteHeader(tc.status)
 			w.Write([]byte(tc.body))
 		}))
-		_, _, err := NewClient(srv.URL, testKey, "m").Embed(context.Background(), []string{"a", "b"})
+		_, _, err := NewClient(srv.URL, testKey, "m", nil).Embed(context.Background(), []string{"a", "b"})
 		srv.Close()
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), testKey) {
 			t.Errorf("%s: err = %v, want it to contain %q and not the key", name, err, tc.want)
 		}
 	}
 	// An unreachable server must not leak the key either.
-	if _, _, err := NewClient("http://127.0.0.1:1", testKey, "m").Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), testKey) {
+	if _, _, err := NewClient("http://127.0.0.1:1", testKey, "m", nil).Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), testKey) {
 		t.Errorf("unreachable: err = %v", err)
+	}
+}
+
+// TestClientEmbedSendsTheProviderObject reads the raw request body: without a
+// provider it has only model and input, and with one the object is sent as given.
+func TestClientEmbedSendsTheProviderObject(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"data":[{"index":0,"embedding":[1]}]}`))
+	}))
+	defer srv.Close()
+
+	if _, _, err := NewClient(srv.URL, testKey, "m", nil).Embed(context.Background(), []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"input":["a"],"model":"m"}` {
+		t.Errorf("body without a provider = %s", body)
+	}
+
+	provider := `{"order":["x","y"],"nested":{"n":1}}`
+	if _, _, err := NewClient(srv.URL, testKey, "m", json.RawMessage(provider)).Embed(context.Background(), []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"input":["a"],"model":"m","provider":`+provider+`}` {
+		t.Errorf("body with a provider = %s", body)
 	}
 }
