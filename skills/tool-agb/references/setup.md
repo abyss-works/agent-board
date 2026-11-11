@@ -77,7 +77,13 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
 - 플러그인은 세션을 시작할 때 `agb hook session-start --tool claude`를 불러, 작업 폴더의 저장소 `.agb.json` 프로젝트가 확인하지 않은 메시지를 알린다. 새 세션부터 동작한다.
   - 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값, 설정 파일의 `actor` 순서로 정한다. 훅의 세션 ID는 Claude Code가 훅에 준 `session_id`다.
   - 알림이 없으면 메시지가 없거나, `.agb.json`, 훅 행위자, 토큰, 서버 접속 중 하나가 없는 것이다. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 보고, `agb config show`의 `hook_actors`와 `actor_tokens`를 확인한다. 플러그인이 옛 판이면 아래 순서로 갱신한다.
+- 플러그인은 Bash 도구를 호출하기 전에 `agb hook pre-commit --tool claude`를 불러, 호출이 `git commit`이면 그 저장소(최상위에 `.agb.json`이 있는 저장소)의 기록 문서를 `agb doc check`와 같은 검사로 확인하고 문제가 있으면 커밋을 사유와 함께 막는다.
+  - 검사하는 파일은 `agb doc check`에 파일을 주지 않았을 때와 같다. 새 파일이거나 `HEAD`에서 바뀐 기록 문서이고, 스테이징하지 않은 파일도 포함한다.
+  - 커밋이 막히면 사유에 적힌 파일의 문제를 고친 뒤 다시 커밋한다. 사유는 4,000자까지이고 넘는 문제는 남은 건수로 적힌다. 전체는 그 저장소에서 `agb doc check`로 본다. 검사를 피하려고 커밋 명령의 형태를 바꾸지 않는다.
+  - 커밋으로 보는 것은 `git commit`, `git -C <경로> commit`, `X=y git commit`, `<다른 명령> && git commit`, `cd <경로> && git commit` 형태다. 저장소는 `cd`와 `-C`의 경로를 따른다.
+  - Bash 도구의 `git commit`이 아니거나, git 저장소가 아니거나, `.agb.json`이 없거나 읽지 못하거나, 검사가 실패하면 막지 않는다. 행위자나 토큰이 없거나 서버에 5초 안에 닿지 않거나 서버가 오류를 돌려주면 관계(`supersedes`, `related`, `issue`) 확인만 건너뛰고, 파일만으로 찾은 문제는 그대로 막는다.
 - 갱신은 CLI(1절)를 먼저 하고 플러그인을 나중에 한다. 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서다.
+  - `hook pre-commit`을 모르는 CLI(v0.14.1 이하)에 이 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막힌다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리한다. Bash 호출이 `모르는 명령 "pre-commit"`으로 막히면 사용자에게 터미널에서 CLI를 갱신하거나 `claude plugin disable agb@agent-board`로 플러그인을 끄도록 알린다.
   ```bash
   agb setup claude --actor <ID>
   claude plugin marketplace update agent-board
