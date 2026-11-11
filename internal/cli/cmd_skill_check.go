@@ -145,7 +145,7 @@ func (a *App) compareWithServer(release string) bool {
 func (a *App) checkSkillTree(target string) (bool, error) {
 	fi, err := os.Lstat(target)
 	if errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(a.Stdout, "스킬: %s 에 설치되어 있지 않습니다. `agb skill install`로 설치하세요.\n", target)
+		fmt.Fprintf(a.Stdout, "스킬: %s 에 설치되어 있지 않습니다. `agb skill install`로 설치하세요.\n설치하지 않고 `agb skill show`로 읽어 쓴다면 이 결과는 예상한 것입니다. 종료 코드 1은 스킬이 설치되지 않았다는 뜻일 뿐입니다.\n", target)
 		return false, nil
 	}
 	if err != nil {

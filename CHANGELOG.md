@@ -14,6 +14,10 @@
   - 행위자와 세션 ID는 `agb hook session-start`와 같은 순서로 정한다. 파일을 고치지 않고 서버에 쓰지 않는다.
 - `agb hook <모르는 하위 명령>`이 뒤의 인자와 옵션이 무엇이든 아무것도 출력하지 않고 종료 코드 0으로 끝난다. 전에는 사용법 오류(종료 코드 2)였다. 이 CLI보다 새 플러그인이 아직 없는 훅을 불러도 도구 호출을 막지 않게 한다. 하위 명령 없는 `agb hook`과 `agb hook --help`, 다른 명령의 모르는 하위 명령은 전과 같다.
 - `agb doc check`의 동작은 바뀌지 않는다.
+- `agb doc get`이 프로젝트 키를 `--project`(`-p`)로도 받는다. `agb doc get -p <KEY> <파일명>`과 `agb doc get <KEY> <파일명>`이 같다. 둘을 함께 주면 키가 같아야 하고, 다르면 사용법 오류(종료 코드 2)다.
+- 모르는 하위 명령의 오류가 가까운 명령을 알려 준다. `agb doc show`는 `agb doc get`을, `agb issue comments`는 `agb issue comment`와 `agb issue activity`를 가리킨다. 별칭은 더하지 않아 두 명령은 여전히 실행되지 않는다(종료 코드 2).
+- 하위 명령 없는 `agb config`가 사용법 오류 대신 하위 명령 목록을 표준 출력에 보이고 종료 코드 0으로 끝난다(`agb config --help`와 같다). 다른 명령 묶음은 전과 같이 하위 명령이 필요하다는 사용법 오류(종료 코드 2)다.
+- `agb skill check`가 스킬이 설치되어 있지 않다고 알릴 때, 설치하지 않고 `agb skill show`로 읽어 쓰면 이 결과가 예상한 것이라고 덧붙인다. 종료 코드는 그대로 1이다.
 
 ### Claude Code 플러그인
 
@@ -23,6 +27,7 @@
 ### 스킬
 
 - 내장 스킬 `tool-agb`의 설치 문서(`references/setup.md`) 2절에 커밋 전 검사가 막는 것과 통과시키는 것, 막혔을 때 할 일, CLI를 먼저 갱신해야 하는 이유를 더한다.
+- 내장 스킬 `tool-agb`가 `agb doc get -p <PROJECT> <이름>` 형식, 댓글을 읽는 `agb issue activity`와 쓰는 `agb issue comment`의 구분, 스킬을 설치하지 않고 `agb skill show`로 읽어 쓸 때 `agb skill check`의 종료 코드 1을 안내한다.
 
 ## v0.14.1 (2026-11-11)
 

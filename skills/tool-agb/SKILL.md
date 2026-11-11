@@ -111,7 +111,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
      - 종료 코드 1이면 다음 중 하나다.
        - `CLI가 서버보다 오래됐습니다`: 출력된 `갱신:` 명령으로 CLI를 다시 설치한다(`references/setup.md` 1절).
        - `내장된 스킬과 다릅니다`: 스킬이 이 CLI와 다른 판이다. 스킬에 적힌 명령이 CLI에 없을 수 있으므로 적히지 않은 명령을 쓰지 않는다. 링크가 저장소를 가리키면 그 브랜치에서 CLI를 다시 설치하거나, `agb skill show`로 이 CLI에 맞는 본문을 읽는다.
-       - `설치되어 있지 않습니다`: `agb skill install`로 설치한다.
+       - `설치되어 있지 않습니다`: `agb skill install`로 설치한다. 설치하지 않고 `agb skill show`로 읽어 쓰는 기기에서는 이 결과가 예상한 것이다.
    - `agb: 모르는 명령 "skill"`이 나오면 CLI가 옛 판이다. `references/setup.md` 1절로 CLI를 다시 설치한다.
    - 에이전트 도구가 `~/.agents/skills`가 아닌 폴더의 스킬을 읽으면 두 명령 모두 `--dir <그 폴더>`를 준다.
 2. 서버를 확인한다.
@@ -529,7 +529,8 @@ agb doc activity <PROJECT> <이름>
    agb issue activity <KEY>            # 댓글
    agb doc get <PROJECT> <이름> --content   # 기록 문서
    ```
-   - Expected: 원문이 그대로 출력된다. `agb doc get <PROJECT> <이름>`은 상태와 관계를 보인다.
+   - Expected: 원문이 그대로 출력된다. `agb doc get <PROJECT> <이름>`은 상태와 관계를 보인다. 프로젝트는 `-p <PROJECT> <이름>`으로도 줄 수 있다.
+   - 댓글을 읽는 명령은 `agb issue activity`이고, `agb issue comment`는 댓글을 쓴다. `agb issue comments`나 `agb doc show`는 없는 명령이며, 오류가 가까운 명령을 알려 준다.
 
 ## 메시지 공간
 

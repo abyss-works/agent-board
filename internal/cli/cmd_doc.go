@@ -19,7 +19,7 @@ import (
 var docCmd = &command{name: "doc", summary: "기록 문서 작성·검사·등록·동기화·상태 수정·목록·검색·조회", note: docHelpNote, subs: []*command{
 	docNewCmd, docCheckCmd, docPutCmd, docSyncCmd, docArchiveCmd, docUnarchiveCmd, docLinkCmd, docUnlinkCmd, docActivityCmd,
 	docListCmd, docSearchCmd, docGetCmd,
-}}
+}, hints: map[string][]string{"show": {"get"}}}
 
 // docHelpNote points the help of agb doc to the pages that hold the details of
 // the documents and of the .agb.json that decides which files are uploaded.
@@ -231,34 +231,64 @@ var docListCmd = &command{
 	},
 }
 
+// docGetTarget reads the project key and the file name of agb doc get: the key
+// is the --project flag or the first of two positional arguments, and both
+// given must be the same key.
+func docGetTarget(flagProject string, pos []string) (key, name string, err error) {
+	if flagProject == "" {
+		switch {
+		case len(pos) < 2:
+			return "", "", usageErrorf("<KEY>와 <파일명> 인자가 필요합니다. 키는 --project 로 줄 수도 있습니다.")
+		case len(pos) > 2:
+			return "", "", usageErrorf("인자가 너무 많습니다: %s", strings.Join(pos[2:], " "))
+		}
+		return pos[0], pos[1], nil
+	}
+	switch {
+	case len(pos) == 0:
+		return "", "", usageErrorf("<파일명> 인자가 필요합니다.")
+	case len(pos) == 1:
+		return flagProject, pos[0], nil
+	case len(pos) > 2:
+		return "", "", usageErrorf("인자가 너무 많습니다: %s", strings.Join(pos[2:], " "))
+	case pos[0] != flagProject:
+		return "", "", usageErrorf("프로젝트 키가 둘입니다: --project %s, 인자 %s. 하나만 주세요.", flagProject, pos[0])
+	}
+	return flagProject, pos[1], nil
+}
+
 var docGetCmd = &command{
 	name: "get", summary: "기록 문서 단건 (--content 는 원문만)",
 	usage: `사용법: agb doc get <KEY> <파일명> [--content]
+        agb doc get -p <KEY> <파일명> [--content]
 
 기록 문서 하나의 속성을 보입니다. 터미널이 아니면 원문을 포함한 JSON입니다.
+프로젝트 키는 첫 인자로 주거나 --project 로 줍니다. 둘 다 주면 같은 키여야 합니다.
 
 옵션:
+  --project, -p <KEY>     프로젝트 키. <KEY> 인자 대신 줍니다
   --content               원문만 그대로 출력합니다. --json, --table 과 무관합니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("doc get", g)
 		var content bool
+		var project string
 		fs.BoolVar(&content, "content", false, "")
+		fs.StringVar(&project, "project", "", "")
+		fs.StringVar(&project, "p", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
 		}
-		switch {
-		case len(pos) < 2:
-			return usageErrorf("<KEY>와 <파일명> 인자가 필요합니다.")
-		case len(pos) > 2:
-			return usageErrorf("인자가 너무 많습니다: %s", strings.Join(pos[2:], " "))
+		key, name, err := docGetTarget(project, pos)
+		if err != nil {
+			return err
 		}
 		c, err := a.client(g, true)
 		if err != nil {
 			return err
 		}
-		resp, err := c.GetDocument(ctx, pos[0], pos[1])
+		resp, err := c.GetDocument(ctx, key, name)
 		if err != nil {
 			return err
 		}

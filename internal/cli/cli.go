@@ -89,8 +89,12 @@ type command struct {
 	usage   string
 	aliases []string // other names that run the command, for names agents often guess
 	note    string   // lines added to the help of a group, for pages of help it points to
-	run     func(a *App, ctx context.Context, g *globals, args []string) error
-	subs    []*command
+	// hints maps a name that agents often guess for a subcommand of a group to the subcommands it suggests; they must exist.
+	hints map[string][]string
+	// bareHelp makes a group without a subcommand print its help and succeed instead of asking for a subcommand.
+	bareHelp bool
+	run      func(a *App, ctx context.Context, g *globals, args []string) error
+	subs     []*command
 }
 
 func (c *command) find(name string) *command {
@@ -112,6 +116,12 @@ func (c *command) find(name string) *command {
 // name. It returns "" when nothing is close.
 func (c *command) suggest(path, name string) string {
 	var near []string
+	for _, h := range c.hints[name] {
+		near = append(near, path+" "+h)
+	}
+	if len(near) > 0 {
+		return "가까운 명령: " + strings.Join(near, ", ") + "\n"
+	}
 	for _, s := range c.subs {
 		if editDistance(s.name, name) <= 2 {
 			near = append(near, path+" "+s.name)
@@ -325,6 +335,10 @@ func (a *App) helpFor(path []string) int {
 
 func (a *App) dispatch(ctx context.Context, g *globals, cmd *command, path string, args []string) error {
 	if len(cmd.subs) > 0 {
+		if len(args) == 0 && cmd.bareHelp {
+			io.WriteString(a.Stdout, cmd.help(path))
+			return nil
+		}
 		if len(args) == 0 {
 			return &usageError{msg: "하위 명령이 필요합니다.", help: cmd.help(path)}
 		}
