@@ -15,13 +15,13 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 사용자가 답할 것(검토 대기, 결정이 필요한 질문, 아직 확인하지 않은 이슈, 사용자가 직접 할 일)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`).
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
 - 이슈, 댓글, 기록 문서를 키워드(SQLite FTS5)로 찾고, 임베딩 API를 설정하면 의미 검색을 섞어 찾습니다. 이슈와 문서의 연결을 따라가 선례를 모아 봅니다(`agb recall`, `agb graph`).
-- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`).
+- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
 
 ## 설계 원칙
 
 - API가 먼저입니다. CLI와 웹은 같은 REST API를 쓰는 클라이언트이고, 업무 규칙은 서버에만 있습니다.
 - 서버가 데이터를 단독으로 소유합니다. SQLite 파일 하나를 서버만 열고, 여러 기기는 API로만 접근합니다.
-- 기록은 지우지 않습니다. 이슈, 프로젝트, 주제, 마일스톤의 변경은 행위자, 세션, 기기, 시각, 바뀐 필드의 이전 값과 함께 남습니다. 문서의 아카이브와 관계 변경도 같은 방식으로 남고, 메시지 삭제는 삭제한 행위자와 시각만 남깁니다. 이슈, 프로젝트, 주제, 마일스톤의 삭제는 행을 지우지 않는 상태 변경이라 다른 상태로 되돌릴 수 있습니다. 메시지는 행을 지우지 않지만, 짧게 사는 만료형 데이터라 변경의 이전 값을 남기지 않고 삭제를 되돌리는 경로도 두지 않습니다. 이 두 가지가 보존 원칙의 예외입니다. 지운 메시지와 기간이 지난 메시지는 기본 목록에서만 빠지고, `agb msg list --all`과 `agb msg get`으로 볼 수 있습니다.
+- 기록은 지우지 않습니다. 이슈, 프로젝트, 주제, 마일스톤의 변경은 행위자, 세션, 기기, 시각, 바뀐 필드의 이전 값과 함께 남습니다. 문서의 아카이브와 관계 변경도 같은 방식으로 남고, 메시지 삭제는 삭제한 행위자와 시각만 남깁니다. 이슈, 프로젝트, 주제, 마일스톤의 삭제는 행을 지우지 않는 상태 변경이라 다른 상태로 되돌릴 수 있습니다. 메시지는 행을 지우지 않지만, 짧게 사는 만료형 데이터라 변경의 이전 값을 남기지 않고 삭제를 되돌리는 경로도 두지 않습니다. 이 두 가지가 보존 원칙의 예외입니다. 지운 메시지와 기간이 지난 메시지는 기본 목록에서만 빠지고, `agb msg list --all`과 `agb msg get`으로 볼 수 있습니다. 메시지의 확인 표시(`agb msg ack`)는 읽은 쪽 이름마다 한 번 남기고 고치거나 지우지 않으며, 메시지를 지우지도 않습니다.
 - 데이터를 주고, 판단은 하지 않습니다. agb는 저장하고 꺼내 줍니다. 반복되는 문제를 규칙으로 올릴지 같은 판단은 읽는 쪽(사용자나 에이전트)이 합니다.
 - 외부 도구가 아는 상태는 저장하지 않습니다. git 브랜치, 커밋, PR은 참조(`refs`)로만 가리킵니다.
 - 규범은 저장소에 둡니다. 에이전트가 따를 규칙과 명세는 각 프로젝트의 git 저장소가 정본이고, agb에는 선례와 근거가 되는 기록만 모읍니다.
@@ -47,7 +47,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 이슈 (issue) | `key`(`APP-12` 형식), `title`, `body`, `type`, `priority`, `labels`, `refs`, `decision_needed`, `recheck_condition`, `version` | `backlog`, `doing`, `review`, `done`, `cancelled`, `deleted` | 상위 이슈(`parent`), 선행 이슈(`depends_on`), 참조(`refs`), 주제, 마일스톤 |
 | 활동 (activity) | `kind`(`created`/`updated`/`commented`), `changes`, `summary`, `comment_kind`, `body` | 추가만 함 | 이슈 하나에 속함. 댓글도 활동 행 |
 | 기록 문서 (document) | `name`, `kind`, `date`, `title`, `tags`, `archived`, `imported`, `sha256`, 원문 | `current`, `superseded`, `archived`(계산값) | `supersedes`, `related`(문서), `about`(이슈) |
-| 메시지 (message) | `to`, `title`, `body`, `expires_at` | `active`, `expired`, `deleted` | 프로젝트에 속함 |
+| 메시지 (message) | `to`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함 |
 | 토큰 (token) | `actor`, `client_host`, `last_used_at`, `revoked_at` | 활성, 폐기 | 에이전트 행위자 하나 |
 | 임베딩, 유사 문서 | 청크별 벡터, 문서 쌍과 점수 | 파생 데이터 | 의미 검색과 `similar` 그래프 간선 |
 
@@ -94,6 +94,8 @@ internal/cli      CLI 명령. 서버를 호출하고 출력을 만듦. 업무 �
 internal/embed    OpenAI 호환 임베딩 API 호출, 청크 분할, 메모리 색인, 유사 문서 계산
 internal/backup   DB 스냅샷을 gzip으로 압축해 S3 호환 저장소에 주기적으로 올리고 보존 기간이 지난 것을 지움
 skills/tool-agb   에이전트용 사용 절차(SKILL.md). 바이너리에 내장되어 "agb skill install"로 설치됨
+plugin/           Claude Code 플러그인. 훅 설정만 담고, 훅은 "agb hook ..."을 부름
+.claude-plugin/   이 저장소를 Claude Code 마켓플레이스로 등록하게 하는 목록(marketplace.json)
 web/              React 19 + Vite + TanStack Query 웹 클라이언트
 e2e/              실행 중인 서버에 대고 도는 종단 테스트(빌드 태그 e2e)
 deploy/           운영용 compose 파일과 Kubernetes Ingress 구성
@@ -136,6 +138,48 @@ go build -ldflags "-X main.version=<버전> -X main.release=<vX.Y.Z>" -o agb ./c
 ```
 
 `main.version`이 없으면 `agb version`은 `dev`를 출력하고, `agb skill check`는 CLI와 서버의 판 비교를 건너뜁니다. `main.release`는 `/v1/health` 응답의 `release`가 됩니다.
+
+### Claude Code 플러그인
+
+Claude Code를 쓰는 기기에서는 CLI를 설치한 뒤 한 명령으로 플러그인과 스킬을 함께 설치합니다.
+
+```bash
+agb setup claude
+```
+
+이 명령은 다음 셋을 차례로 하고, 하나가 실패하면 그 단계 이름과 `claude`의 오류를 보이고 멈춥니다.
+
+1. 마켓플레이스 등록: `claude plugin marketplace add abyss-works/agent-board#main`. 이 저장소가 마켓플레이스를 겸하고, 릴리즈 브랜치 `main`에 고정합니다.
+2. 플러그인 설치: `claude plugin install agb@agent-board` (사용자 범위)
+3. 스킬 설치: `agb skill install`과 같습니다. `~/.agents/skills/tool-agb`에 쓰고, `~/.claude/skills`가 다른 폴더이면 거기에도 씁니다. `~/.claude/skills/tool-agb`가 링크이면 그대로 둡니다.
+
+- `claude` 실행 파일이 `PATH`에 없으면 아무것도 설치하지 않고 종료 코드 2로 끝납니다.
+- 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 CLI에 내장된 것으로 맞춥니다.
+- 설치한 플러그인은 새 세션부터 동작합니다.
+
+플러그인이 하는 일:
+
+- 플러그인은 훅 설정만 담습니다. 스킬과 실행 파일은 담지 않으며, 훅은 `PATH`의 `agb`를 셸 없이 직접 실행합니다. Windows에서는 `agb.exe`가 `PATH`에 있어야 합니다.
+- 세션을 시작할 때(새 세션, 재개, `/clear`, 압축 뒤) `agb hook session-start`를 부릅니다. 이 명령은 세션의 작업 폴더가 속한 저장소의 `.agb.json`에서 프로젝트를 찾아, 그 프로젝트 키가 확인하지 않은 메시지를 최대 20건 알립니다. `agb msg list --unread`와 같은 조회이고 확인 표시를 만들지 않습니다.
+- `.agb.json`이 없거나, 설정이나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
+
+갱신은 CLI를 먼저, 플러그인을 나중에 합니다. 새 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서입니다. `hook` 명령을 모르는 옛 CLI에서는 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보입니다. 세션 시작은 막지 않습니다.
+
+```bash
+go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main   # 1. CLI
+agb setup claude                                      # 2. 스킬을 새 CLI의 것으로 맞춤
+claude plugin marketplace update agent-board          # 3. 마켓플레이스 목록 갱신
+claude plugin update agb@agent-board                  # 4. 플러그인 갱신 (새 세션부터 적용)
+```
+
+제거:
+
+```bash
+claude plugin uninstall agb@agent-board
+claude plugin marketplace remove agent-board
+```
+
+스킬은 `~/.agents/skills/tool-agb` 폴더와, 따로 설치된 경우 `~/.claude/skills/tool-agb` 폴더를 지웁니다.
 
 ### 서버 실행
 
@@ -220,6 +264,7 @@ agb --actor owner project create APP "예제 앱"
 ```bash
 agb --actor claude login             # 승인 주소와 코드가 나오면 사용자가 웹 /device 에서 승인
 agb skill install                    # CLI와 같은 판의 사용 절차를 설치 (갱신 상세는 skills/tool-agb/references/setup.md)
+agb setup claude                     # Claude Code 이면 위 줄 대신: 플러그인과 스킬을 함께 설치
 export AGB_ACTOR=claude AGB_SESSION_ID=<세션 ID>
 ```
 
@@ -256,6 +301,8 @@ agb graph APP-12 --depth 2
 
 ```bash
 agb msg put -p APP --to codex -t "배포 끝" --ttl 3d
+agb msg list -p APP --unread          # 내가 확인하지 않은 메시지
+agb msg ack 12 13                     # 처리한 뒤 확인 표시
 agb digest --since 3d
 agb stats
 ```
@@ -276,7 +323,7 @@ agb stats
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
 | 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
 | 기록 문서 | `GET /projects/{key}/documents`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
-| 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}` |
+| 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |
 | 로그인과 토큰 | `POST /device-authorizations`, `GET, PATCH /device-authorizations/{user_code}`(사용자 전용), `GET /tokens`(사용자 전용), `POST /tokens`, `DELETE /tokens/current`, `DELETE /tokens/{id}`(사용자 전용) |
 

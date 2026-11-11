@@ -59,6 +59,24 @@ go install -trimpath -ldflags "-X main.version=<VER>-dev.$(git rev-parse --short
    ```
    - Expected: `name: tool-agb`가 있고, `.version`이 `agb version`의 버전과 같다.
 
+Claude Code를 쓰는 기기에서는 `agb skill install` 대신 `agb setup claude`를 실행한다. 플러그인과 스킬을 함께 설치한다.
+
+```bash
+agb setup claude
+```
+
+- 하는 일: `claude plugin marketplace add abyss-works/agent-board#main`, `claude plugin install agb@agent-board`, 스킬 설치를 차례로 한다. 스킬은 `~/.agents/skills/tool-agb/`에 쓰고, `~/.claude/skills`가 다른 폴더이면 거기에도 쓴다. `~/.claude/skills/tool-agb`가 링크이면 그대로 둔다.
+- Expected: 단계마다 `claude`의 출력과 `설치했습니다:` 또는 `변경 없음:` 줄이 나오고 종료 코드 0이다. 다시 실행해도 된다.
+- `claude 실행 파일이 PATH 에 없습니다`가 나오면 아무것도 설치되지 않은 것이다. Claude Code를 설치한 뒤 다시 실행한다.
+- 플러그인은 세션을 시작할 때 `agb hook session-start`를 불러, 작업 폴더의 저장소 `.agb.json` 프로젝트가 확인하지 않은 메시지를 알린다. 새 세션부터 동작한다. 알림이 없으면 메시지가 없거나, `.agb.json`, 토큰, 서버 접속 중 하나가 없는 것이다. `agb msg list --unread`로 직접 확인한다.
+- 갱신은 CLI(1절)를 먼저 하고 플러그인을 나중에 한다. 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서다.
+  ```bash
+  agb setup claude
+  claude plugin marketplace update agent-board
+  claude plugin update agb@agent-board
+  ```
+- 제거: `claude plugin uninstall agb@agent-board`, `claude plugin marketplace remove agent-board`
+
 제품 저장소의 개발 기기에서 스킬을 고쳤으면, `dev` 체크아웃에서 CLI를 다시 설치(1절의 개발 기기 명령)한 뒤 `agb skill install`을 실행해야 전역 스킬에 반영된다.
 
 ## 3. 접속 설정
