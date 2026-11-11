@@ -348,8 +348,9 @@ func TestHookPreCommitGivesUpOnASlowServer(t *testing.T) {
 
 	h := newHarness(t, nil, false)
 	h.env["AGB_URL"] = slow.URL
+	stdin := preCommitInput(t, relRepo(t), "Bash", "git commit -m x")
 	start := time.Now()
-	if out := runPreCommit(t, h, preCommitInput(t, relRepo(t), "Bash", "git commit -m x")); out != "" {
+	if out := runPreCommit(t, h, stdin); out != "" {
 		t.Errorf("stdout = %q", out)
 	}
 	if d := time.Since(start); d > 3*time.Second {
