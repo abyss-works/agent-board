@@ -176,6 +176,7 @@ const Usage = `사용법: agb <명령> [옵션]
   login             기기 승인으로 이 행위자의 토큰 받기 (--actor)
   logout            이 행위자의 토큰 폐기와 로컬 삭제
   skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
+  hook              에이전트 도구의 훅이 부르는 명령 (session-start)
 
 상태:
   health            서버 상태 (인증 없음)
@@ -252,7 +253,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb hel
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, skillCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
 	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
