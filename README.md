@@ -186,7 +186,8 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
 갱신은 CLI를 먼저, 플러그인을 나중에 합니다. 새 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서입니다.
 
 - `hook` 명령을 모르는 옛 CLI에서는 세션 시작 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보입니다. 세션 시작은 막지 않습니다.
-- `hook pre-commit`을 모르는 옛 CLI(v0.14.1 이하)에 이 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막힙니다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리하기 때문입니다. 이렇게 됐으면 터미널에서 CLI를 갱신하거나, 갱신할 때까지 `claude plugin disable agb@agent-board`로 플러그인을 끕니다.
+- 이 판부터의 CLI는 모르는 `agb hook <하위 명령>`을 아무것도 출력하지 않고 종료 코드 0으로 끝냅니다. 플러그인이 CLI보다 새로워 CLI에 없는 훅을 불러도 세션과 도구 호출을 막지 않습니다. 그 훅이 하는 일만 빠집니다.
+- v0.14.1 이하의 CLI(v0.14.0과 v0.14.1, `hook` 명령이 없는 그 전 버전)는 그렇지 않습니다. 이 CLI에 커밋 전 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막힙니다. 이 버전을 쓰는 기기는 CLI를 먼저 갱신합니다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리하기 때문입니다. 이렇게 됐으면 터미널에서 CLI를 갱신하거나, 갱신할 때까지 `claude plugin disable agb@agent-board`로 플러그인을 끕니다.
 
 ```bash
 go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main   # 1. CLI

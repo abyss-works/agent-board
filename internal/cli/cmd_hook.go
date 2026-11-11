@@ -23,6 +23,8 @@ var hookCmd = &command{name: "hook", summary: "에이전트 도구의 훅이 부
 }, note: `에이전트 도구의 훅 설정이 부르는 명령입니다. 사람이 직접 실행할 일은 없습니다.
 Claude Code 에는 agb setup claude 가 이 명령을 부르는 플러그인을 설치합니다.
 두 명령 모두 무엇이 실패해도 표준 오류에 쓰지 않고 종료 코드 0 으로 끝납니다.
+이 CLI 가 모르는 하위 명령도 아무것도 출력하지 않고 종료 코드 0 으로 끝납니다. 플러그인이 CLI 보다 새로워도
+도구 호출을 막지 않게 하기 위해서입니다.
 `}
 
 // hookQueryTimeout bounds the whole server query of a hook, so a server that

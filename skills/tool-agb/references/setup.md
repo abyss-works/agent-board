@@ -83,7 +83,8 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
   - 커밋으로 보는 것은 `git commit`, `git -C <경로> commit`, `X=y git commit`, `<다른 명령> && git commit`, `cd <경로> && git commit` 형태다. 저장소는 `cd`와 `-C`의 경로를 따른다.
   - Bash 도구의 `git commit`이 아니거나, git 저장소가 아니거나, `.agb.json`이 없거나 읽지 못하거나, 검사가 실패하면 막지 않는다. 행위자나 토큰이 없거나 서버에 5초 안에 닿지 않거나 서버가 오류를 돌려주면 관계(`supersedes`, `related`, `issue`) 확인만 건너뛰고, 파일만으로 찾은 문제는 그대로 막는다.
 - 갱신은 CLI(1절)를 먼저 하고 플러그인을 나중에 한다. 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서다.
-  - `hook pre-commit`을 모르는 CLI(v0.14.1 이하)에 이 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막힌다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리한다. Bash 호출이 `모르는 명령 "pre-commit"`으로 막히면 사용자에게 터미널에서 CLI를 갱신하거나 `claude plugin disable agb@agent-board`로 플러그인을 끄도록 알린다.
+  - 이 판부터의 CLI는 모르는 `agb hook <하위 명령>`을 아무것도 출력하지 않고 종료 코드 0으로 끝낸다. 플러그인이 CLI보다 새로워도 세션과 도구 호출을 막지 않고, 그 훅이 하는 일만 빠진다.
+  - v0.14.1 이하의 CLI(v0.14.0과 v0.14.1, `hook` 명령이 없는 그 전 버전)는 그렇지 않다. 이 CLI에 커밋 전 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막히므로, 이 버전을 쓰는 기기는 CLI를 먼저 갱신한다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리한다. Bash 호출이 `모르는 명령 "pre-commit"`으로 막히면 사용자에게 터미널에서 CLI를 갱신하거나 `claude plugin disable agb@agent-board`로 플러그인을 끄도록 알린다.
   ```bash
   agb setup claude --actor <ID>
   claude plugin marketplace update agent-board

@@ -239,10 +239,8 @@ func TestHookQueryTimeoutIsFiveSeconds(t *testing.T) {
 
 func TestHookUsage(t *testing.T) {
 	h := newHarness(t, nil, false)
-	for _, args := range [][]string{{"hook"}, {"hook", "bogus"}} {
-		if code := h.run(args...); code != 2 || h.stderr.Len() == 0 {
-			t.Errorf("%v: code=%d stderr=%q", args, code, h.stderr)
-		}
+	if code := h.run("hook"); code != 2 || h.stderr.Len() == 0 {
+		t.Errorf("hook: code=%d stderr=%q", code, h.stderr)
 	}
 	if code := h.run("hook", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "session-start") || !strings.Contains(h.stdout.String(), "pre-commit") {
 		t.Errorf("hook --help: code=%d out=%s", code, h.stdout)
@@ -398,5 +396,31 @@ func TestConfigShowListsTheHookActors(t *testing.T) {
 	}
 	if code := h.run("config", "show", "--json"); code != 0 || !strings.Contains(h.stdout.String(), `"hook_actors":{"another":"base","claude":"reviewer"}`) {
 		t.Errorf("json: code=%d %s", code, h.stdout)
+	}
+}
+
+// A plugin newer than the CLI may name a hook the CLI lacks. Exit code 2 from a
+// hook that runs before a tool call blocks the call, so the unknown hook ends
+// in silence. Other command groups keep their usage error.
+func TestHookIgnoresASubcommandItDoesNotKnow(t *testing.T) {
+	h := newHarness(t, nil, false)
+	stdin := preCommitInput(t, badRepo(t), "Bash", "git commit -m x")
+	for _, args := range [][]string{
+		{"hook", "future-thing"},
+		{"hook", "future-thing", "--tool", "claude"},
+		{"hook", "future-thing", "--bogus", "extra", "--help"},
+		{"hook", "bogus", "--", "x"},
+	} {
+		for _, in := range []string{"", stdin, `{"cwd":`} {
+			h.app.Stdin = strings.NewReader(in)
+			if code := h.run(args...); code != 0 || h.stdout.Len() != 0 || h.stderr.Len() != 0 {
+				t.Errorf("%v: code=%d stdout=%q stderr=%q", args, code, h.stdout, h.stderr)
+			}
+		}
+	}
+	for _, args := range [][]string{{"msg", "bogus"}, {"doc", "future-thing", "--tool", "claude"}, {"future-thing"}} {
+		if code := h.run(args...); code != 2 || h.stderr.Len() == 0 {
+			t.Errorf("%v: code=%d stderr=%q", args, code, h.stderr)
+		}
 	}
 }

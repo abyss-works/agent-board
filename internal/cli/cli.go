@@ -334,6 +334,11 @@ func (a *App) dispatch(ctx context.Context, g *globals, cmd *command, path strin
 		}
 		sub := cmd.find(args[0])
 		if sub == nil {
+			// A plugin newer than this CLI may call a hook that does not exist
+			// yet; ending in silence keeps that from blocking the tool call.
+			if cmd == hookCmd {
+				return nil
+			}
 			return &usageError{msg: fmt.Sprintf("모르는 명령 %q", args[0]), help: cmd.suggest(path, args[0]) + "\n" + cmd.help(path)}
 		}
 		return a.dispatch(ctx, g, sub, path+" "+sub.name, args[1:])
