@@ -155,3 +155,25 @@ func TestSkillInstallNeedsDirWhenHomeIsUnknown(t *testing.T) {
 		t.Errorf("stderr = %q", h.stderr)
 	}
 }
+
+// Agent tools that truncate long command output show only the start of the
+// skill, so the task-to-command index must fit in the first 2,000 characters.
+func TestSkillShowIndexFitsInFirstCharacters(t *testing.T) {
+	h := newHarness(t, nil, false)
+	if code := h.run("skill", "show"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	head := []rune(h.stdout.String())
+	if len(head) > 2000 {
+		head = head[:2000]
+	}
+	for _, want := range []string{
+		"agb agenda", "agb project overview", "agb issue create", "agb issue update",
+		"agb issue comment", "agb issue activity", "agb doc new", "agb doc put",
+		"agb doc get -p", "agb search", "--fields", "--text", "agb msg",
+	} {
+		if !strings.Contains(string(head), want) {
+			t.Errorf("first 2000 characters of skill show lack %q", want)
+		}
+	}
+}
