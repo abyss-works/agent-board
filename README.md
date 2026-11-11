@@ -94,6 +94,8 @@ internal/cli      CLI 명령. 서버를 호출하고 출력을 만듦. 업무 �
 internal/embed    OpenAI 호환 임베딩 API 호출, 청크 분할, 메모리 색인, 유사 문서 계산
 internal/backup   DB 스냅샷을 gzip으로 압축해 S3 호환 저장소에 주기적으로 올리고 보존 기간이 지난 것을 지움
 skills/tool-agb   에이전트용 사용 절차(SKILL.md). 바이너리에 내장되어 "agb skill install"로 설치됨
+plugin/           Claude Code 플러그인. 훅 설정만 담고, 훅은 "agb hook ..."을 부름
+.claude-plugin/   이 저장소를 Claude Code 마켓플레이스로 등록하게 하는 목록(marketplace.json)
 web/              React 19 + Vite + TanStack Query 웹 클라이언트
 e2e/              실행 중인 서버에 대고 도는 종단 테스트(빌드 태그 e2e)
 deploy/           운영용 compose 파일과 Kubernetes Ingress 구성
@@ -136,6 +138,48 @@ go build -ldflags "-X main.version=<버전> -X main.release=<vX.Y.Z>" -o agb ./c
 ```
 
 `main.version`이 없으면 `agb version`은 `dev`를 출력하고, `agb skill check`는 CLI와 서버의 판 비교를 건너뜁니다. `main.release`는 `/v1/health` 응답의 `release`가 됩니다.
+
+### Claude Code 플러그인
+
+Claude Code를 쓰는 기기에서는 CLI를 설치한 뒤 한 명령으로 플러그인과 스킬을 함께 설치합니다.
+
+```bash
+agb setup claude
+```
+
+이 명령은 다음 셋을 차례로 하고, 하나가 실패하면 그 단계 이름과 `claude`의 오류를 보이고 멈춥니다.
+
+1. 마켓플레이스 등록: `claude plugin marketplace add abyss-works/agent-board#main`. 이 저장소가 마켓플레이스를 겸하고, 릴리즈 브랜치 `main`에 고정합니다.
+2. 플러그인 설치: `claude plugin install agb@agent-board` (사용자 범위)
+3. 스킬 설치: `agb skill install`과 같습니다. `~/.agents/skills/tool-agb`에 쓰고, `~/.claude/skills`가 다른 폴더이면 거기에도 씁니다. `~/.claude/skills/tool-agb`가 링크이면 그대로 둡니다.
+
+- `claude` 실행 파일이 `PATH`에 없으면 아무것도 설치하지 않고 종료 코드 2로 끝납니다.
+- 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 CLI에 내장된 것으로 맞춥니다.
+- 설치한 플러그인은 새 세션부터 동작합니다.
+
+플러그인이 하는 일:
+
+- 플러그인은 훅 설정만 담습니다. 스킬과 실행 파일은 담지 않으며, 훅은 `PATH`의 `agb`를 셸 없이 직접 실행합니다. Windows에서는 `agb.exe`가 `PATH`에 있어야 합니다.
+- 세션을 시작할 때(새 세션, 재개, `/clear`, 압축 뒤) `agb hook session-start`를 부릅니다. 이 명령은 세션의 작업 폴더가 속한 저장소의 `.agb.json`에서 프로젝트를 찾아, 그 프로젝트 키가 확인하지 않은 메시지를 최대 20건 알립니다. `agb msg list --unread`와 같은 조회이고 확인 표시를 만들지 않습니다.
+- `.agb.json`이 없거나, 설정이나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
+
+갱신은 CLI를 먼저, 플러그인을 나중에 합니다. 새 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서입니다. `hook` 명령을 모르는 옛 CLI에서는 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보입니다. 세션 시작은 막지 않습니다.
+
+```bash
+go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main   # 1. CLI
+agb setup claude                                      # 2. 스킬을 새 CLI의 것으로 맞춤
+claude plugin marketplace update agent-board          # 3. 마켓플레이스 목록 갱신
+claude plugin update agb@agent-board                  # 4. 플러그인 갱신 (새 세션부터 적용)
+```
+
+제거:
+
+```bash
+claude plugin uninstall agb@agent-board
+claude plugin marketplace remove agent-board
+```
+
+스킬은 `~/.agents/skills/tool-agb` 폴더와, 따로 설치된 경우 `~/.claude/skills/tool-agb` 폴더를 지웁니다.
 
 ### 서버 실행
 
@@ -220,6 +264,7 @@ agb --actor owner project create APP "예제 앱"
 ```bash
 agb --actor claude login             # 승인 주소와 코드가 나오면 사용자가 웹 /device 에서 승인
 agb skill install                    # CLI와 같은 판의 사용 절차를 설치 (갱신 상세는 skills/tool-agb/references/setup.md)
+agb setup claude                     # Claude Code 이면 위 줄 대신: 플러그인과 스킬을 함께 설치
 export AGB_ACTOR=claude AGB_SESSION_ID=<세션 ID>
 ```
 
