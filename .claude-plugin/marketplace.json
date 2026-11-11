@@ -1,0 +1,14 @@
+{
+  "name": "agent-board",
+  "description": "agent-board(agb)의 Claude Code 플러그인",
+  "owner": {
+    "name": "abyss-works"
+  },
+  "plugins": [
+    {
+      "name": "agb",
+      "source": "./plugin",
+      "description": "세션을 시작할 때 프로젝트의 확인하지 않은 agb 메시지를 알립니다. agb CLI가 PATH에 있어야 합니다."
+    }
+  ]
+}

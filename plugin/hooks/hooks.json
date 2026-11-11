@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agb",
+            "args": ["hook", "session-start"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

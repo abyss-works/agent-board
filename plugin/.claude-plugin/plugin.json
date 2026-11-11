@@ -1,0 +1,8 @@
+{
+  "name": "agb",
+  "description": "세션을 시작할 때 프로젝트의 확인하지 않은 agb 메시지를 알립니다. agb CLI가 PATH에 있어야 합니다.",
+  "author": {
+    "name": "abyss-works"
+  },
+  "repository": "https://github.com/abyss-works/agent-board"
+}
