@@ -11,7 +11,7 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-var configCmd = &command{name: "config", summary: "설정 파일 관리", subs: []*command{
+var configCmd = &command{name: "config", summary: "설정 파일 관리", bareHelp: true, subs: []*command{
 	configPathCmd, configShowCmd, configSetCmd, configUnsetCmd, configSetTokenCmd,
 }}
 
