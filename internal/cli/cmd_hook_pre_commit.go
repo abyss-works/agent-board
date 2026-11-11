@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -30,13 +31,18 @@ git commit 을 실행하려는 것이면 그 저장소의 기록 문서를 agb d
 도구 호출을 거절하는 JSON(hookSpecificOutput.permissionDecision 이 deny)을 표준 출력에 한 줄로 적고, 문제가 없으면
 아무것도 출력하지 않습니다. 파일을 고치지 않고 서버에 쓰지 않습니다.
 
-커밋으로 보는 명령: 명령 줄을 &&, ||, ;, |, 줄바꿈으로 나눈 명령 가운데 git 으로 시작하고 하위 명령이 commit 인
-것이 있을 때입니다. 앞의 환경변수 지정(X=y)과 git 의 -C <경로>, -c <설정>은 건너뜁니다. git commit-tree,
-git log --grep commit, echo "git commit" 은 커밋이 아닙니다. 그 밖의 형태는 커밋으로 보지 않습니다.
+커밋으로 보는 명령: 명령 줄을 &&, ||, ;, |, &, 줄바꿈으로 나눈 명령 가운데 git 으로 시작하고 하위 명령이 commit 인
+것이 있을 때입니다. 앞의 환경변수 지정(X=y)과 git 의 -C <경로>, -c <설정>은 건너뜁니다. 따옴표 안의 글,
+here-document 의 본문, # 주석은 명령으로 보지 않습니다. git commit-tree, git log --grep commit, echo "git commit",
+git commit --dry-run, git commit --help 는 커밋이 아닙니다. 따옴표나 here-document 가 닫히지 않은 명령 줄과 그 밖의
+형태는 커밋으로 보지 않습니다.
 
-검사하는 저장소: 훅 JSON 의 cwd 가 속한 git 저장소입니다. 명령 줄이 cd <경로> 로 시작하면 그 경로, git -C <경로>
-가 있으면 그 경로의 저장소입니다. 상대 경로는 cwd 에서 봅니다. 그 저장소의 최상위에 .agb.json 이 있을 때만
-검사합니다.
+검사하는 저장소: 커밋이 실행될 폴더가 속한 git 저장소입니다. 폴더는 훅 JSON 의 cwd 이고, 명령 줄의 첫 명령이
+cd <경로> 이면 그 경로, git -C <경로> 가 있으면 거기서 본 그 경로입니다. 상대 경로는 cwd 에서 봅니다. 그 밖에
+폴더를 바꾸는 것(다른 자리나 다른 형태의 cd, pushd, popd)이 커밋 앞에 있거나 커밋이 괄호나 중괄호 묶음의 안이나
+뒤에 있으면 폴더를 정할 수 없으므로 검사하지 않습니다. -C 가 절대 경로이면 그 경로로 정합니다. ~ 로 시작하거나
+$ 가 든 경로와, Windows 에서 /c/... 나 /tmp/... 처럼 / 로 시작하는 경로는 풀지 않으므로 검사하지 않습니다. 그
+저장소의 최상위에 .agb.json 이 있을 때만 검사합니다.
 
 검사하는 파일: agb doc check 에 파일을 주지 않았을 때와 같습니다. git 이 새 파일(untracked)이나 HEAD 에서 바뀐
 파일로 보는 파일 중 .agb.json 의 documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 입니다. 스테이징하지
@@ -111,24 +117,25 @@ func (a *App) commitDenial(ctx context.Context, g *globals, tool string, in hook
 	if err := enc.Encode(map[string]any{"hookSpecificOutput": map[string]string{
 		"hookEventName":            "PreToolUse",
 		"permissionDecision":       "deny",
-		"permissionDecisionReason": preCommitReason(res),
+		"permissionDecisionReason": preCommitReason(root, res),
 	}}); err != nil {
 		return ""
 	}
 	return b.String()
 }
 
-// preCommitReason is the reason of a denial: the files of res with their
-// problems, a line each, and what to do. A file name and a problem lose their
-// control characters as in hookText. The problems that do not fit into
-// preCommitReasonMax characters are counted in a line of their own.
-func preCommitReason(res *docCheckResult) string {
+// preCommitReason is the reason of a denial: the repository at root, the files
+// of res with their problems, a line each, and what to do. The path, a file
+// name and a problem lose their control characters as in hookText. The
+// problems that do not fit into preCommitReasonMax characters are counted in a
+// line of their own.
+func preCommitReason(root string, res *docCheckResult) string {
 	const tail = "문제를 고친 뒤 다시 커밋하세요.\n자세히 보려면 그 저장소에서 agb doc check 를 실행하세요."
 	rest := 0
 	for _, f := range res.Files {
 		rest += len(f.Problems)
 	}
-	head := fmt.Sprintf("기록 문서 %d개에 문제가 있어 커밋을 막았습니다.\n", len(res.Files))
+	head := fmt.Sprintf("저장소 %s 의 기록 문서 %d개에 문제가 있어 커밋을 막았습니다.\n", hookText(root, hookTitleMax), len(res.Files))
 	room := preCommitReasonMax - utf8.RuneCountInString(head+fmt.Sprintf("외 문제 %d건\n", rest)+tail)
 	var b strings.Builder
 	b.WriteString(head)
@@ -160,76 +167,165 @@ files:
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
 // gitCommitDir reports whether command, a line for a POSIX shell that starts
-// in cwd, runs git commit, and the folder git runs in. One of the commands of
-// the line has to be git, after any variable assignments, with the subcommand
-// commit after any -C <path> and -c <setting>. The folder is cwd, or the path
-// of a cd that is the first command of the line, and from there the paths of
-// -C. A command inside a subshell or a substitution, a git with another
-// global option and a cd further into the line are not followed, so such a
-// line does not count as a commit or counts in the folder seen so far.
+// in cwd, runs git commit in a folder that the line settles, and that folder.
+//
+// A commit is a command of the line that is git, after any variable
+// assignments, with the subcommand commit after any -C <path> and -c <setting>,
+// and without --dry-run, --help and -h.
+//
+// The folder is settled when the commit has a -C with an absolute path, or
+// when nothing before the commit changes the folder, which then is cwd, or the
+// path of a cd <path> that is the first command of the line, followed by the
+// paths of -C. A cd anywhere else or of another form, pushd, popd, a commit
+// after or inside parentheses or braces, and a path that joinDir does not
+// resolve leave it open. A line whose quotes or here-documents do not close
+// has no commit.
 func gitCommitDir(command, cwd string) (string, bool) {
-	dir := cwd
-	for i, words := range shellCommands(command) {
-		if i == 0 && len(words) == 2 && words[0] == "cd" {
-			dir = joinDir(dir, words[1])
-			continue
-		}
+	cmds, ok := shellCommands(command)
+	if !ok {
+		return "", false
+	}
+	dir, settled := cwd, true
+	for i, c := range cmds {
+		words := c.words
 		for len(words) > 0 && shellAssignment.MatchString(words[0]) {
 			words = words[1:]
 		}
-		if len(words) == 0 || words[0] != "git" {
+		if len(words) == 0 {
 			continue
 		}
-		at := dir
+		switch words[0] {
+		case "cd", "pushd", "popd":
+			if i == 0 && !c.grouped && len(c.words) == 2 && words[0] == "cd" && !strings.HasPrefix(words[1], "-") {
+				dir, settled = joinDir(dir, words[1])
+			} else {
+				settled = false
+			}
+			continue
+		case "git":
+		default:
+			continue
+		}
+		at, sure := dir, settled && !c.grouped
 		words = words[1:]
 		for len(words) >= 2 && (words[0] == "-C" || words[0] == "-c") {
 			if words[0] == "-C" {
-				at = joinDir(at, words[1])
+				known := false
+				at, known = joinDir(at, words[1])
+				sure = known && (sure || filepath.IsAbs(words[1]))
 			}
 			words = words[2:]
 		}
-		if len(words) > 0 && words[0] == "commit" {
-			return at, true
+		if at := len(c.words) - len(words); c.inner > 0 && at >= c.inner {
+			sure = false
 		}
+		if !sure || len(words) == 0 || words[0] != "commit" {
+			continue
+		}
+		if slices.ContainsFunc(words[1:], func(w string) bool { return w == "--dry-run" || w == "--help" || w == "-h" }) {
+			continue
+		}
+		return at, true
 	}
 	return "", false
 }
 
-// joinDir is path as seen from base.
-func joinDir(base, path string) string {
+// joinDir is path as seen from base. ok is false for a path that only the
+// shell can resolve: one with a ~ at its start, a $ or a backquote, and one
+// that starts with a slash but is not absolute for the system, as /c/work and
+// /tmp are on Windows.
+func joinDir(base, path string) (dir string, ok bool) {
 	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
+		return filepath.Clean(path), true
 	}
-	return filepath.Join(base, path)
+	if strings.HasPrefix(path, "~") || strings.ContainsAny(path, "$`") || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) {
+		return "", false
+	}
+	return filepath.Join(base, path), true
+}
+
+// shellCommand is one command of a shell line: its words, whether it starts
+// after a parenthesis or a brace outside quotes, and how many of its words
+// come before the first one inside it, 0 when it has none.
+type shellCommand struct {
+	words   []string
+	grouped bool
+	inner   int
+}
+
+// hereDoc is the end line of a here-document; with dash the tabs before it do
+// not count.
+type hereDoc struct {
+	end  string
+	dash bool
 }
 
 // shellCommands splits a line for a POSIX shell into its commands, at &&, ||,
 // ;, |, & and line ends outside quotes, and each command into its words, with
-// the quotes and the escaping backslashes taken off. It expands nothing.
-func shellCommands(line string) [][]string {
+// the quotes and the escaping backslashes taken off. A comment, from a # at
+// the start of a word to the end of the line, and the body of a here-document,
+// up to its end line, are left out. Parentheses and braces outside quotes end
+// a word and mark the commands that start after them. It expands nothing. ok
+// is false when a quote or a here-document does not close.
+func shellCommands(line string) (cmds []shellCommand, ok bool) {
 	var (
-		cmds   [][]string
-		words  []string
-		word   []rune
-		inWord bool
-		quote  rune
+		cur     shellCommand
+		word    []rune
+		inWord  bool
+		quote   rune
+		grouped bool
+		pending []hereDoc
 	)
+	begin := func() {
+		if !inWord && len(cur.words) == 0 {
+			cur.grouped = grouped
+		}
+		inWord = true
+	}
 	endWord := func() {
 		if inWord {
-			words = append(words, string(word))
+			cur.words = append(cur.words, string(word))
 			word, inWord = nil, false
 		}
 	}
 	endCommand := func() {
 		endWord()
-		if len(words) > 0 {
-			cmds = append(cmds, words)
-			words = nil
+		if len(cur.words) > 0 {
+			cmds = append(cmds, cur)
 		}
+		cur = shellCommand{}
 	}
 	rs := []rune(line)
 	for i := 0; i < len(rs); i++ {
 		c := rs[i]
+		if c == '\n' && len(pending) > 0 {
+			// The bodies start on the next line. i moves to the end of the
+			// last end line.
+			if i, ok = skipHereDocs(rs, i+1, pending); !ok {
+				return nil, false
+			}
+			pending = nil
+			if i >= len(rs) {
+				break
+			}
+		}
+		if quote != '\'' && c == '<' && i+1 < len(rs) && rs[i+1] == '<' {
+			if quote == 0 {
+				endWord()
+			}
+			if i+2 < len(rs) && rs[i+2] == '<' {
+				// A here-string has no body.
+				i += 2
+				continue
+			}
+			doc, next, found := hereDocStart(rs, i+2)
+			if !found {
+				return nil, false
+			}
+			pending = append(pending, doc)
+			i = next - 1
+			continue
+		}
 		switch {
 		case quote == '\'':
 			if c == '\'' {
@@ -248,20 +344,78 @@ func shellCommands(line string) [][]string {
 				word = append(word, c)
 			}
 		case c == '\'' || c == '"':
-			quote, inWord = c, true
+			begin()
+			quote = c
 		case c == '\\' && i+1 < len(rs):
 			i++
 			if rs[i] != '\n' {
-				word, inWord = append(word, rs[i]), true
+				begin()
+				word = append(word, rs[i])
+			}
+		case c == '#' && !inWord:
+			for i+1 < len(rs) && rs[i+1] != '\n' {
+				i++
+			}
+		case c == '(' || c == ')' || c == '{' || c == '}':
+			endWord()
+			grouped = true
+			if cur.inner == 0 {
+				cur.inner = len(cur.words)
 			}
 		case c == ';' || c == '|' || c == '&' || c == '\n':
 			endCommand()
 		case c == ' ' || c == '\t' || c == '\r':
 			endWord()
 		default:
-			word, inWord = append(word, c), true
+			begin()
+			word = append(word, c)
 		}
 	}
 	endCommand()
-	return cmds
+	return cmds, quote == 0 && len(pending) == 0
+}
+
+// hereDocStart reads what follows the << of a here-document at rs[i]: an
+// optional -, blanks, and the end word, whose quotes do not count. next is the
+// index after the word. found is false when there is no word.
+func hereDocStart(rs []rune, i int) (doc hereDoc, next int, found bool) {
+	if i < len(rs) && rs[i] == '-' {
+		doc.dash = true
+		i++
+	}
+	for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t') {
+		i++
+	}
+	var end []rune
+	for ; i < len(rs) && !strings.ContainsRune(" \t\r\n;|&()<>", rs[i]); i++ {
+		if !strings.ContainsRune(`'"\`, rs[i]) {
+			end = append(end, rs[i])
+		}
+	}
+	doc.end = string(end)
+	return doc, i, len(end) > 0
+}
+
+// skipHereDocs passes the bodies of the here-documents in docs, which start at
+// rs[i], and returns the index of the line end after the last end line, or
+// len(rs) when the text stops there. ok is false when an end line is missing.
+func skipHereDocs(rs []rune, i int, docs []hereDoc) (next int, ok bool) {
+	for _, doc := range docs {
+		for found := false; !found; {
+			if i > len(rs) {
+				return 0, false
+			}
+			end := i
+			for end < len(rs) && rs[end] != '\n' {
+				end++
+			}
+			l := strings.TrimSuffix(string(rs[i:end]), "\r")
+			if doc.dash {
+				l = strings.TrimLeft(l, "\t")
+			}
+			found = l == doc.end
+			i = end + 1
+		}
+	}
+	return i - 1, true
 }

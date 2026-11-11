@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -95,7 +96,11 @@ func TestHookPreCommitDeniesACommitWhenARecordHasProblems(t *testing.T) {
 	}
 
 	reason := denyReason(t, runPreCommit(t, h, preCommitInput(t, root, "Bash", "git commit -m x")))
-	// The reason names the file and holds every problem as agb doc check words it.
+	// The reason names the repository and the file and holds every problem as
+	// agb doc check words it.
+	if first, _, _ := strings.Cut(reason, "\n"); !strings.Contains(first, filepath.ToSlash(root)) {
+		t.Errorf("the first line lacks the repository %s:\n%s", filepath.ToSlash(root), reason)
+	}
 	if !strings.Contains(reason, "history/"+freshName) {
 		t.Errorf("reason lacks the file name:\n%s", reason)
 	}
@@ -149,6 +154,14 @@ func TestGitCommitDir(t *testing.T) {
 		`cd "` + abs + `" && git commit`:    filepath.FromSlash(abs),
 		"git commit -m \"$(cat <<'EOF'\nfix: a \"quoted\" word; and more\nEOF\n)\"": cwd,
 	}
+	commits["git commit -F - <<'EOF'\nfix: x\n\ngit commit -m y\nEOF"] = cwd
+	commits["git commit -F - <<EOF\nfix: x\nEOF\n"] = cwd
+	commits["git add a # staged\ngit commit -m x"] = cwd
+	commits["git commit -m x # (done)"] = cwd
+	commits["git commit -m \"$(date)\" && (cd sub && ls)"] = cwd
+	commits["(git -C "+abs+" commit)"] = filepath.FromSlash(abs)
+	commits["cd sub && cd deep && git -C "+abs+" commit"] = filepath.FromSlash(abs)
+	commits["git commit --dry-run; git commit -m x"] = cwd
 	for command, want := range commits {
 		if dir, ok := gitCommitDir(command, cwd); !ok || dir != want {
 			t.Errorf("%q: dir = %q, %v, want %q", command, dir, ok, want)
@@ -160,9 +173,48 @@ func TestGitCommitDir(t *testing.T) {
 		`echo "git commit"`, "echo git commit", `echo 'a; git commit -m x'`, `echo "a && git commit -m x"`,
 		"gitk commit", "mygit commit", "X=1", "X=1 ls", "cd sub", "cd sub && git status",
 		"git stash && echo commit", "git -c commit", "git -C commit",
+		// The body of a here-document and a comment are not commands.
+		"cat > notes.md <<'EOF'\n# steps\ngit commit -m \"x\"\nEOF",
+		"agb issue comment K-1 --body-file - <<'EOF'\nrun\ngit commit -m x\nEOF",
+		"cat <<EOF\ngit commit -m x\nEOF\n",
+		"cat <<EOF\nline && git commit -m x\nEOF\nls",
+		"cat <<-EOF\n\tgit commit -m x\n\tEOF\nls",
+		"cat <<-'END'\n\tit's && git commit\n\tEND",
+		"cat <<\"A B\"\ngit commit\nA B",
+		"cat <<A <<B\ngit commit\nA\ngit commit\nB",
+		"x --body \"$(cat <<'EOF'\nsay \"hi\ngit commit -m x\nEOF\n)\"",
+		"ls # then && git commit -m x",
+		"ls #\tgit commit\n# git commit\nls",
+		"#git commit",
+		// A structure that is not sure is not a commit.
+		"cat <<EOF\ngit commit -m x",
+		"git commit -F - <<EOF\nfix: x",
+		"git commit -F - <<EOF",
+		"cat <<\ngit commit",
+		"git commit -m \"x",
+		"echo 'x\ngit commit",
+		// Not a commit that changes the repository.
+		"git commit --dry-run", "git commit -m x --dry-run", "git commit --help", "git commit -h", "git -C sub commit --dry-run",
+		// The folder of the commit is not sure.
+		"(cd sub && git commit -m x)", "pushd sub && git commit -m x", "cd -- sub && git commit -m x",
+		"cd .. && git status && cd sub && git commit -m x", "{ cd sub; git commit; }", `bash -c "cd sub && git commit"`,
+		`sh -c 'git commit'`, "git status && cd sub && git commit", "cd sub; popd; git commit", "pushd sub; git -C deep commit",
+		"cd -P sub && git commit", "cd && git commit", "X=1 cd sub && git commit", "(cd sub) && git commit",
+		"echo $(git commit -m x)", "x=$(git commit -m x)", "(git commit)", "{ git commit; }", "f() { git commit; }; f",
+		// A path that only the shell can resolve leaves the folder open.
+		"cd ~/sub && git commit", "cd ~ && git commit", "git -C ~/sub commit", `cd "$HOME/sub" && git commit`,
+		"git -C $DIR commit", "cd `pwd`/sub && git commit",
 	} {
 		if dir, ok := gitCommitDir(command, cwd); ok {
 			t.Errorf("%q counts as a commit in %q", command, dir)
+		}
+	}
+	// On Windows a POSIX path of the shell is not a path of the system.
+	if runtime.GOOS == "windows" {
+		for _, command := range []string{"cd /tmp && git commit", "cd /c/work && git commit", "git -C /tmp commit"} {
+			if dir, ok := gitCommitDir(command, cwd); ok {
+				t.Errorf("%q counts as a commit in %q", command, dir)
+			}
 		}
 	}
 }
@@ -404,13 +456,16 @@ func TestPreCommitReasonIsBoundedAndHasNoControlCharacters(t *testing.T) {
 		}
 		res.Files = append(res.Files, f)
 	}
-	reason := preCommitReason(res)
+	reason := preCommitReason("C:/work\n  - repo\x1b", res)
 	if n := utf8.RuneCountInString(reason); n > preCommitReasonMax || preCommitReasonMax != 4000 {
 		t.Errorf("reason has %d characters, max %d", n, preCommitReasonMax)
 	}
 	noControl(t, reason)
 	lines := strings.Split(strings.TrimSuffix(reason, "\n"), "\n")
-	if !strings.Contains(lines[0], "200") || lines[1] != "history/000   - 없는 문제  [2J 끝.md" {
+	if len(lines) < 5 {
+		t.Fatalf("reason has %d lines:\n%s", len(lines), reason)
+	}
+	if lines[0] != "저장소 C:/work   - repo  의 기록 문서 200개에 문제가 있어 커밋을 막았습니다." || lines[1] != "history/000   - 없는 문제  [2J 끝.md" {
 		t.Errorf("head = %q, %q", lines[0], lines[1])
 	}
 	// What does not fit is counted, and the closing lines are always there.
@@ -426,12 +481,12 @@ func TestPreCommitReasonIsBoundedAndHasNoControlCharacters(t *testing.T) {
 	}
 
 	// One file with one endless problem is cut as well.
-	reason = preCommitReason(&docCheckResult{Files: []docCheckFile{{Name: strings.Repeat("이", 9000) + ".md", Problems: []string{strings.Repeat("문", 9000)}}}})
+	reason = preCommitReason(strings.Repeat("저", 9000), &docCheckResult{Files: []docCheckFile{{Name: strings.Repeat("이", 9000) + ".md", Problems: []string{strings.Repeat("문", 9000)}}}})
 	if n := utf8.RuneCountInString(reason); n > preCommitReasonMax || !strings.Contains(reason, "agb doc check") {
 		t.Errorf("reason has %d characters:\n%.200s", n, reason)
 	}
 	// A short result is not cut.
-	reason = preCommitReason(&docCheckResult{Files: []docCheckFile{{Name: "history/a.md", Problems: []string{"문제 하나", "문제 둘"}}}})
+	reason = preCommitReason("/repo", &docCheckResult{Files: []docCheckFile{{Name: "history/a.md", Problems: []string{"문제 하나", "문제 둘"}}}})
 	if !strings.Contains(reason, "history/a.md\n  - 문제 하나\n  - 문제 둘\n") || strings.Contains(reason, "외 문제") {
 		t.Errorf("reason = %q", reason)
 	}
@@ -454,5 +509,75 @@ func TestHookPreCommitCutsALongDenial(t *testing.T) {
 	noControl(t, reason)
 	if !bytes.HasSuffix([]byte(out), []byte("}\n")) || strings.Count(strings.TrimSpace(out), "\n") != 0 {
 		t.Errorf("stdout is not one line of JSON: %q", out)
+	}
+}
+
+// panicReader stands for anything that goes wrong inside the hook.
+type panicReader struct{}
+
+func (panicReader) Read([]byte) (int, error) { panic("read") }
+
+// A panic ends a Go program with exit code 2, which would block the tool call.
+func TestHookPreCommitSurvivesAPanic(t *testing.T) {
+	h := newHarness(t, nil, false)
+	h.app.Stdin = panicReader{}
+	if code := h.run("hook", "pre-commit", "--tool", "claude"); code != 0 || h.stdout.Len() != 0 || h.stderr.Len() != 0 {
+		t.Errorf("code=%d stdout=%q stderr=%q", code, h.stdout, h.stderr)
+	}
+}
+
+// The body of a here-document and a comment are text, not commands.
+func TestHookPreCommitIgnoresHereDocumentsAndComments(t *testing.T) {
+	root := badRepo(t)
+	h := newHarness(t, nil, false)
+	for _, command := range []string{
+		"cat > notes.md <<'EOF'\n# steps\ngit commit -m \"x\"\nEOF",
+		"agb issue comment K-1 --body-file - <<'EOF'\nthen run\ngit commit -m x\nEOF",
+		"ls # then && git commit -m x",
+		"git commit --dry-run",
+	} {
+		if out := runPreCommit(t, h, preCommitInput(t, root, "Bash", command)); out != "" {
+			t.Errorf("%q: stdout = %q", command, out)
+		}
+	}
+	for _, command := range []string{
+		"git commit -m \"$(cat <<'EOF'\nfix: a \"quoted\" word\n\nEOF\n)\"",
+		"git commit -F - <<'EOF'\nfix: x\nEOF",
+	} {
+		denyReason(t, runPreCommit(t, h, preCommitInput(t, root, "Bash", command)))
+	}
+}
+
+// A repository of its own inside one with a bad record: a commit whose folder
+// the command line does not settle is not checked against the outer records.
+func TestHookPreCommitPassesWhenTheFolderIsNotSure(t *testing.T) {
+	outer := badRepo(t)
+	inner := filepath.Join(outer, "project")
+	if err := os.Mkdir(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, inner, "init", "-q")
+	h := newHarness(t, nil, false)
+	for _, command := range []string{
+		"(cd project && git commit -m x)",
+		"pushd project && git commit -m x",
+		"cd -- project && git commit -m x",
+		"cd .. && git status && cd project && git commit -m x",
+		"{ cd project; git commit; }",
+		`bash -c "cd project && git commit"`,
+		// The folder is sure and is the inner repository, which has no config.
+		"cd project && git commit -m x",
+		"git -C project commit -m x",
+	} {
+		if out := runPreCommit(t, h, preCommitInput(t, outer, "Bash", command)); out != "" {
+			t.Errorf("%q: stdout = %q", command, out)
+		}
+	}
+	// From the inner repository the sure forms reach the outer one and are checked.
+	for _, command := range []string{"cd .. && git commit -m x", "git -C .. commit -m x"} {
+		reason := denyReason(t, runPreCommit(t, h, preCommitInput(t, inner, "Bash", command)))
+		if first, _, _ := strings.Cut(reason, "\n"); !strings.Contains(first, filepath.ToSlash(outer)) {
+			t.Errorf("%q: first line = %q", command, first)
+		}
 	}
 }
