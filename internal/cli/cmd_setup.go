@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/wsk0715/agent-board/internal/model"
 )
 
 const (
@@ -18,25 +20,39 @@ const (
 	claudeMarketplace = "agent-board"
 	// claudePlugin is the name of the plugin in plugin/.
 	claudePlugin = "agb"
+	// claudeTool is the name the plugin's hooks pass as --tool, which is the
+	// key of the hook actor in the config file.
+	claudeTool = "claude"
 )
 
 var setupCmd = &command{name: "setup", summary: "에이전트 도구에 agb 연결 (플러그인과 스킬 설치)", subs: []*command{
 	setupClaudeCmd,
-}}
+}, note: `설치를 실행하는 행위자(--actor <ID> 나 AGB_ACTOR)와 그 행위자의 토큰이 있어야 합니다. 설치한 훅은 그 행위자로 조회합니다.
+`}
 
 var setupClaudeCmd = &command{
 	name: "claude", summary: "Claude Code 에 agb 플러그인과 스킬 설치",
-	usage: `사용법: agb setup claude
+	usage: `사용법: agb setup claude [--actor <ID>]
 
-Claude Code 에 agb 를 연결합니다. 다음 셋을 차례로 하고, 하나가 실패하면 거기서 멈춥니다.
+Claude Code 에 agb 를 연결합니다. 설치를 실행하는 행위자가 있어야 합니다(--actor, AGB_ACTOR, 설정 파일의 actor 순서).
+행위자가 없거나 그 행위자가 쓸 토큰이 없으면 아무것도 하지 않습니다. 토큰은 agb login --actor <ID> 로 받습니다.
+
+다음을 차례로 하고, 하나가 실패하면 거기서 멈춥니다.
 
 1. 마켓플레이스 등록: claude plugin marketplace add ` + claudeMarketplaceSource + `
 2. 플러그인 설치:     claude plugin install ` + claudePlugin + `@` + claudeMarketplace + `
 3. 스킬 설치:         agb skill install 과 같습니다. ~/.agents/skills/tool-agb 에 쓰고, ~/.claude/skills 가
                       다른 폴더이면 거기에도 씁니다. ~/.claude/skills/tool-agb 가 링크이면 그대로 둡니다.
+4. 훅 행위자 저장:    설정 파일의 hook_actors 에 ` + claudeTool + ` 의 값으로 이 실행의 행위자를 씁니다. 훅만 이 값을 쓰고,
+                      다른 명령의 행위자는 바뀌지 않습니다.
+5. 훅 점검:           훅과 같은 조회를 현재 폴더에서 한 번 하고 결과를 "훅 점검:" 한 줄로 알립니다. 세션에 보일
+                      메시지 건수이거나, 보이지 않을 이유(프로젝트를 판정할 수 없음, 서버에 닿지 않음 등)입니다.
+                      점검 결과는 종료 코드를 바꾸지 않습니다.
 
-플러그인은 세션을 시작할 때 agb hook session-start 를 불러 확인하지 않은 메시지를 알립니다. 새 세션부터 적용됩니다.
-다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 이 CLI 에 내장된 것으로 맞춥니다.
+플러그인은 세션을 시작할 때 agb hook session-start --tool ` + claudeTool + ` 를 불러 확인하지 않은 메시지를 알립니다.
+훅은 저장된 훅 행위자와 Claude Code 의 세션 ID 로 조회합니다. 새 세션부터 적용됩니다.
+다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 이 CLI 에 내장된 것으로 맞추고, 훅 행위자는
+이 실행의 행위자로 바꿉니다.
 claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 
 갱신: CLI 를 먼저 갱신한 뒤 플러그인을 갱신합니다. 플러그인이 CLI 에 없는 명령을 부르지 않게 하는 순서입니다.
@@ -54,6 +70,24 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		}
 		if a.SkillsDir == "" {
 			return usageErrorf("홈 폴더를 알 수 없어 스킬을 둘 곳이 없습니다.")
+		}
+		path, err := a.configPath(g)
+		if err != nil {
+			return err
+		}
+		file, err := loadConfig(path)
+		if err != nil {
+			return err
+		}
+		actor := actorOf(g, a.Getenv, file)
+		if actor == "" {
+			return usageErrorf("훅이 쓸 행위자가 없습니다. --actor <ID> 나 AGB_ACTOR 로 이 설치를 실행하는 행위자를 주세요.")
+		}
+		if !model.ValidActorID(actor) {
+			return usageErrorf("행위자 ID 형식이 아닙니다 (소문자와 숫자 1~32자).")
+		}
+		if err := (Settings{Actor: actor, Token: tokenOf(actor, a.Getenv, file)}).requireAuth(); err != nil {
+			return err
 		}
 		run := a.RunClaude
 		if run == nil {
@@ -85,7 +119,20 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 				return err
 			}
 		}
-		_, err = fmt.Fprintln(a.Stdout, "새 Claude Code 세션부터 적용됩니다.")
+		if err := a.updateConfig(g, func(c *Config) error {
+			if c.HookActors == nil {
+				c.HookActors = map[string]string{}
+			}
+			c.HookActors[claudeTool] = actor
+			return nil
+		}, "훅 행위자 저장: "+claudeTool+" → "+actor); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Stdout, "새 Claude Code 세션부터 적용됩니다.")
+		// The check tells what a session started in this folder gets. Its
+		// result does not change how the setup ends.
+		_, summary := a.unreadNotice(ctx, g, claudeTool, hookStdin{})
+		_, err = fmt.Fprintf(a.Stdout, "훅 점검: %s\n", summary)
 		return err
 	},
 }

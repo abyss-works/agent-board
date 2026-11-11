@@ -35,7 +35,12 @@ func (f *fakeClaude) run(ctx context.Context, args ...string) ([]byte, error) {
 // skills folder of Claude Code are two folders below it, neither made yet.
 func newSetupHarness(t *testing.T) (*harness, *fakeClaude) {
 	t.Helper()
-	h := newHarness(t, nil, false)
+	return withFakeClaude(t, newHarness(t, nil, false))
+}
+
+// withFakeClaude gives h a home of its own and a fake claude executable.
+func withFakeClaude(t *testing.T, h *harness) (*harness, *fakeClaude) {
+	t.Helper()
 	home := t.TempDir()
 	h.app.SkillsDir = filepath.Join(home, ".agents", "skills")
 	h.app.ClaudeSkillsDir = filepath.Join(home, ".claude", "skills")
@@ -202,12 +207,151 @@ func TestSetupUsage(t *testing.T) {
 	if code := h.run("setup", "claude", "--help"); code != 0 {
 		t.Errorf("setup claude --help: code=%d", code)
 	}
-	for _, want := range []string{"claude plugin marketplace add abyss-works/agent-board#main", "claude plugin install agb@agent-board", "~/.claude/skills"} {
+	for _, want := range []string{"claude plugin marketplace add abyss-works/agent-board#main", "claude plugin install agb@agent-board", "~/.claude/skills", "--actor", "hook_actors", "훅 점검"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("setup claude --help lacks %q:\n%s", want, h.stdout)
 		}
 	}
 	if !strings.Contains(Usage, "  setup ") {
 		t.Errorf("the top-level help lacks setup")
+	}
+}
+
+// ranNothing reports whether a run of agb setup claude stopped before its
+// first step: no call of claude, no skill, no config file.
+func ranNothing(h *harness, f *fakeClaude) bool {
+	_, err := os.Stat(h.app.ConfigPath)
+	return len(f.calls) == 0 && !installed(h.app.SkillsDir) && !installed(h.app.ClaudeSkillsDir) && os.IsNotExist(err)
+}
+
+func TestSetupClaudeNeedsAnActor(t *testing.T) {
+	h, f := newSetupHarness(t)
+	delete(h.env, "AGB_ACTOR")
+	if code := h.run("setup", "claude"); code != 2 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	for _, want := range []string{"--actor <ID>", "AGB_ACTOR"} {
+		if !strings.Contains(h.stderr.String(), want) {
+			t.Errorf("stderr lacks %q: %s", want, h.stderr)
+		}
+	}
+	if !ranNothing(h, f) {
+		t.Errorf("a step ran without an actor: calls=%v", f.calls)
+	}
+	if code := h.run("setup", "claude", "--actor", "Not An ID"); code != 2 || !ranNothing(h, f) {
+		t.Errorf("malformed actor: code=%d calls=%v", code, f.calls)
+	}
+}
+
+func TestSetupClaudeNeedsATokenOfTheActor(t *testing.T) {
+	h, f := newSetupHarness(t)
+	delete(h.env, "AGB_TOKEN")
+	if code := h.run("setup", "claude"); code == 0 || !strings.Contains(h.stderr.String(), "agb login --actor claude") {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if !ranNothing(h, f) {
+		t.Errorf("a step ran without a token: calls=%v", f.calls)
+	}
+	// The token of another actor does not count; the actor's own does.
+	saveConfig(h.app.ConfigPath, Config{Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"}})
+	if code := h.run("setup", "claude"); code == 0 || len(f.calls) != 0 {
+		t.Errorf("token of another actor: code=%d calls=%v", code, f.calls)
+	}
+	if code := h.run("setup", "claude", "--actor", "reviewer"); code != 0 || len(f.calls) != 2 {
+		t.Errorf("token of the actor: code=%d calls=%v stderr=%s", code, f.calls, h.stderr)
+	}
+}
+
+func TestSetupClaudeSavesTheHookActor(t *testing.T) {
+	h, f := newSetupHarness(t)
+	t.Chdir(t.TempDir())
+	before := Config{
+		Token: "shared-token-value", Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"},
+		SessionID: "keep", ClientHost: "desk2", HookActors: map[string]string{"another": "base"},
+	}
+	if err := saveConfig(h.app.ConfigPath, before); err != nil {
+		t.Fatal(err)
+	}
+	f.onCall = func() {
+		if cfg, _ := loadConfig(h.app.ConfigPath); !reflect.DeepEqual(cfg, before) {
+			t.Errorf("the config file changed before call %d of claude: %+v", len(f.calls), cfg)
+		}
+	}
+	if code := h.run("setup", "claude"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	want := before
+	want.HookActors = map[string]string{"another": "base", "claude": "claude"}
+	if cfg, err := loadConfig(h.app.ConfigPath); err != nil || !reflect.DeepEqual(cfg, want) {
+		t.Errorf("config = %+v (%v)", cfg, err)
+	}
+	if !strings.Contains(h.stdout.String(), "훅 행위자 저장: claude → claude: ") {
+		t.Errorf("stdout = %s", h.stdout)
+	}
+
+	// Another run replaces the hook actor.
+	f.onCall = nil
+	if code := h.run("setup", "claude", "--actor", "reviewer"); code != 0 {
+		t.Fatalf("second run: code=%d stderr=%s", code, h.stderr)
+	}
+	want.HookActors = map[string]string{"another": "base", "claude": "reviewer"}
+	if cfg, err := loadConfig(h.app.ConfigPath); err != nil || !reflect.DeepEqual(cfg, want) {
+		t.Errorf("second run: config = %+v (%v)", cfg, err)
+	}
+	if !strings.Contains(h.stdout.String(), "훅 행위자 저장: claude → reviewer: ") {
+		t.Errorf("second run: stdout = %s", h.stdout)
+	}
+}
+
+// A step that fails leaves the hook actor as it was.
+func TestSetupClaudeKeepsTheHookActorWhenAStepFails(t *testing.T) {
+	h, f := newSetupHarness(t)
+	f.failAt = 2
+	if code := h.run("setup", "claude"); code != 1 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if _, err := os.Stat(h.app.ConfigPath); !os.IsNotExist(err) {
+		t.Errorf("the config file was written: %v", err)
+	}
+}
+
+func TestSetupClaudeChecksTheHook(t *testing.T) {
+	cases := map[string]struct {
+		setup func(t *testing.T, srv *fakeServer)
+		repo  string // the project of the working folder; "" for a folder without one
+		want  string
+	}{
+		"messages":    {repo: "CLI", want: "훅 점검: 프로젝트 CLI의 확인하지 않은 메시지 2건\n"},
+		"no message":  {repo: "EMP", want: "훅 점검: 프로젝트 EMP의 확인하지 않은 메시지 0건\n"},
+		"no project":  {want: "훅 점검: 이 폴더에서는 프로젝트를 판정할 수 없습니다\n"},
+		"unreachable": {repo: "CLI", setup: func(t *testing.T, srv *fakeServer) { srv.srv.Close() }, want: "훅 점검: 서버에 닿지 않습니다\n"},
+		"server error": {repo: "CLI", setup: func(t *testing.T, srv *fakeServer) {
+			srv.on("GET", "/v1/projects/CLI/messages", canned{status: 401, body: errJSON})
+		}, want: "훅 점검: 서버가 오류를 돌려주었습니다 (401"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			mh, srv := newMsgHarness(t, false)
+			h, _ := withFakeClaude(t, mh)
+			if c.repo != "" {
+				t.Chdir(hookRepo(t, c.repo))
+			}
+			if c.setup != nil {
+				c.setup(t, srv)
+			}
+			if code := h.run("setup", "claude"); code != 0 || h.stderr.Len() != 0 {
+				t.Fatalf("code=%d stderr=%s", code, h.stderr)
+			}
+			if out := h.stdout.String(); strings.Count(out, "훅 점검: ") != 1 || !strings.Contains(out, c.want) {
+				t.Errorf("stdout = %s", out)
+			}
+			// The check asks as the actor it saved and writes none of the messages.
+			if strings.Contains(h.stdout.String(), "agb msg ack") {
+				t.Errorf("stdout holds the hook text: %s", h.stdout)
+			}
+			if c.repo != "" && c.setup == nil && srv.last().Header.Get("X-Actor") != "claude" {
+				t.Errorf("X-Actor = %q", srv.last().Header.Get("X-Actor"))
+			}
+		})
 	}
 }
