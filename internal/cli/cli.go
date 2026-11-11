@@ -185,7 +185,7 @@ const Usage = `사용법: agb <명령> [옵션]
   logout            이 행위자의 토큰 폐기와 로컬 삭제
   skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
   setup             에이전트 도구에 agb 연결: 플러그인과 스킬 설치 (setup claude)
-  hook              에이전트 도구의 훅이 부르는 명령 (session-start)
+  hook              에이전트 도구의 훅이 부르는 명령 (session-start, pre-commit)
 
 상태:
   health            서버 상태 (인증 없음)

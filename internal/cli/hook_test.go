@@ -239,13 +239,16 @@ func TestHookQueryTimeoutIsFiveSeconds(t *testing.T) {
 
 func TestHookUsage(t *testing.T) {
 	h := newHarness(t, nil, false)
-	for _, args := range [][]string{{"hook"}, {"hook", "pre-commit"}, {"hook", "bogus"}} {
+	for _, args := range [][]string{{"hook"}, {"hook", "bogus"}} {
 		if code := h.run(args...); code != 2 || h.stderr.Len() == 0 {
 			t.Errorf("%v: code=%d stderr=%q", args, code, h.stderr)
 		}
 	}
-	if code := h.run("hook", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "session-start") {
+	if code := h.run("hook", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "session-start") || !strings.Contains(h.stdout.String(), "pre-commit") {
 		t.Errorf("hook --help: code=%d out=%s", code, h.stdout)
+	}
+	if code := h.run("hook", "pre-commit", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "git commit") || h.stderr.Len() != 0 {
+		t.Errorf("hook pre-commit --help: code=%d out=%s", code, h.stdout)
 	}
 	if code := h.run("hook", "session-start", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "cwd") {
 		t.Errorf("hook session-start --help: code=%d out=%s", code, h.stdout)
