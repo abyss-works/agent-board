@@ -11,6 +11,19 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agb",
+            "args": ["hook", "pre-commit", "--tool", "claude"],
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

@@ -292,45 +292,9 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 		if err != nil {
 			return err
 		}
-		res := &docCheckResult{Files: []docCheckFile{}, Notes: []string{}}
-		paths := pos
-		if len(paths) == 0 {
-			changed, err := repoMarkdown(root, cfg, true)
-			if err != nil {
-				return err
-			}
-			for _, rel := range changed {
-				if rule := cfg.ruleFor(rel); rule != nil && !rule.Imported {
-					paths = append(paths, filepath.Join(root, filepath.FromSlash(rel)))
-				}
-			}
-		}
-		templates := &templateReader{root: root, cfg: cfg, cache: map[model.DocumentKind]kindTemplate{}, res: res}
-		var refs *refChecker
-		var refErr error
-		for _, p := range paths {
-			f, content := checkDocFile(p, templates)
-			if rel, err := filepath.Rel(root, p); err == nil && len(pos) == 0 {
-				f.Name = filepath.ToSlash(rel)
-			}
-			if content != "" && refErr == nil {
-				if refs == nil && hasRelations(content) {
-					refs, refErr = a.newRefChecker(ctx, g, root, cfg)
-				}
-				if refs != nil {
-					f.Problems = append(f.Problems, refs.refProblems(content)...)
-				}
-			}
-			res.Checked++
-			if len(f.Problems) > 0 {
-				res.Files = append(res.Files, f)
-			}
-		}
-		switch {
-		case refErr != nil:
-			res.Notes = append(res.Notes, fmt.Sprintf("서버에 접속하지 못해 참조는 확인하지 않았습니다: %v", refErr))
-		case refs != nil && refs.err != nil:
-			res.Notes = append(res.Notes, fmt.Sprintf("서버 조회가 실패해 참조 검사를 멈췄습니다: %v", refs.err))
+		res, err := a.checkDocs(ctx, g, root, cfg, pos)
+		if err != nil {
+			return err
 		}
 		if err := a.printDocCheck(g, res); err != nil {
 			return err
@@ -340,6 +304,55 @@ documents 규칙이 맞고 가져온 문서(imported)가 아닌 *.md 를 검사�
 		}
 		return nil
 	},
+}
+
+// checkDocs checks the record document files named by pos, or without any the
+// files of the repository at root that git sees as new or as changed from HEAD,
+// that a rule of cfg matches and that are not imported. The relations are
+// checked against the server when a file names any; what keeps the server out
+// of reach becomes a note, not an error.
+func (a *App) checkDocs(ctx context.Context, g *globals, root string, cfg *repoConfig, pos []string) (*docCheckResult, error) {
+	res := &docCheckResult{Files: []docCheckFile{}, Notes: []string{}}
+	paths := pos
+	if len(paths) == 0 {
+		changed, err := repoMarkdown(root, cfg, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range changed {
+			if rule := cfg.ruleFor(rel); rule != nil && !rule.Imported {
+				paths = append(paths, filepath.Join(root, filepath.FromSlash(rel)))
+			}
+		}
+	}
+	templates := &templateReader{root: root, cfg: cfg, cache: map[model.DocumentKind]kindTemplate{}, res: res}
+	var refs *refChecker
+	var refErr error
+	for _, p := range paths {
+		f, content := checkDocFile(p, templates)
+		if rel, err := filepath.Rel(root, p); err == nil && len(pos) == 0 {
+			f.Name = filepath.ToSlash(rel)
+		}
+		if content != "" && refErr == nil {
+			if refs == nil && hasRelations(content) {
+				refs, refErr = a.newRefChecker(ctx, g, root, cfg)
+			}
+			if refs != nil {
+				f.Problems = append(f.Problems, refs.refProblems(content)...)
+			}
+		}
+		res.Checked++
+		if len(f.Problems) > 0 {
+			res.Files = append(res.Files, f)
+		}
+	}
+	switch {
+	case refErr != nil:
+		res.Notes = append(res.Notes, fmt.Sprintf("서버에 접속하지 못해 참조는 확인하지 않았습니다: %v", refErr))
+	case refs != nil && refs.err != nil:
+		res.Notes = append(res.Notes, fmt.Sprintf("서버 조회가 실패해 참조 검사를 멈췄습니다: %v", refs.err))
+	}
+	return res, nil
 }
 
 // hasRelations reports whether the front matter of content names a document or
