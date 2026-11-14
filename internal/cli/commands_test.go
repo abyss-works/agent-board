@@ -761,8 +761,8 @@ func TestActorTokenFeedsCommands(t *testing.T) {
 	if got := authorization("--actor", "codex", "whoami"); got != "Bearer agb_codex-token" {
 		t.Errorf("the actor token must beat AGB_TOKEN: Authorization = %q", got)
 	}
-	if got := authorization("--actor", "gemini", "whoami"); got != "Bearer shared-file-token" {
-		t.Errorf("the shared file token must beat AGB_TOKEN: Authorization = %q", got)
+	if got := authorization("--actor", "gemini", "whoami"); got != "Bearer env-token" {
+		t.Errorf("AGB_TOKEN must beat the shared file token: Authorization = %q", got)
 	}
 }
 

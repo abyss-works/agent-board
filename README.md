@@ -277,9 +277,11 @@ CLI는 옵션, 환경변수, 설정 파일 순으로 값을 정합니다. 설정
 | `AGB_TOKEN` | (없음) | 공용 토큰. 토큰은 옵션으로 받지 않음 |
 | `AGB_CONTEXT` | `--context` | 접속 대상 이름. `local`은 `agb serve --local`의 내장 대상 |
 
-토큰은 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고릅니다.
+토큰은 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고릅니다. `local` 대상은 그 앞에 `local-auth.json`의 시드 토큰을 쓰고 `AGB_TOKEN`을 마지막에 씁니다.
 
 이름 붙인 접속 대상을 만들고 고르려면 `agb config set-context <이름> --url <주소>`, `agb config use-context <이름>`, `agb config list-contexts`, `agb config current-context`, `agb config delete-context <이름>`을 씁니다. `--context`와 `AGB_CONTEXT`는 설정 파일의 `current_context`보다 우선합니다. `local`은 등록이 없어도 `127.0.0.1:8420`으로 해석되며, 설정 파일에 토큰이 없으면 `local-auth.json`의 시드 토큰을 자동으로 씁니다.
+
+옛 형식(최상위 `url`, `token`, `tokens`, `actor`)을 읽으면 그 값을 `contexts.default`로 옮기고 원본을 `config.json.bak`으로 남깁니다. `contexts.default`에 같은 필드의 다른 값이 이미 있으면 어느 값을 쓸지 정하지 않고 오류로 멈추며 원본 파일을 바꾸지 않습니다. 알 수 없는 추가 키는 그대로 보존합니다.
 
 ## 사용 흐름
 

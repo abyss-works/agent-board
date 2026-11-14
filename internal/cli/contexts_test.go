@@ -119,6 +119,90 @@ func TestLegacyConfigMigratesToDefaultContextWithBackup(t *testing.T) {
 	}
 }
 
+func TestMigrationPreservesAdditionalJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	raw := `{"url":"http://legacy","extra":{"nested":[1,true,{"x":"y"}]}}`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	var extra any
+	if err := json.Unmarshal(got["extra"], &extra); err != nil || extra == nil {
+		t.Fatalf("additional structured key lost: %s, %v", data, err)
+	}
+}
+
+func TestMixedConfigMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	raw := `{"url":"http://legacy","token":"secret","tokens":{"a":"one"},"actor":"owner","current_context":"other","contexts":{"other":{"url":"http://other"},"default":{"actor":"owner","tokens":{"b":"two"}}},"extra":{"items":[1,2]}}`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cc := cfg.Contexts["default"]
+	if cc.URL != "http://legacy" || cc.Token != "secret" || cc.Actor != "owner" || cc.Tokens["a"] != "one" || cc.Tokens["b"] != "two" || cfg.CurrentContext != "other" {
+		t.Errorf("mixed migration lost settings: %+v", cfg)
+	}
+	backup, err := os.ReadFile(path + ".bak")
+	if err != nil || string(backup) != raw {
+		t.Errorf("backup missing or different: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["extra"]; !ok {
+		t.Error("additional key lost")
+	}
+	if _, ok := got["url"]; ok {
+		t.Error("legacy url remains after migration")
+	}
+}
+
+func TestMixedConfigConflictDoesNotWrite(t *testing.T) {
+	for _, raw := range []string{
+		`{"url":"http://legacy","contexts":{"default":{"url":"http://other"}}}`,
+		`{"token":"old","contexts":{"default":{"token":"new"}}}`,
+		`{"actor":"old","contexts":{"default":{"actor":"new"}}}`,
+		`{"tokens":{"a":"old"},"contexts":{"default":{"tokens":{"a":"new"}}}}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadConfig(path); err == nil {
+				t.Error("conflicting configuration accepted")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != raw {
+				t.Errorf("original changed: %v", err)
+			}
+		})
+	}
+}
+
 func TestContextSelectionPrecedenceAndOverrides(t *testing.T) {
 	prod := newFakeServer(t)
 	prod.on("GET", "/v1/actors/me", canned{body: `{"id":"owner","kind":"user"}`})

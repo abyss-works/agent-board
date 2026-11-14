@@ -116,7 +116,7 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
 
 `agb serve --local`은 이 기기만 쓰는 로컬 서버를 띄운다. 127.0.0.1 외 주소로는 받지 않고 `AGB_TOKEN`, `AGB_ACTORS`를 묻지 않는다. 기본 데이터 폴더는 OS 사용자 데이터 폴더이고 `--data-dir`이나 `AGB_LOCAL_DATA_DIR`로 바꿀 수 있다. 처음 실행하면 `<data-dir>/local-auth.json`에 랜덤 공용 토큰과 에이전트별 토큰을 만든다.
 
-CLI가 `--context local`이나 `AGB_CONTEXT=local`이나 `current_context=local`을 쓰면 설정 파일에 토큰이 없어도 그 시드 파일을 읽어 바로 접속한다. 행위자를 주지 않으면 `owner`로 본다. `agb --actor claude` 등으로 에이전트 행위자를 주면 로그인 없이 그 행위자 토큰을 쓴다.
+CLI가 `--context local`이나 `AGB_CONTEXT=local`이나 `current_context=local`을 쓰면 설정 파일에 토큰이 없어도 그 시드 파일을 읽어 바로 접속한다. 행위자를 주지 않으면 `owner`로 본다. `agb --actor claude` 등으로 에이전트 행위자를 주면 로그인 없이 그 행위자 토큰을 쓴다. `local` 대상의 토큰 순서는 행위자별 토큰 > 시드 토큰 > 설정 파일의 공용 토큰 > `AGB_TOKEN`이다. 그 밖의 대상은 행위자별 토큰 > `AGB_TOKEN` > 설정 파일의 공용 토큰이다.
 
 ## 4. 접속 확인
 

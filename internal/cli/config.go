@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -13,6 +15,11 @@ import (
 	configPkg "github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/model"
 )
+
+var configFileKeys = map[string]bool{
+	"current_context": true, "contexts": true, "url": true, "token": true, "tokens": true, "actor": true,
+	"hook_actors": true, "session_id": true, "client_host": true,
+}
 
 // localAuthTokenFor returns the per-actor secret for agent actors and the
 // shared admin token for user actors (and unknown actor names).
@@ -61,13 +68,12 @@ func (cc ContextConfig) clone() ContextConfig {
 // Legacy top-level URL, Token, Tokens and Actor fields are kept on the struct
 // for in-memory compatibility and migrated into Contexts["default"] when read
 // or written. HookActors holds the actor that "agb hook" acts as, by the name
-// of the agent tool that "agb setup" connected.
+// of the agent tool that "agb setup" connected. Extra holds the keys of the
+// file that this struct does not know, so a rewrite keeps them unchanged.
 type Config struct {
 	CurrentContext string                   `json:"current_context,omitempty"`
 	Contexts       map[string]ContextConfig `json:"contexts,omitempty"`
 
-	// Legacy per-target fields; normalize() folds them into Contexts["default"]
-	// and saveConfig never writes them at the top level.
 	URL    string            `json:"-"`
 	Token  string            `json:"-"`
 	Tokens map[string]string `json:"-"`
@@ -76,6 +82,8 @@ type Config struct {
 	HookActors map[string]string `json:"hook_actors,omitempty"`
 	SessionID  string            `json:"session_id,omitempty"`
 	ClientHost string            `json:"client_host,omitempty"`
+
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
 // diskConfig is the JSON shape on disk, accepting both the current contexts
@@ -92,28 +100,73 @@ type diskConfig struct {
 	ClientHost     string                   `json:"client_host,omitempty"`
 }
 
-// normalize folds any legacy top-level target fields into Contexts["default"]
-// when Contexts is empty.
-func (c *Config) normalize() (migrated bool) {
+// mergeLegacy folds the legacy top-level target fields into Contexts["default"].
+// Existing fields of that context are kept; a field the context already has
+// with a different non-empty value is a conflict and is reported as an error
+// so the caller can leave the file untouched. Actor tokens merge by actor.
+func (c *Config) mergeLegacy() (migrated bool, err error) {
 	hasLegacy := c.URL != "" || c.Token != "" || len(c.Tokens) > 0 || c.Actor != ""
-	if len(c.Contexts) == 0 && hasLegacy {
-		cc := ContextConfig{
-			URL:   c.URL,
-			Token: c.Token,
-			Actor: c.Actor,
-		}.clone()
-		if len(c.Tokens) > 0 {
+	if !hasLegacy {
+		return false, nil
+	}
+	cc := c.Contexts[defaultContextName].clone()
+	mergeField := func(legacy, existing, name string) error {
+		if legacy == "" {
+			return nil
+		}
+		if existing != "" && existing != legacy {
+			return fmt.Errorf("설정 파일의 최상위 %s 값과 contexts.%s 의 %s 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요", name, defaultContextName, name)
+		}
+		return nil
+	}
+	if err := mergeField(c.URL, cc.URL, "url"); err != nil {
+		return false, err
+	}
+	if err := mergeField(c.Token, cc.Token, "token"); err != nil {
+		return false, err
+	}
+	if err := mergeField(c.Actor, cc.Actor, "actor"); err != nil {
+		return false, err
+	}
+	for actor, tok := range c.Tokens {
+		if existing, ok := cc.Tokens[actor]; ok && existing != tok && tok != "" {
+			return false, fmt.Errorf("설정 파일의 최상위 tokens.%s 값과 contexts.%s 의 tokens.%s 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요", actor, defaultContextName, actor)
+		}
+	}
+	if cc.URL == "" {
+		cc.URL = c.URL
+	}
+	if cc.Actor == "" {
+		cc.Actor = c.Actor
+	}
+	if cc.Token == "" {
+		cc.Token = c.Token
+	}
+	if len(c.Tokens) > 0 {
+		if cc.Tokens == nil {
 			cc.Tokens = make(map[string]string, len(c.Tokens))
-			for k, v := range c.Tokens {
-				cc.Tokens[k] = v
+		}
+		for actor, tok := range c.Tokens {
+			if tok != "" {
+				cc.Tokens[actor] = tok
 			}
 		}
-		c.Contexts = map[string]ContextConfig{defaultContextName: cc}
-		if c.CurrentContext == "" {
-			c.CurrentContext = defaultContextName
-		}
-		migrated = true
 	}
+	if c.Contexts == nil {
+		c.Contexts = map[string]ContextConfig{}
+	}
+	c.Contexts[defaultContextName] = cc
+	if c.CurrentContext == "" {
+		c.CurrentContext = defaultContextName
+	}
+	return true, nil
+}
+
+// normalize folds any legacy top-level target fields into Contexts["default"].
+// A conflict between the legacy values and an existing default context leaves
+// the values as they are; loadConfig reports it as an error before that.
+func (c *Config) normalize() (migrated bool) {
+	migrated, _ = c.mergeLegacy()
 	c.URL = ""
 	c.Token = ""
 	c.Tokens = nil
@@ -271,10 +324,23 @@ func loadConfig(path string) (Config, error) {
 		SessionID:      disk.SessionID,
 		ClientHost:     disk.ClientHost,
 	}
-	_, hasContextsKey := rawKeys["contexts"]
+	for key, value := range rawKeys {
+		if !configFileKeys[key] {
+			if cfg.Extra == nil {
+				cfg.Extra = map[string]json.RawMessage{}
+			}
+			cfg.Extra[key] = append(json.RawMessage(nil), value...)
+		}
+	}
 	hasLegacy := disk.URL != "" || disk.Token != "" || len(disk.Tokens) > 0 || disk.Actor != ""
-	cfg.normalize()
-	if !hasContextsKey && hasLegacy {
+	if _, err := cfg.mergeLegacy(); err != nil {
+		return Config{}, fmt.Errorf("설정 파일을 읽지 못했습니다 (%s): %w", path, err)
+	}
+	cfg.URL = ""
+	cfg.Token = ""
+	cfg.Tokens = nil
+	cfg.Actor = ""
+	if hasLegacy {
 		bakPath := path + ".bak"
 		if _, statErr := os.Stat(bakPath); errors.Is(statErr, os.ErrNotExist) {
 			if err := writeFileAtomic(bakPath, raw, 0o600); err != nil {
@@ -283,6 +349,12 @@ func loadConfig(path string) (Config, error) {
 		}
 		if err := saveConfig(path, cfg); err != nil {
 			return Config{}, fmt.Errorf("이전된 설정 파일을 쓰지 못했습니다 (%s): %w", path, err)
+		}
+	}
+	for name, cc := range cfg.Contexts {
+		if len(cc.Tokens) == 0 && cc.Tokens != nil {
+			cc.Tokens = nil
+			cfg.Contexts[name] = cc
 		}
 	}
 	return cfg, nil
@@ -354,7 +426,41 @@ func saveConfig(path string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, append(raw, '\n'), 0o600)
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(object)+len(cfg.Extra))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	for key := range cfg.Extra {
+		if _, exists := object[key]; !exists {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var merged, pretty bytes.Buffer
+	merged.WriteByte('{')
+	for i, key := range keys {
+		if i > 0 {
+			merged.WriteByte(',')
+		}
+		name, _ := json.Marshal(key)
+		merged.Write(name)
+		merged.WriteByte(':')
+		if value, ok := object[key]; ok {
+			merged.Write(value)
+		} else {
+			merged.Write(cfg.Extra[key])
+		}
+	}
+	merged.WriteByte('}')
+	if err := json.Indent(&pretty, merged.Bytes(), "", "  "); err != nil {
+		return err
+	}
+	pretty.WriteByte('\n')
+	return writeFileAtomic(path, pretty.Bytes(), 0o600)
 }
 
 // Settings is what a command uses to reach the server.
@@ -448,21 +554,30 @@ func tokenOfContext(actor string, getenv func(string) string, cc ContextConfig, 
 				return localAuthTokenFor(actor, auth)
 			}
 		}
-	}
-	if cc.Token != "" {
-		return cc.Token
+		if cc.Token != "" {
+			return cc.Token
+		}
+	} else if getenv != nil {
+		if t := getenv("AGB_TOKEN"); t != "" {
+			return t
+		}
+		if cc.Token != "" {
+			return cc.Token
+		}
+		return ""
 	}
 	if getenv != nil {
 		if t := getenv("AGB_TOKEN"); t != "" {
 			return t
 		}
 	}
-	return ""
+	return cc.Token
 }
 
 // tokenOf is the token a request of actor carries in the selected context:
-// the actor's token in the context, else AGB_TOKEN, else the shared token in
-// the context.
+// the actor's token in the context, else AGB_TOKEN for a non-local target,
+// else the shared token in the context. For local, the seed token comes before
+// the shared token and AGB_TOKEN stays last.
 func tokenOf(actor string, getenv func(string) string, file Config) string {
 	return tokenOfWithGlobals(nil, actor, getenv, file)
 }
