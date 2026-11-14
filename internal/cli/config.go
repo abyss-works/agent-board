@@ -10,8 +10,18 @@ import (
 	"time"
 	"unicode"
 
+	configPkg "github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/model"
 )
+
+// localAuthTokenFor returns the per-actor secret for agent actors and the
+// shared admin token for user actors (and unknown actor names).
+func localAuthTokenFor(actor string, auth *configPkg.LocalAuth) string {
+	if t := auth.Tokens[actor]; t != "" {
+		return t
+	}
+	return auth.Token
+}
 
 const (
 	defaultContextName = "default"
@@ -381,7 +391,10 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 		SessionID:  pick(g.sessionID, "AGB_SESSION_ID", file.SessionID),
 		ClientHost: pick(g.clientHost, "AGB_CLIENT_HOST", file.ClientHost),
 	}
-	s.Token = tokenOfContext(s.Actor, getenv, cc)
+	s.Token = tokenOfContext(s.Actor, getenv, cc, ctxName == localContextName)
+	if ctxName == localContextName && s.Actor == "" {
+		s.Actor = "owner"
+	}
 	if s.SessionID == "" {
 		s.SessionID = defaultSessionID(now)
 	}
@@ -425,16 +438,26 @@ func actorOf(g *globals, getenv func(string) string, file Config) string {
 	return actorOfContext(g, getenv, cc)
 }
 
-func tokenOfContext(actor string, getenv func(string) string, cc ContextConfig) string {
+func tokenOfContext(actor string, getenv func(string) string, cc ContextConfig, isLocal bool) string {
 	if t := cc.Tokens[actor]; t != "" {
 		return t
+	}
+	if isLocal {
+		if dir, err := configPkg.DefaultLocalDataDir(getenv); err == nil {
+			if auth, err := configPkg.LoadLocalAuth(configPkg.LocalAuthPath(dir)); err == nil {
+				return localAuthTokenFor(actor, auth)
+			}
+		}
+	}
+	if cc.Token != "" {
+		return cc.Token
 	}
 	if getenv != nil {
 		if t := getenv("AGB_TOKEN"); t != "" {
 			return t
 		}
 	}
-	return cc.Token
+	return ""
 }
 
 // tokenOf is the token a request of actor carries in the selected context:
@@ -445,11 +468,11 @@ func tokenOf(actor string, getenv func(string) string, file Config) string {
 }
 
 func tokenOfWithGlobals(g *globals, actor string, getenv func(string) string, file Config) string {
-	_, cc, err := resolveContext(g, getenv, file)
+	name, cc, err := resolveContext(g, getenv, file)
 	if err != nil {
 		return ""
 	}
-	return tokenOfContext(actor, getenv, cc)
+	return tokenOfContext(actor, getenv, cc, name == localContextName)
 }
 
 // requireAuth checks that the settings can make an authenticated request.

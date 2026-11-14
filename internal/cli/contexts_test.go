@@ -404,4 +404,3 @@ func TestSetURLAndSetActorTargetSelectedContext(t *testing.T) {
 		t.Errorf("beta = %+v", cfg.Contexts["beta"])
 	}
 }
-

@@ -101,7 +101,7 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		if err != nil {
 			return err
 		}
-		if tokenOfContext(actor, noEnv, hookCC) == "" {
+		if tokenOfContext(actor, noEnv, hookCC, false) == "" {
 			return usageErrorf("설정 파일에 행위자 %s 가 쓸 토큰이 없습니다. 훅은 이 셸의 환경변수를 물려받지 않으므로 토큰이 설정 파일에 있어야 합니다(AGB_TOKEN 만으로는 부족합니다). `agb login --actor %s`로 토큰을 설정 파일에 받은 뒤 다시 실행하세요.", actor, actor)
 		}
 		if hookCC.URL == "" {

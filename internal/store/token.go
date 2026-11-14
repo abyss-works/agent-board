@@ -76,6 +76,21 @@ func getToken(ctx context.Context, q querier, id int64) (*model.Token, error) {
 	return t, err
 }
 
+// EnsureSeedToken registers a per-actor secret without touching existing
+// tokens. When a live token with the same hash already exists it is returned
+// as-is, which makes the call idempotent across server restarts.
+func (s *Store) EnsureSeedToken(ctx context.Context, in TokenInput) (*model.Token, error) {
+	hash := hashToken(in.Secret)
+	existing, err := scanToken(s.db.QueryRowContext(ctx, `select `+tokenCols+` from token t where t.token_hash = ? and t.revoked_at is null`, hash))
+	if err == nil {
+		return existing, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	return s.CreateToken(ctx, in)
+}
+
 // CreateToken stores a token for an actor on a device and, in the same
 // transaction, revokes the tokens the actor still has active on that device,
 // in the name of the approver. A token has no activity record.

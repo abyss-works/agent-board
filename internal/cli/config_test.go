@@ -25,15 +25,15 @@ func TestResolveSettingsPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.URL != "http://flag:3" || s.Actor != "claude" || s.SessionID != "flag-sess" || s.ClientHost != "flag-host" || s.Token != "env-token" {
-		t.Errorf("flags should win: %+v", s)
+	if s.URL != "http://flag:3" || s.Actor != "claude" || s.SessionID != "flag-sess" || s.ClientHost != "flag-host" || s.Token != "file-token" {
+		t.Errorf("flags should win (file shared token beats env token): %+v", s)
 	}
 	s, err = resolveSettings(&globals{}, e, file, noon, "desk")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.URL != "http://env:2" || s.Actor != "codex" || s.SessionID != "env-sess" || s.ClientHost != "env-host" || s.Token != "env-token" {
-		t.Errorf("env should beat file: %+v", s)
+	if s.URL != "http://env:2" || s.Actor != "codex" || s.SessionID != "env-sess" || s.ClientHost != "env-host" || s.Token != "file-token" {
+		t.Errorf("env should beat file but file shared token beats env token: %+v", s)
 	}
 	s, err = resolveSettings(&globals{}, env(nil), file, noon, "desk")
 	if err != nil {
@@ -99,8 +99,9 @@ func TestResolveSettingsTokenOrder(t *testing.T) {
 		file Config
 		want string
 	}{
+		{"the actor token beats the shared token", &globals{actor: "codex"}, nil, file, "codex-file-token"},
 		{"the actor token beats AGB_TOKEN", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "codex-file-token"},
-		{"AGB_TOKEN beats the shared token when the actor has no token", &globals{actor: "gemini"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "env-token"},
+		{"the shared token beats AGB_TOKEN when the actor has no token", &globals{actor: "gemini"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "shared-file-token"},
 		{"AGB_TOKEN is used when the file has no tokens", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, Config{URL: "http://x"}, "env-token"},
 		{"actor token from the --actor flag", &globals{actor: "codex"}, nil, file, "codex-file-token"},
 		{"actor token from AGB_ACTOR", &globals{}, map[string]string{"AGB_ACTOR": "claude"}, file, "claude-file-token"},

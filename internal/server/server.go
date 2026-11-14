@@ -66,6 +66,19 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		st.Close()
 		return nil, fmt.Errorf("declare actors: %w", err)
 	}
+	// A local server registers the seeded per-actor tokens so agent actors can
+	// authenticate without the browser approval flow.
+	for actor, secret := range cfg.SeedTokens {
+		if _, err := st.EnsureSeedToken(context.Background(), store.TokenInput{
+			Actor:      actor,
+			ClientHost: "local",
+			Secret:     secret,
+			CreatedBy:  "system",
+		}); err != nil {
+			st.Close()
+			return nil, fmt.Errorf("seed token for %s: %w", actor, err)
+		}
+	}
 	var embedder *embed.Runner
 	var searcher *embed.Searcher
 	if cfg.Embedding.Enabled() {

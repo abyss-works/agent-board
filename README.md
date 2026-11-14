@@ -221,6 +221,12 @@ AGB_WEB_DIR=web/dist ./agb serve
 
 기본 주소는 `127.0.0.1:8420`, 기본 데이터 폴더는 `./data`입니다. 로그는 표준 오류에 JSON 한 줄씩 남습니다. 웹 클라이언트는 서버에 선언된 사용자 행위자(`kind=user`)를 씁니다. 웹을 쓰려면 사용자 행위자를 하나 이상 선언합니다.
 
+### 로컬 서버
+
+`agb serve --local`은 이 기기만 쓰는 로컬 서버를 띄웁니다. `127.0.0.1` 외 주소로는 받지 않고 `AGB_TOKEN`, `AGB_ACTORS`를 묻지 않습니다. 기본 데이터 폴더는 OS 사용자 데이터 폴더(Windows `%LocalAppData%\agb`, macOS `~/Library/Application Support/agb`, Linux `$XDG_DATA_HOME/agb`)이고 `--data-dir`이나 `AGB_LOCAL_DATA_DIR`로 바꿀 수 있습니다.
+
+첫 실행 때 `<data-dir>/local-auth.json`에 랜덤 공용 토큰과 에이전트별 토큰(`claude`, `codex`, `gemini`)을 만듭니다. 재시작하면 같은 파일을 다시 읽어 토큰과 데이터가 그대로 유지됩니다. CLI의 `local` 접속 대상은 설정 파일에 토큰이 없어도 이 시드 파일을 읽어 바로 접속하며, 행위자를 주지 않으면 `owner`로 봅니다. `--actor claude` 등으로 에이전트 행위자를 주면 로그인 없이 그 행위자 토큰을 씁니다.
+
 ### Docker
 
 ```bash
@@ -269,8 +275,11 @@ CLI는 옵션, 환경변수, 설정 파일 순으로 값을 정합니다. 설정
 | `AGB_SESSION_ID` | `--session-id` | 세션 ID. 기본 `cli-YYYYMMDD` |
 | `AGB_CLIENT_HOST` | `--client-host` | 기기 이름. 기본 호스트 이름 |
 | `AGB_TOKEN` | (없음) | 공용 토큰. 토큰은 옵션으로 받지 않음 |
+| `AGB_CONTEXT` | `--context` | 접속 대상 이름. `local`은 `agb serve --local`의 내장 대상 |
 
 토큰은 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고릅니다.
+
+이름 붙인 접속 대상을 만들고 고르려면 `agb config set-context <이름> --url <주소>`, `agb config use-context <이름>`, `agb config list-contexts`, `agb config current-context`, `agb config delete-context <이름>`을 씁니다. `--context`와 `AGB_CONTEXT`는 설정 파일의 `current_context`보다 우선합니다. `local`은 등록이 없어도 `127.0.0.1:8420`으로 해석되며, 설정 파일에 토큰이 없으면 `local-auth.json`의 시드 토큰을 자동으로 씁니다.
 
 ## 사용 흐름
 
