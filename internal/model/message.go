@@ -106,8 +106,8 @@ func ValidateMessage(to, title, body, ttl string) error {
 	if to != "" && !validMessageLabel(to) {
 		e.add("to", "공백과 제어 문자 없이 1~%d자여야 합니다.", MaxMessageToRunes)
 	}
-	if n := utf8.RuneCountInString(title); n < 1 || n > MaxTitleRunes {
-		e.add("title", "1~%d자여야 합니다.", MaxTitleRunes)
+	if n := utf8.RuneCountInString(title); n < 1 || n > MaxTitleRunes || strings.IndexFunc(title, unicode.IsControl) >= 0 {
+		e.add("title", "제어 문자 없이 1~%d자여야 합니다.", MaxTitleRunes)
 	}
 	if len(body) > MaxBodyBytes {
 		e.add("body", "%d바이트를 넘을 수 없습니다.", MaxBodyBytes)
