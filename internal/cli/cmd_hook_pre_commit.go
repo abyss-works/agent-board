@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -93,35 +92,41 @@ func (a *App) commitDenial(ctx context.Context, g *globals, tool string, in hook
 			return ""
 		}
 	}
-	dir, ok := gitCommitDir(in.ToolInput.Command, cwd)
-	if !ok {
-		return ""
-	}
-	root, err := git(dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return ""
-	}
-	cfg, err := loadRepoConfig(root)
-	if err != nil || cfg == nil {
+	dirs := gitCommitDirs(in.ToolInput.Command, cwd)
+	if len(dirs) == 0 {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, hookQueryTimeout)
 	defer cancel()
-	res, err := a.checkDocs(ctx, a.hookGlobals(g, tool, in), root, cfg, nil)
-	if err != nil || len(res.Files) == 0 {
-		return ""
+	hg := a.hookGlobals(g, tool, in)
+	seenRoots := make(map[string]bool)
+	for _, dir := range dirs {
+		root, err := git(dir, "rev-parse", "--show-toplevel")
+		if err != nil || seenRoots[root] {
+			continue
+		}
+		seenRoots[root] = true
+		cfg, err := loadRepoConfig(root)
+		if err != nil || cfg == nil {
+			continue
+		}
+		res, err := a.checkDocs(ctx, hg, root, cfg, nil)
+		if err != nil || len(res.Files) == 0 {
+			continue
+		}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(map[string]any{"hookSpecificOutput": map[string]string{
+			"hookEventName":            "PreToolUse",
+			"permissionDecision":       "deny",
+			"permissionDecisionReason": preCommitReason(root, res),
+		}}); err != nil {
+			return ""
+		}
+		return b.String()
 	}
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(map[string]any{"hookSpecificOutput": map[string]string{
-		"hookEventName":            "PreToolUse",
-		"permissionDecision":       "deny",
-		"permissionDecisionReason": preCommitReason(root, res),
-	}}); err != nil {
-		return ""
-	}
-	return b.String()
+	return ""
 }
 
 // preCommitReason is the reason of a denial: the repository at root, the files
@@ -181,14 +186,31 @@ var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 // resolve leave it open. A line whose quotes or here-documents do not close
 // has no commit.
 func gitCommitDir(command, cwd string) (string, bool) {
-	cmds, ok := shellCommands(command)
-	if !ok {
+	dirs := gitCommitDirs(command, cwd)
+	if len(dirs) == 0 {
 		return "", false
 	}
+	return dirs[0], true
+}
+
+func gitCommitDirs(command, cwd string) []string {
+	cmds, ok := shellCommands(command)
+	if !ok {
+		return nil
+	}
+	var dirs []string
+	seen := make(map[string]bool)
 	dir, settled := cwd, true
 	for i, c := range cmds {
 		words := c.words
+		var gitWorkTree, gitDir string
+		hasWorkTree, hasGitDir := false, false
 		for len(words) > 0 && shellAssignment.MatchString(words[0]) {
+			if val, ok := strings.CutPrefix(words[0], "GIT_WORK_TREE="); ok {
+				gitWorkTree, hasWorkTree = val, true
+			} else if val, ok := strings.CutPrefix(words[0], "GIT_DIR="); ok {
+				gitDir, hasGitDir = val, true
+			}
 			words = words[1:]
 		}
 		if len(words) == 0 {
@@ -196,6 +218,9 @@ func gitCommitDir(command, cwd string) (string, bool) {
 		}
 		switch words[0] {
 		case "cd", "pushd", "popd":
+			if c.inSubshell || c.sep == "&" || c.sep == "|" || c.sep == "||" {
+				continue
+			}
 			if i == 0 && !c.grouped && len(c.words) == 2 && words[0] == "cd" && !strings.HasPrefix(words[1], "-") {
 				dir, settled = joinDir(dir, words[1])
 			} else {
@@ -216,18 +241,98 @@ func gitCommitDir(command, cwd string) (string, bool) {
 			}
 			words = words[2:]
 		}
-		if at := len(c.words) - len(words); c.inner > 0 && at >= c.inner {
+		if hasWorkTree {
+			if gitWorkTree == "" {
+				sure = false
+			} else {
+				var known bool
+				at, known = joinDir(at, gitWorkTree)
+				sure = known && (sure || filepath.IsAbs(gitWorkTree))
+			}
+		} else if hasGitDir {
+			if parent, ok := gitDirWorkTree(gitDir); ok {
+				if parent != "." {
+					var known bool
+					at, known = joinDir(at, parent)
+					sure = known && (sure || filepath.IsAbs(parent))
+				}
+			} else {
+				sure = false
+			}
+		}
+		if pos := len(c.words) - len(words); c.inner > 0 && pos >= c.inner {
 			sure = false
 		}
 		if !sure || len(words) == 0 || words[0] != "commit" {
 			continue
 		}
-		if slices.ContainsFunc(words[1:], func(w string) bool { return w == "--dry-run" || w == "--help" || w == "-h" }) {
+		if hasCommitSkipFlag(words[1:]) {
 			continue
 		}
-		return at, true
+		clean := filepath.Clean(at)
+		if !seen[clean] {
+			seen[clean] = true
+			dirs = append(dirs, clean)
+		}
+	}
+	return dirs
+}
+
+// gitDirWorkTree returns the work tree implied by a GIT_DIR value of the form
+// "<dir>/.git" or ".git", or ("", false) when the work tree cannot be inferred.
+func gitDirWorkTree(gitDir string) (string, bool) {
+	trimmed := strings.TrimRight(gitDir, "/\\")
+	if trimmed == ".git" {
+		return ".", true
+	}
+	if strings.HasSuffix(trimmed, "/.git") || strings.HasSuffix(trimmed, `\.git`) {
+		parent := trimmed[:len(trimmed)-len("/.git")]
+		if parent == "" {
+			return "/", true
+		}
+		return parent, true
 	}
 	return "", false
+}
+
+// hasCommitSkipFlag reports whether args (after "git commit") contains
+// --dry-run, --help, or -h as an option, skipping values of options that
+// take an argument and stopping at "--".
+func hasCommitSkipFlag(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		if w == "--" {
+			return false
+		}
+		if w == "--dry-run" || w == "--help" || w == "-h" {
+			return true
+		}
+		if takesCommitOptionValue(w) {
+			i++
+		}
+	}
+	return false
+}
+
+// takesCommitOptionValue reports whether w is a git commit option that consumes
+// the next argument as its value.
+func takesCommitOptionValue(w string) bool {
+	switch w {
+	case "--message", "--file", "--reuse-message", "--reedit-message",
+		"--fixup", "--squash", "--author", "--date", "--cleanup",
+		"--trailer", "--untracked-files", "--template", "--pathspec-from-file",
+		"--gpg-sign":
+		return true
+	}
+	if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && len(w) > 1 {
+		for idx := 1; idx < len(w); idx++ {
+			switch w[idx] {
+			case 'm', 'F', 'c', 'C', 't', 'u', 'S':
+				return idx == len(w)-1
+			}
+		}
+	}
+	return false
 }
 
 // joinDir is path as seen from base. ok is false for a path that only the
@@ -248,9 +353,11 @@ func joinDir(base, path string) (dir string, ok bool) {
 // after a parenthesis or a brace outside quotes, and how many of its words
 // come before the first one inside it, 0 when it has none.
 type shellCommand struct {
-	words   []string
-	grouped bool
-	inner   int
+	words      []string
+	grouped    bool
+	inSubshell bool
+	inner      int
+	sep        string
 }
 
 // hereDoc is the end line of a here-document; with dash the tabs before it do
@@ -265,20 +372,25 @@ type hereDoc struct {
 // the quotes and the escaping backslashes taken off. A comment, from a # at
 // the start of a word to the end of the line, and the body of a here-document,
 // up to its end line, are left out. Parentheses and braces outside quotes end
-// a word and mark the commands that start after them. It expands nothing. ok
-// is false when a quote or a here-document does not close.
+// a word and mark the commands that start inside them. It expands nothing. ok
+// is false when a quote, arithmetic expansion, or here-document does not close.
 func shellCommands(line string) (cmds []shellCommand, ok bool) {
 	var (
-		cur     shellCommand
-		word    []rune
-		inWord  bool
-		quote   rune
-		grouped bool
-		pending []hereDoc
+		cur        shellCommand
+		word       []rune
+		inWord     bool
+		quote      rune
+		parenDepth int
+		braceDepth int
+		inArith    bool
+		arithParen int
+		dqCmdSub   []int
+		pending    []hereDoc
 	)
 	begin := func() {
 		if !inWord && len(cur.words) == 0 {
-			cur.grouped = grouped
+			cur.grouped = parenDepth > 0 || braceDepth > 0
+			cur.inSubshell = parenDepth > 0
 		}
 		inWord = true
 	}
@@ -288,9 +400,10 @@ func shellCommands(line string) (cmds []shellCommand, ok bool) {
 			word, inWord = nil, false
 		}
 	}
-	endCommand := func() {
+	endCommand := func(sep string) {
 		endWord()
 		if len(cur.words) > 0 {
+			cur.sep = sep
 			cmds = append(cmds, cur)
 		}
 		cur = shellCommand{}
@@ -309,7 +422,40 @@ func shellCommands(line string) (cmds []shellCommand, ok bool) {
 				break
 			}
 		}
-		if quote != '\'' && c == '<' && i+1 < len(rs) && rs[i+1] == '<' {
+		if inArith {
+			if c == ')' && arithParen == 0 && i+1 < len(rs) && rs[i+1] == ')' {
+				inArith = false
+				word = append(word, ')', ')')
+				i++
+				continue
+			}
+			if c == '(' {
+				arithParen++
+			} else if c == ')' && arithParen > 0 {
+				arithParen--
+			}
+			word = append(word, c)
+			continue
+		}
+		if quote != '\'' && c == '$' && i+1 < len(rs) && rs[i+1] == '(' {
+			if i+2 < len(rs) && rs[i+2] == '(' {
+				if quote == 0 {
+					begin()
+				}
+				inArith = true
+				arithParen = 0
+				word = append(word, '$', '(', '(')
+				i += 2
+				continue
+			}
+			if quote == '"' {
+				dqCmdSub = append(dqCmdSub, 1)
+				word = append(word, '$', '(')
+				i++
+				continue
+			}
+		}
+		if (quote == 0 || (quote == '"' && len(dqCmdSub) > 0)) && c == '<' && i+1 < len(rs) && rs[i+1] == '<' {
 			if quote == 0 {
 				endWord()
 			}
@@ -335,11 +481,20 @@ func shellCommands(line string) (cmds []shellCommand, ok bool) {
 			}
 		case quote == '"':
 			switch {
-			case c == '"':
+			case c == '"' && len(dqCmdSub) == 0:
 				quote = 0
 			case c == '\\' && i+1 < len(rs) && strings.ContainsRune("\"\\$`", rs[i+1]):
 				i++
 				word = append(word, rs[i])
+			case len(dqCmdSub) > 0 && c == '(':
+				dqCmdSub[len(dqCmdSub)-1]++
+				word = append(word, c)
+			case len(dqCmdSub) > 0 && c == ')':
+				dqCmdSub[len(dqCmdSub)-1]--
+				if dqCmdSub[len(dqCmdSub)-1] == 0 {
+					dqCmdSub = dqCmdSub[:len(dqCmdSub)-1]
+				}
+				word = append(word, c)
 			default:
 				word = append(word, c)
 			}
@@ -356,14 +511,42 @@ func shellCommands(line string) (cmds []shellCommand, ok bool) {
 			for i+1 < len(rs) && rs[i+1] != '\n' {
 				i++
 			}
-		case c == '(' || c == ')' || c == '{' || c == '}':
+		case c == '(':
 			endWord()
-			grouped = true
+			parenDepth++
 			if cur.inner == 0 {
 				cur.inner = len(cur.words)
 			}
+		case c == ')':
+			endWord()
+			if parenDepth > 0 {
+				parenDepth--
+			}
+			if cur.inner == 0 {
+				cur.inner = len(cur.words)
+			}
+		case c == '{':
+			endWord()
+			braceDepth++
+			if cur.inner == 0 {
+				cur.inner = len(cur.words)
+			}
+		case c == '}':
+			endWord()
+			if braceDepth > 0 {
+				braceDepth--
+			}
+			if cur.inner == 0 {
+				cur.inner = len(cur.words)
+			}
+		case c == '&' && i+1 < len(rs) && rs[i+1] == '&':
+			i++
+			endCommand("&&")
+		case c == '|' && i+1 < len(rs) && rs[i+1] == '|':
+			i++
+			endCommand("||")
 		case c == ';' || c == '|' || c == '&' || c == '\n':
-			endCommand()
+			endCommand(string(c))
 		case c == ' ' || c == '\t' || c == '\r':
 			endWord()
 		default:
@@ -371,8 +554,8 @@ func shellCommands(line string) (cmds []shellCommand, ok bool) {
 			word = append(word, c)
 		}
 	}
-	endCommand()
-	return cmds, quote == 0 && len(pending) == 0
+	endCommand("")
+	return cmds, quote == 0 && !inArith && len(pending) == 0
 }
 
 // hereDocStart reads what follows the << of a here-document at rs[i]: an

@@ -161,6 +161,7 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
    - `서버에 닿지 않습니다`, `서버가 오류를 돌려주었습니다 (...)`, `서버의 응답을 읽지 못했습니다`, 설정 오류 문구: 그 상태로는 세션에 알림이 나오지 않습니다.
 
 - `claude` 실행 파일이 `PATH`에 없으면 아무것도 설치하지 않고 종료 코드 2로 끝납니다.
+- 릴리즈 브랜치(`main`)에 마켓플레이스 파일(`.claude-plugin/marketplace.json`)이 올라가기 전에는 첫 단계인 마켓플레이스 등록이 실패해 멈추므로 스킬도 설치되지 않습니다. 그때는 `agb skill install`을 대신 씁니다.
 - 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 CLI에 내장된 것으로 맞추고, 훅 행위자는 그 실행의 행위자로 바꿉니다.
 - 설치한 플러그인은 새 세션부터 동작합니다.
 
@@ -254,7 +255,7 @@ curl http://127.0.0.1:8420/v1/health
 | `AGB_EMBEDDING_MODEL` | 의미 검색 시 | 임베딩 모델 이름 |
 | `AGB_EMBEDDING_QUERY_PREFIX` | | 검색어에만 앞에 붙이는 문자열. 값에 적은 `\n` 두 글자는 줄바꿈으로 읽음 |
 | `AGB_EMBEDDING_INTERVAL` | | 색인 주기. Go duration 형식, 기본 `1m` |
-| `AGB_EMBEDDING_PROVIDER` | | 임베딩 요청 본문의 `provider` 필드에 그대로 싣는 JSON 객체. 예: `{"order":["<공급자>"]}`. 비우면 필드를 보내지 않음 |
+| `AGB_EMBEDDING_PROVIDER` | | 임베딩 요청 본문의 `provider` 필드에 실어 보내는 JSON 객체. 동등한 JSON 객체로 다시 직렬화해 보내며 `{}`를 주면 `"provider":{}`가 실림. 예: `{"order":["<공급자>"]}`. 비우면 필드를 보내지 않음 |
 
 의미 검색의 유사도 하한은 특정 임베딩 모델에 맞춘 값입니다. 다른 모델을 쓰면 검색 결과의 범위가 달라질 수 있습니다. 검색 응답의 `semantic` 필드(`ok`, `disabled`, `failed`)로 의미 검색이 실제로 쓰였는지 알 수 있습니다.
 
