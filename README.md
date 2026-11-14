@@ -348,7 +348,7 @@ agb stats
 | 주제 | `GET, POST /projects/{key}/topics`, `PATCH, DELETE /topics/{id}` |
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
 | 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
-| 기록 문서 | `GET /projects/{key}/documents`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
+| 기록 문서 | `GET /projects/{key}/documents`, `POST /projects/{key}/documents:batch`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
 | 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |
 | 로그인과 토큰 | `POST /device-authorizations`, `GET, PATCH /device-authorizations/{user_code}`(사용자 전용), `GET /tokens`(사용자 전용), `POST /tokens`, `DELETE /tokens/current`, `DELETE /tokens/{id}`(사용자 전용) |

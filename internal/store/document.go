@@ -8,19 +8,29 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
+// MaxBatchDocuments is the maximum number of documents a batch put accepts.
+const MaxBatchDocuments = 100
+
 // ImmutableError reports other content for the name of a record document that
-// exists. SHA256 is the hash of the content that is stored. HTTP maps it to 409.
+// exists. SHA256 is the hash of the content that is stored; Name and Field name
+// the item in a batch when set. HTTP maps it to 409.
 type ImmutableError struct {
+	Name   string
+	Field  string
 	SHA256 string
 }
 
 func (e *ImmutableError) Error() string {
+	if e.Name != "" {
+		return "record document " + e.Name + " exists with other content (sha256 " + e.SHA256 + ")"
+	}
 	return "record document exists with other content (sha256 " + e.SHA256 + ")"
 }
 
@@ -31,8 +41,10 @@ type FieldDiff struct {
 }
 
 // MetadataDiffError reports the same content under the name of a record
-// document that exists, with other metadata. HTTP maps it to 409.
+// document that exists, with other metadata. Name names the item in a batch
+// when set. HTTP maps it to 409.
 type MetadataDiffError struct {
+	Name  string
 	Diffs []FieldDiff
 }
 
@@ -40,6 +52,9 @@ func (e *MetadataDiffError) Error() string {
 	fields := make([]string, len(e.Diffs))
 	for i, d := range e.Diffs {
 		fields[i] = d.Field
+	}
+	if e.Name != "" {
+		return "record document " + e.Name + " exists with other metadata: " + strings.Join(fields, ", ")
 	}
 	return "record document exists with other metadata: " + strings.Join(fields, ", ")
 }
@@ -49,6 +64,12 @@ func (e *MetadataDiffError) Error() string {
 type DocumentInput struct {
 	Content string
 	Args    model.DocumentArgs
+}
+
+// BatchDocumentInput is one document in a batch put request.
+type BatchDocumentInput struct {
+	Name string
+	DocumentInput
 }
 
 // DocumentFilter selects and searches record documents. Values of one field are
@@ -229,6 +250,211 @@ func (s *Store) PutDocument(ctx context.Context, tr model.Trace, project, name s
 		warnings = []model.DocumentWarning{}
 	}
 	return &model.DocumentResult{Document: *d, Warnings: warnings}, created, nil
+}
+
+// PutDocumentsBatch stores up to MaxBatchDocuments record documents in a single
+// write transaction. Every new document in the batch is inserted before
+// relations are resolved so documents in the same batch may reference one
+// another via related or supersedes. Any validation or conflict error rolls back
+// the whole batch.
+func (s *Store) PutDocumentsBatch(ctx context.Context, tr model.Trace, project string, items []BatchDocumentInput) ([]model.DocumentResult, error) {
+	if len(items) == 0 || len(items) > MaxBatchDocuments {
+		return nil, ptrValidation([]model.FieldError{{
+			Field:   "documents",
+			Reason:  "invalid",
+			Message: fmt.Sprintf("1~%d건이어야 합니다.", MaxBatchDocuments),
+		}})
+	}
+	type prepared struct {
+		name     string
+		in       DocumentInput
+		meta     model.DocumentMeta
+		hash     string
+		self     docSelf
+		exists   bool
+		stored   string
+		warnings []model.DocumentWarning
+	}
+	prep := make([]prepared, len(items))
+	var vfields []model.FieldError
+	seen := make(map[string]bool, len(items))
+	for i, it := range items {
+		prefix := fmt.Sprintf("documents[%d].", i)
+		if seen[it.Name] {
+			vfields = append(vfields, model.FieldError{
+				Field:   prefix + "name",
+				Reason:  "duplicate",
+				Message: fmt.Sprintf("같은 요청 안에 문서 이름 %s가 중복됩니다.", it.Name),
+			})
+			continue
+		}
+		seen[it.Name] = true
+		meta, invalid := model.ValidateDocument(it.Name, it.Content, it.Args)
+		vfields = append(vfields, prefixFields(prefix, invalid)...)
+		sum := sha256.Sum256([]byte(it.Content))
+		prep[i] = prepared{
+			name: it.Name,
+			in:   it.DocumentInput,
+			meta: meta,
+			hash: hex.EncodeToString(sum[:]),
+		}
+	}
+
+	at := s.stamp()
+	now := at.String()
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		var projectID int64
+		var status string
+		err := tx.QueryRowContext(ctx, `select id, status from project where key = ?`, project).Scan(&projectID, &status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if model.ProjectStatus(status) != model.ProjectActive {
+			return ErrProjectNotActive
+		}
+		if len(vfields) > 0 {
+			for i := range prep {
+				if prep[i].name == "" {
+					continue
+				}
+				prep[i].self = docSelf{projectID: projectID, projectKey: project, name: prep[i].name}
+				_, _, rerrs, err := resolveRelations(ctx, tx, prep[i].self, prep[i].meta)
+				if err != nil {
+					return err
+				}
+				for _, f := range rerrs {
+					vfields = append(vfields, model.FieldError{Field: fmt.Sprintf("documents[%d].%s", i, f.Field), Reason: f.Reason, Message: f.Message})
+				}
+			}
+			return ptrValidation(vfields)
+		}
+
+		for i := range prep {
+			p := &prep[i]
+			p.self = docSelf{projectID: projectID, projectKey: project, name: p.name}
+			err := tx.QueryRowContext(ctx, `select id, sha256 from document where project_id = ? and name = ?`, projectID, p.name).Scan(&p.self.id, &p.stored)
+			p.exists = err == nil
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if p.exists && p.stored != p.hash {
+				return &ImmutableError{Name: p.name, Field: fmt.Sprintf("documents[%d].content", i), SHA256: p.stored}
+			}
+		}
+
+		for i := range prep {
+			p := &prep[i]
+			if p.exists {
+				continue
+			}
+			tags, err := marshalTags(p.meta.Tags)
+			if err != nil {
+				return err
+			}
+			r, err := tx.ExecContext(ctx, `insert into document(project_id, name, kind, date, title, tags, archived, imported, path, sha256, size, content,
+				created_at, created_by, updated_at, updated_by) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				projectID, p.name, string(p.meta.Kind), p.meta.Date, p.meta.Title, tags, p.meta.Archived, p.meta.Imported, p.meta.Path, p.hash, len(p.in.Content), p.in.Content,
+				now, tr.Actor, now, tr.Actor)
+			if err != nil {
+				return err
+			}
+			if p.self.id, err = r.LastInsertId(); err != nil {
+				return err
+			}
+		}
+
+		relsList := make([][]relTarget, len(prep))
+		var relErrs []model.FieldError
+		for i := range prep {
+			p := &prep[i]
+			rels, warns, rerrs, err := resolveRelations(ctx, tx, p.self, p.meta)
+			if err != nil {
+				return err
+			}
+			p.warnings = warns
+			relsList[i] = rels
+			for _, f := range rerrs {
+				relErrs = append(relErrs, model.FieldError{Field: fmt.Sprintf("documents[%d].%s", i, f.Field), Reason: f.Reason, Message: f.Message})
+			}
+		}
+		if len(relErrs) > 0 {
+			return ptrValidation(relErrs)
+		}
+
+		for i := range prep {
+			p := &prep[i]
+			if !p.exists {
+				continue
+			}
+			cur, err := getDocument(ctx, tx, project, p.name, false)
+			if err != nil {
+				return err
+			}
+			if diffs := metadataDiffs(cur, p.meta, relsList[i]); len(diffs) > 0 {
+				for j := range diffs {
+					diffs[j].Field = fmt.Sprintf("documents[%d].%s", i, diffs[j].Field)
+				}
+				return &MetadataDiffError{Name: p.name, Diffs: diffs}
+			}
+		}
+
+		for i := range prep {
+			p := &prep[i]
+			if p.exists {
+				continue
+			}
+			if err := checkSupersedesCycle(ctx, tx, p.self, relsList[i]); err != nil {
+				return err
+			}
+			for _, t := range relsList[i] {
+				if err := insertRelation(ctx, tx, p.self.id, t); err != nil {
+					return err
+				}
+			}
+		}
+
+		for i := range prep {
+			if prep[i].exists {
+				continue
+			}
+			if err := reresolveRelations(ctx, tx, tr, at, prep[i].self); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]model.DocumentResult, len(prep))
+	for i := range prep {
+		d, err := getDocument(ctx, s.db, project, prep[i].name, false)
+		if err != nil {
+			return nil, err
+		}
+		warns := prep[i].warnings
+		if warns == nil {
+			warns = []model.DocumentWarning{}
+		}
+		out[i] = model.DocumentResult{Document: *d, Warnings: warns}
+	}
+	return out, nil
+}
+
+func prefixFields(prefix string, err error) []model.FieldError {
+	var ve *model.ValidationError
+	if !errors.As(err, &ve) {
+		return nil
+	}
+	out := make([]model.FieldError, len(ve.Fields))
+	for i, f := range ve.Fields {
+		out[i] = model.FieldError{Field: prefix + f.Field, Reason: f.Reason, Message: f.Message}
+	}
+	return out
 }
 
 // ptrValidation wraps field errors as a validation error, or nil for none.
