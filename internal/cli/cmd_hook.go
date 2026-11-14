@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -30,6 +31,12 @@ Claude Code 에는 agb setup claude 가 이 명령을 부르는 플러그인을 
 // hookQueryTimeout bounds the whole server query of a hook, so a server that
 // is slow or away does not hold up the start of a session.
 var hookQueryTimeout = 5 * time.Second
+
+// hookStdinTimeout and hookStdinMax bound how long and how much a hook reads
+// from standard input when a caller leaves the pipe open or sends huge data.
+var hookStdinTimeout = 1 * time.Second
+
+const hookStdinMax = 1 << 20
 
 // hookListMax is how many messages the session start hook lists.
 const hookListMax = 20
@@ -109,15 +116,53 @@ type hookStdin struct {
 }
 
 // hookInput reads the JSON on standard input, past a UTF-8 byte order mark.
-// What cannot be read stays empty.
+// What cannot be read within hookStdinTimeout or hookStdinMax stays empty.
 func (a *App) hookInput() hookStdin {
+	if a.StdinIsTerminal || a.Stdin == nil {
+		return hookStdin{}
+	}
+	return readHookInput(a.Stdin, hookStdinTimeout)
+}
+
+func readHookInput(r io.Reader, timeout time.Duration) hookStdin {
+	type result struct {
+		raw []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				ch <- result{err: errors.New("panic")}
+			}
+		}()
+		raw, err := io.ReadAll(io.LimitReader(r, hookStdinMax))
+		ch <- result{raw: raw, err: err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	var in hookStdin
-	if !a.StdinIsTerminal {
-		if raw, err := io.ReadAll(a.Stdin); err == nil {
-			json.Unmarshal(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf")), &in)
+	select {
+	case got := <-ch:
+		if got.err == nil {
+			json.Unmarshal(bytes.TrimPrefix(got.raw, []byte("\xef\xbb\xbf")), &in)
 		}
+	case <-timer.C:
 	}
 	return in
+}
+
+// repoConfigAbove finds the nearest folder at or above dir that holds a
+// .agb.json and reads it, without invoking git when none is present.
+func repoConfigAbove(dir string) (*repoConfig, error) {
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, repoConfigFile)); err == nil {
+			return loadRepoConfig(d)
+		}
+		if filepath.Dir(d) == d {
+			return nil, nil
+		}
+	}
 }
 
 // hookGlobals is g with the actor and the session ID of a hook. The actor is
@@ -152,7 +197,7 @@ func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hook
 			return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
 		}
 	}
-	_, cfg, err := fileRepo(dir)
+	cfg, err := repoConfigAbove(dir)
 	if err != nil || cfg == nil {
 		return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
 	}
