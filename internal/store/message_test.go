@@ -83,6 +83,23 @@ func TestCreateMessageRejects(t *testing.T) {
 	}
 }
 
+func TestStoredMessageWithControlTitleStillReads(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	m := putMessage(t, s, "APP", "", "정상 제목", "")
+	if _, err := s.db.ExecContext(ctx, `UPDATE message SET title = ? WHERE id = ?`, "예전\n제목\t유지", m.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetMessage(ctx, m.ID)
+	if err != nil || got.Title != "예전\n제목\t유지" {
+		t.Fatalf("GetMessage = %+v, %v", got, err)
+	}
+	items, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", Limit: 10})
+	if err != nil || total != 1 || len(items) != 1 || items[0].Title != "예전\n제목\t유지" {
+		t.Fatalf("ListMessages = %+v (total=%d), %v", items, total, err)
+	}
+}
+
 func TestListMessagesDefaultHidesExpiredAndDeleted(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")

@@ -74,6 +74,7 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
   - `이 폴더에서는 프로젝트를 판정할 수 없습니다`: 현재 폴더 위에 `.agb.json`이 없다.
   - `서버에 닿지 않습니다`, `서버가 오류를 돌려주었습니다 (...)`, `서버의 응답을 읽지 못했습니다`, 설정 오류 문구: 그 상태로는 세션에 알림이 나오지 않는다.
 - `claude 실행 파일이 PATH 에 없습니다`가 나오면 아무것도 설치되지 않은 것이다. Claude Code를 설치한 뒤 다시 실행한다.
+- 릴리즈 브랜치(`main`)에 마켓플레이스 파일(`.claude-plugin/marketplace.json`)이 올라가기 전에는 첫 단계인 마켓플레이스 등록이 실패해 멈추므로 스킬도 설치되지 않는다. 그때는 `agb skill install`을 대신 쓴다.
 - 플러그인은 세션을 시작할 때 `agb hook session-start --tool claude`를 불러, 작업 폴더의 저장소 `.agb.json` 프로젝트가 확인하지 않은 메시지를 알린다. 새 세션부터 동작한다.
   - 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값, 설정 파일의 `actor` 순서로 정한다. 훅의 세션 ID는 Claude Code가 훅에 준 `session_id`다.
   - 알림이 없으면 메시지가 없거나, `.agb.json`, 훅 행위자, 토큰, 서버 접속 중 하나가 없는 것이다. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 보고, `agb config show`의 `hook_actors`와 `actor_tokens`를 확인한다. 플러그인이 옛 판이면 아래 순서로 갱신한다.
@@ -91,7 +92,7 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
   claude plugin marketplace update agent-board
   claude plugin update agb@agent-board
   ```
-- 제거: `claude plugin uninstall agb@agent-board`, `claude plugin marketplace remove agent-board`
+- 제거: `claude plugin uninstall agb@agent-board`, `claude plugin marketplace remove agent-board`. 스킬은 `~/.agents/skills/tool-agb` 폴더와, 따로 설치된 경우 `~/.claude/skills/tool-agb` 폴더를 지운다.
 
 제품 저장소의 개발 기기에서 스킬을 고쳤으면, `dev` 체크아웃에서 CLI를 다시 설치(1절의 개발 기기 명령)한 뒤 `agb skill install`을 실행해야 전역 스킬에 반영된다.
 

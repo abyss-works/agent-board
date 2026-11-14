@@ -107,14 +107,14 @@ func Load(getenv func(string) string) (*Config, error) {
 
 	if cfg.WebDir != "" {
 		if info, err := os.Stat(cfg.WebDir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Errorf("AGB_WEB_DIR must be an existing directory, got %q", cfg.WebDir))
+			errs = append(errs, fmt.Errorf("AGB_WEB_DIR must be an existing directory, got %q", previewValue(cfg.WebDir)))
 		}
 	}
 
 	if v := getenv("AGB_BACKUP_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			errs = append(errs, fmt.Errorf("AGB_BACKUP_INTERVAL must be a positive duration, got %q", v))
+			errs = append(errs, fmt.Errorf("AGB_BACKUP_INTERVAL must be a positive duration, got %q", previewValue(v)))
 		} else {
 			cfg.Backup.Interval = d
 		}
@@ -122,7 +122,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	if v := getenv("AGB_BACKUP_RETENTION"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			errs = append(errs, fmt.Errorf("AGB_BACKUP_RETENTION must be a positive duration, got %q", v))
+			errs = append(errs, fmt.Errorf("AGB_BACKUP_RETENTION must be a positive duration, got %q", previewValue(v)))
 		} else {
 			cfg.Backup.Retention = d
 		}
@@ -138,7 +138,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	if v := getenv("AGB_EMBEDDING_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_INTERVAL must be a positive duration, got %q", v))
+			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_INTERVAL must be a positive duration, got %q", previewValue(v)))
 		} else {
 			cfg.Embedding.Interval = d
 		}
@@ -146,7 +146,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	if v := getenv("AGB_EMBEDDING_PROVIDER"); v != "" {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(v), &obj); err != nil || obj == nil {
-			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_PROVIDER must be a JSON object, got %q", v))
+			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_PROVIDER must be a JSON object, got %q", previewValue(v)))
 		} else {
 			cfg.Embedding.Provider = json.RawMessage(v)
 		}
@@ -176,14 +176,14 @@ func parseActors(v string) ([]model.Actor, error) {
 		item = strings.TrimSpace(item)
 		id, kind, ok := strings.Cut(item, ":")
 		if !ok {
-			return nil, fmt.Errorf("AGB_ACTORS entry %q must be id:kind", item)
+			return nil, fmt.Errorf("AGB_ACTORS entry %q must be id:kind", previewValue(item))
 		}
 		if !model.ValidActorID(id) {
-			return nil, fmt.Errorf("AGB_ACTORS actor id %q must match ^[a-z0-9]{1,32}$", id)
+			return nil, fmt.Errorf("AGB_ACTORS actor id %q must match ^[a-z0-9]{1,32}$", previewValue(id))
 		}
 		k, ok := model.ParseActorKind(kind)
 		if !ok {
-			return nil, fmt.Errorf("AGB_ACTORS actor kind %q must be user or agent", kind)
+			return nil, fmt.Errorf("AGB_ACTORS actor kind %q must be user or agent", previewValue(kind))
 		}
 		if seen[id] {
 			return nil, fmt.Errorf("AGB_ACTORS actor %q declared twice", id)
@@ -192,4 +192,20 @@ func parseActors(v string) ([]model.Actor, error) {
 		out = append(out, model.Actor{ID: id, Kind: k})
 	}
 	return out, nil
+}
+
+const maxErrValueRunes = 120
+
+// previewValue caps an invalid environment value echoed in an error message at
+// maxErrValueRunes runes on a UTF-8 boundary so a large broken value does not
+// produce an unbounded error string.
+func previewValue(s string) string {
+	n := 0
+	for i := range s {
+		if n == maxErrValueRunes {
+			return strings.ToValidUTF8(s[:i], "�") + "...(truncated)"
+		}
+		n++
+	}
+	return strings.ToValidUTF8(s, "�")
 }
