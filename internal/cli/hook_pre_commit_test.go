@@ -162,6 +162,35 @@ func TestGitCommitDir(t *testing.T) {
 	commits["(git -C "+abs+" commit)"] = filepath.FromSlash(abs)
 	commits["cd sub && cd deep && git -C "+abs+" commit"] = filepath.FromSlash(abs)
 	commits["git commit --dry-run; git commit -m x"] = cwd
+	// 1. grouped state reset after $( ) and ${ }
+	commits["V=$(cat v) && git commit -m x"] = cwd
+	commits["git add ${F} && git commit -m x"] = cwd
+	// 2. << inside double quotes is not a here-document
+	commits[`git commit -m "use a<<b"`] = cwd
+	commits[`echo "a<<b" && git commit -m x`] = cwd
+	// 3. << inside arithmetic expansion $(( ... )) is bit shift, not here-document
+	commits["echo $((1<<2)) && git commit -m x"] = cwd
+	commits["echo $(( (1 + 2) << 3 )) && git commit -m x"] = cwd
+	commits[`echo "$((1<<2))" && git commit -m x`] = cwd
+	commits["echo <<<hi && git commit -m x"] = cwd
+	// 4. --dry-run, -h, --help as option values or after --
+	commits["git commit -m --dry-run"] = cwd
+	commits["git commit -am --dry-run"] = cwd
+	commits["git commit -m -h"] = cwd
+	commits["git commit -m x -- --dry-run"] = cwd
+	// 6. cd with ||, &, |, and subshell (cd sub)
+	commits["cd sub || git commit -m x"] = cwd
+	commits["cd sub & git commit -m x"] = cwd
+	commits["cd sub | git commit -m x"] = cwd
+	commits["(cd sub) && git commit -m x"] = cwd
+	commits["cd sub; git commit -m x"] = sub
+	// 7. GIT_WORK_TREE and GIT_DIR
+	commits["GIT_WORK_TREE="+abs+" git commit -m x"] = filepath.FromSlash(abs)
+	commits["GIT_WORK_TREE=sub git commit -m x"] = sub
+	commits["GIT_DIR="+abs+"/.git git commit -m x"] = filepath.FromSlash(abs)
+	commits["GIT_DIR=.git git commit -m x"] = cwd
+	commits["GIT_TERMINAL_PROMPT=0 git commit -m x"] = cwd
+	commits["TZ=UTC git commit -m x"] = cwd
 	for command, want := range commits {
 		if dir, ok := gitCommitDir(command, cwd); !ok || dir != want {
 			t.Errorf("%q: dir = %q, %v, want %q", command, dir, ok, want)
@@ -194,12 +223,14 @@ func TestGitCommitDir(t *testing.T) {
 		"git commit -m \"x",
 		"echo 'x\ngit commit",
 		// Not a commit that changes the repository.
-		"git commit --dry-run", "git commit -m x --dry-run", "git commit --help", "git commit -h", "git -C sub commit --dry-run",
+		"git commit --dry-run", "git commit -m x --dry-run", "git commit --dry-run -m x", "git commit -n --dry-run -m x", "git commit --help", "git commit -h", "git -C sub commit --dry-run",
+		// Unresolvable GIT_DIR skips check instead of falling back to cwd.
+		"GIT_DIR=/some/custom.git git commit -m x",
 		// The folder of the commit is not sure.
 		"(cd sub && git commit -m x)", "pushd sub && git commit -m x", "cd -- sub && git commit -m x",
 		"cd .. && git status && cd sub && git commit -m x", "{ cd sub; git commit; }", `bash -c "cd sub && git commit"`,
 		`sh -c 'git commit'`, "git status && cd sub && git commit", "cd sub; popd; git commit", "pushd sub; git -C deep commit",
-		"cd -P sub && git commit", "cd && git commit", "X=1 cd sub && git commit", "(cd sub) && git commit",
+		"cd -P sub && git commit", "cd && git commit", "X=1 cd sub && git commit",
 		"echo $(git commit -m x)", "x=$(git commit -m x)", "(git commit)", "{ git commit; }", "f() { git commit; }; f",
 		// A path that only the shell can resolve leaves the folder open.
 		"cd ~/sub && git commit", "cd ~ && git commit", "git -C ~/sub commit", `cd "$HOME/sub" && git commit`,
@@ -579,5 +610,16 @@ func TestHookPreCommitPassesWhenTheFolderIsNotSure(t *testing.T) {
 		if first, _, _ := strings.Cut(reason, "\n"); !strings.Contains(first, filepath.ToSlash(outer)) {
 			t.Errorf("%q: first line = %q", command, first)
 		}
+	}
+}
+
+func TestHookPreCommitChecksAllCommitsInCompoundCommand(t *testing.T) {
+	repoA := cleanRepo(t)
+	repoB := badRepo(t)
+	h := newHarness(t, nil, false)
+	cmd := fmt.Sprintf(`git -C "%s" commit -m x && git -C "%s" commit -m y`, filepath.ToSlash(repoA), filepath.ToSlash(repoB))
+	reason := denyReason(t, runPreCommit(t, h, preCommitInput(t, repoA, "Bash", cmd)))
+	if !strings.Contains(reason, filepath.ToSlash(repoB)) || !strings.Contains(reason, freshName) {
+		t.Errorf("expected denial for repoB (%s), got:\n%s", filepath.ToSlash(repoB), reason)
 	}
 }
