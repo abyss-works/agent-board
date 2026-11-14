@@ -77,10 +77,19 @@ var loginCmd = &command{
 			return err
 		}
 		if _, err := a.modifyConfig(g, func(cfg *Config) error {
-			if cfg.Tokens == nil {
-				cfg.Tokens = map[string]string{}
+			ctxName, err := writableContextName(g, a.Getenv, cfg)
+			if err != nil {
+				return err
 			}
-			cfg.Tokens[s.Actor] = issued.Secret
+			if cfg.Contexts == nil {
+				cfg.Contexts = map[string]ContextConfig{}
+			}
+			cc := cfg.Contexts[ctxName]
+			if cc.Tokens == nil {
+				cc.Tokens = map[string]string{}
+			}
+			cc.Tokens[s.Actor] = issued.Secret
+			cfg.Contexts[ctxName] = cc
 			return nil
 		}); err != nil {
 			return err
@@ -174,7 +183,11 @@ var logoutCmd = &command{
 		if err := s.requireActor(); err != nil {
 			return err
 		}
-		token := cfg.Tokens[s.Actor]
+		_, cc, err := resolveContext(g, a.Getenv, cfg)
+		if err != nil {
+			return err
+		}
+		token := cc.Tokens[s.Actor]
 		if token == "" {
 			return usageErrorf("설정 파일에 %s의 토큰이 없습니다. `agb login --actor %s`로 받은 토큰만 로그아웃할 수 있습니다.", s.Actor, s.Actor)
 		}
@@ -188,7 +201,17 @@ var logoutCmd = &command{
 			revoked = false
 		}
 		if _, err := a.modifyConfig(g, func(file *Config) error {
-			delete(file.Tokens, s.Actor)
+			ctxName, err := writableContextName(g, a.Getenv, file)
+			if err != nil {
+				return err
+			}
+			if cc, ok := file.Contexts[ctxName]; ok {
+				delete(cc.Tokens, s.Actor)
+				if len(cc.Tokens) == 0 {
+					cc.Tokens = nil
+				}
+				file.Contexts[ctxName] = cc
+			}
 			return nil
 		}); err != nil {
 			return err

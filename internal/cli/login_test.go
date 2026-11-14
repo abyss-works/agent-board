@@ -112,7 +112,8 @@ func TestLoginStoresTheActorToken(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", e.stdout.String(), want)
 	}
 	cfg, err := loadConfig(e.app.ConfigPath)
-	if err != nil || !reflect.DeepEqual(cfg, Config{Tokens: map[string]string{"codex": loginSecret}}) {
+	want := Config{CurrentContext: "default", Contexts: map[string]ContextConfig{"default": {Tokens: map[string]string{"codex": loginSecret}}}}
+	if err != nil || !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config = %+v %v", cfg, err)
 	}
 	e.noSecrets(t)
@@ -182,7 +183,7 @@ func TestLoginHumanOutputIsOneLine(t *testing.T) {
 	}
 	e.noSecrets(t)
 	cfg, _ := loadConfig(e.app.ConfigPath)
-	if cfg.Tokens["codex"] != loginSecret {
+	if cfg.Contexts["default"].Tokens["codex"] != loginSecret {
 		t.Errorf("config = %+v", cfg)
 	}
 }
@@ -227,7 +228,7 @@ func TestLoginBrowser(t *testing.T) {
 		if strings.Contains(e.stderr.String(), os.ErrNotExist.Error()) {
 			t.Errorf("the cause is not shown:\n%s", e.stderr)
 		}
-		if cfg, _ := loadConfig(e.app.ConfigPath); cfg.Tokens["codex"] != loginSecret {
+		if cfg, _ := loadConfig(e.app.ConfigPath); cfg.Contexts["default"].Tokens["codex"] != loginSecret {
 			t.Errorf("config = %+v", cfg)
 		}
 	})
@@ -270,7 +271,7 @@ func TestLoginActorComesFromTheUsualSettings(t *testing.T) {
 		t.Errorf("body = %s", got)
 	}
 	// The token goes under the actor the login was made for.
-	if cfg, _ := loadConfig(e.app.ConfigPath); cfg.Tokens["claude"] != loginSecret || len(cfg.Tokens) != 1 {
+	if cfg, _ := loadConfig(e.app.ConfigPath); cfg.Contexts["default"].Tokens["claude"] != loginSecret || len(cfg.Contexts["default"].Tokens) != 1 {
 		t.Errorf("config = %+v", cfg)
 	}
 
@@ -282,7 +283,7 @@ func TestLoginActorComesFromTheUsualSettings(t *testing.T) {
 	if code := e2.run("login"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, e2.stderr)
 	}
-	if cfg, _ := loadConfig(e2.app.ConfigPath); cfg.Tokens["gemini"] != loginSecret || cfg.Actor != "gemini" {
+	if cfg, _ := loadConfig(e2.app.ConfigPath); cfg.Contexts["default"].Tokens["gemini"] != loginSecret || cfg.Contexts["default"].Actor != "gemini" {
 		t.Errorf("config = %+v", cfg)
 	}
 }
@@ -472,8 +473,14 @@ func TestLoginKeepsTheRestOfTheConfig(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, e.stderr)
 	}
 	want := Config{
-		URL: "http://file:1", Token: "shared-file-token", Actor: "owner", SessionID: "file-sess", ClientHost: "file-host",
-		Tokens: map[string]string{"claude": "agb_claude-token", "codex": loginSecret},
+		CurrentContext: "default",
+		Contexts: map[string]ContextConfig{
+			"default": {
+				URL: "http://file:1", Token: "shared-file-token", Actor: "owner",
+				Tokens: map[string]string{"claude": "agb_claude-token", "codex": loginSecret},
+			},
+		},
+		SessionID: "file-sess", ClientHost: "file-host",
 	}
 	if cfg, err := loadConfig(e.app.ConfigPath); err != nil || !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config = %+v %v, want %+v", cfg, err, want)
@@ -496,7 +503,12 @@ func TestLoginKeepsTokensSavedMeanwhile(t *testing.T) {
 	if code := e.run("login"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, e.stderr)
 	}
-	want := Config{Token: "shared-file-token", Tokens: map[string]string{"gemini": "agb_gemini-token", "claude": "agb_claude-token", "codex": loginSecret}}
+	want := Config{
+		CurrentContext: "default",
+		Contexts: map[string]ContextConfig{
+			"default": {Token: "shared-file-token", Tokens: map[string]string{"gemini": "agb_gemini-token", "claude": "agb_claude-token", "codex": loginSecret}},
+		},
+	}
 	if cfg, _ := loadConfig(e.app.ConfigPath); !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config = %+v, want %+v", cfg, want)
 	}
@@ -509,7 +521,7 @@ func TestLoginWritesTheConfigGivenByTheFlag(t *testing.T) {
 	if code := e.run("--config", other, "login"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, e.stderr)
 	}
-	if cfg, _ := loadConfig(other); cfg.Tokens["codex"] != loginSecret {
+	if cfg, _ := loadConfig(other); cfg.Contexts["default"].Tokens["codex"] != loginSecret {
 		t.Errorf("config at --config = %+v", cfg)
 	}
 	if _, err := os.Stat(e.app.ConfigPath); err == nil {

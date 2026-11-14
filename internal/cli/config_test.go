@@ -177,7 +177,12 @@ func TestConfigFileRoundTrip(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(cfg, Config{}) {
 		t.Fatalf("missing file must load as empty: %+v %v", cfg, err)
 	}
-	want := Config{URL: "http://127.0.0.1:8421", Token: "secret-token-value", Actor: "claude", Tokens: map[string]string{"codex": "agb_codex-token", "claude": "agb_claude-token"}}
+	want := Config{
+		CurrentContext: "default",
+		Contexts: map[string]ContextConfig{
+			"default": {URL: "http://127.0.0.1:8421", Token: "secret-token-value", Actor: "claude", Tokens: map[string]string{"codex": "agb_codex-token", "claude": "agb_claude-token"}},
+		},
+	}
 	if err := saveConfig(path, want); err != nil {
 		t.Fatal(err)
 	}

@@ -235,6 +235,7 @@ const Usage = `사용법: agb <명령> [옵션]
   --fields <a,b>    이 필드만 남김. 점 경로(files.name)로 중첩 값을 고름. 목록은 항목마다. JSON 출력을 강제
   --text            --fields 와 함께. 항목마다 한 줄, 필드는 탭으로 구분 (아래 "--fields 와 --text")
   --table           표 출력. 기본: 터미널일 때
+  --context <이름>  접속 대상 (AGB_CONTEXT, 설정 파일의 current_context 보다 우선)
   --url <주소>      서버 주소 (AGB_URL, 설정 파일보다 우선)
   --actor <ID>      행위자 (AGB_ACTOR)
   --session-id <ID> 세션 ID (AGB_SESSION_ID). 기본 cli-YYYYMMDD
@@ -390,8 +391,36 @@ func (a *App) exit(g *globals, err error) int {
 		return 1
 	default:
 		fmt.Fprintf(a.Stderr, "agb: %v\n", err)
+		if a.isLocalTarget(g) {
+			fmt.Fprintln(a.Stderr, "  로컬 서버가 실행 중이지 않습니다. agb serve --local 로 먼저 실행하세요.")
+		}
 		return 1
 	}
+}
+
+// isLocalTarget reports whether g resolves to the "local" context (without an
+// explicit non-local URL override).
+func (a *App) isLocalTarget(g *globals) bool {
+	if g == nil {
+		return false
+	}
+	var file Config
+	if path, err := a.configPath(g); err == nil {
+		file, _ = loadConfig(path)
+	}
+	name, _, err := resolveContext(g, a.Getenv, file)
+	if err != nil || name != localContextName {
+		return false
+	}
+	if g.url != "" {
+		return strings.HasPrefix(g.url, "http://127.0.0.1:")
+	}
+	if a.Getenv != nil {
+		if v := a.Getenv("AGB_URL"); v != "" {
+			return strings.HasPrefix(v, "http://127.0.0.1:")
+		}
+	}
+	return true
 }
 
 // printAPIError writes the server error: verbatim in JSON mode, as text

@@ -8,42 +8,215 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
-// Config is the per-machine configuration file. Empty fields are omitted
-// from the file. Token is the shared token, which only a user actor may use.
-// Tokens holds the actor tokens that "agb login" received, by actor ID.
-// HookActors holds the actor that "agb hook" acts as, by the name of the agent
-// tool that "agb setup" connected. No other command reads it.
+const (
+	defaultContextName = "default"
+	localContextName   = "local"
+	defaultLocalURL    = "http://127.0.0.1:8420"
+)
+
+// ContextConfig holds the connection settings of one named server target.
+// Token is the shared token, which only a user actor may use. Tokens holds the
+// actor tokens that "agb login" received, by actor ID.
+type ContextConfig struct {
+	URL    string            `json:"url,omitempty"`
+	Token  string            `json:"token,omitempty"`
+	Tokens map[string]string `json:"tokens,omitempty"`
+	Actor  string            `json:"actor,omitempty"`
+}
+
+func (cc ContextConfig) isEmpty() bool {
+	return cc.URL == "" && cc.Token == "" && len(cc.Tokens) == 0 && cc.Actor == ""
+}
+
+func (cc ContextConfig) clone() ContextConfig {
+	out := cc
+	if len(cc.Tokens) > 0 {
+		out.Tokens = make(map[string]string, len(cc.Tokens))
+		for k, v := range cc.Tokens {
+			out.Tokens[k] = v
+		}
+	} else {
+		out.Tokens = nil
+	}
+	return out
+}
+
+// Config is the per-machine configuration file. Empty fields are omitted from
+// the file. CurrentContext and Contexts hold the named connection targets.
+// Legacy top-level URL, Token, Tokens and Actor fields are kept on the struct
+// for in-memory compatibility and migrated into Contexts["default"] when read
+// or written. HookActors holds the actor that "agb hook" acts as, by the name
+// of the agent tool that "agb setup" connected.
 type Config struct {
-	URL        string            `json:"url,omitempty"`
-	Token      string            `json:"token,omitempty"`
-	Tokens     map[string]string `json:"tokens,omitempty"`
-	Actor      string            `json:"actor,omitempty"`
+	CurrentContext string                   `json:"current_context,omitempty"`
+	Contexts       map[string]ContextConfig `json:"contexts,omitempty"`
+
+	// Legacy per-target fields; normalize() folds them into Contexts["default"]
+	// and saveConfig never writes them at the top level.
+	URL    string            `json:"-"`
+	Token  string            `json:"-"`
+	Tokens map[string]string `json:"-"`
+	Actor  string            `json:"-"`
+
 	HookActors map[string]string `json:"hook_actors,omitempty"`
 	SessionID  string            `json:"session_id,omitempty"`
 	ClientHost string            `json:"client_host,omitempty"`
+}
+
+// diskConfig is the JSON shape on disk, accepting both the current contexts
+// layout and the legacy top-level target fields.
+type diskConfig struct {
+	CurrentContext string                   `json:"current_context,omitempty"`
+	Contexts       map[string]ContextConfig `json:"contexts,omitempty"`
+	URL            string                   `json:"url,omitempty"`
+	Token          string                   `json:"token,omitempty"`
+	Tokens         map[string]string        `json:"tokens,omitempty"`
+	Actor          string                   `json:"actor,omitempty"`
+	HookActors     map[string]string        `json:"hook_actors,omitempty"`
+	SessionID      string                   `json:"session_id,omitempty"`
+	ClientHost     string                   `json:"client_host,omitempty"`
+}
+
+// normalize folds any legacy top-level target fields into Contexts["default"]
+// when Contexts is empty.
+func (c *Config) normalize() (migrated bool) {
+	hasLegacy := c.URL != "" || c.Token != "" || len(c.Tokens) > 0 || c.Actor != ""
+	if len(c.Contexts) == 0 && hasLegacy {
+		cc := ContextConfig{
+			URL:   c.URL,
+			Token: c.Token,
+			Actor: c.Actor,
+		}.clone()
+		if len(c.Tokens) > 0 {
+			cc.Tokens = make(map[string]string, len(c.Tokens))
+			for k, v := range c.Tokens {
+				cc.Tokens[k] = v
+			}
+		}
+		c.Contexts = map[string]ContextConfig{defaultContextName: cc}
+		if c.CurrentContext == "" {
+			c.CurrentContext = defaultContextName
+		}
+		migrated = true
+	}
+	c.URL = ""
+	c.Token = ""
+	c.Tokens = nil
+	c.Actor = ""
+	for name, cc := range c.Contexts {
+		if len(cc.Tokens) == 0 && cc.Tokens != nil {
+			cc.Tokens = nil
+			c.Contexts[name] = cc
+		}
+	}
+	return migrated
 }
 
 // configKeys are the keys "agb config set" accepts. The token is set only
 // through "agb config set-token".
 var configKeys = []string{"url", "actor", "session_id", "client_host"}
 
-// field returns a pointer to the field named by a config key.
-func (c *Config) field(key string) (*string, bool) {
-	switch key {
-	case "url":
-		return &c.URL, true
-	case "actor":
-		return &c.Actor, true
-	case "session_id":
-		return &c.SessionID, true
-	case "client_host":
-		return &c.ClientHost, true
+// validContextName reports whether name is a valid context identifier:
+// non-empty and free of whitespace or control characters.
+func validContextName(name string) bool {
+	if name == "" {
+		return false
 	}
-	return nil, false
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveContext chooses the active context name and its ContextConfig.
+// Precedence: --context flag > AGB_CONTEXT env > file.CurrentContext > "default" (if present).
+func resolveContext(g *globals, getenv func(string) string, file Config) (string, ContextConfig, error) {
+	file.normalize()
+	explicit := ""
+	if g != nil && g.context != "" {
+		explicit = g.context
+	} else if getenv != nil {
+		if v := getenv("AGB_CONTEXT"); v != "" {
+			explicit = v
+		}
+	}
+	if explicit != "" {
+		if !validContextName(explicit) {
+			return "", ContextConfig{}, usageErrorf("접속 대상 이름 %q 형식이 올바르지 않습니다 (공백과 제어문자를 쓸 수 없습니다).", explicit)
+		}
+		if cc, ok := file.Contexts[explicit]; ok {
+			if explicit == localContextName && cc.URL == "" {
+				cc.URL = defaultLocalURL
+			}
+			return explicit, cc, nil
+		}
+		if explicit == localContextName {
+			return localContextName, ContextConfig{URL: defaultLocalURL}, nil
+		}
+		return "", ContextConfig{}, usageErrorf("접속 대상 %q 이 등록되어 있지 않습니다. `agb config list-contexts`로 목록을 확인하거나 `agb config set-context %s --url <주소>`로 등록하세요.", explicit, explicit)
+	}
+
+	name := file.CurrentContext
+	if name == "" {
+		if _, ok := file.Contexts[defaultContextName]; ok {
+			name = defaultContextName
+		}
+	}
+	if name == "" {
+		return "", ContextConfig{}, nil
+	}
+	if cc, ok := file.Contexts[name]; ok {
+		if name == localContextName && cc.URL == "" {
+			cc.URL = defaultLocalURL
+		}
+		return name, cc, nil
+	}
+	if name == localContextName {
+		return localContextName, ContextConfig{URL: defaultLocalURL}, nil
+	}
+	return name, ContextConfig{}, nil
+}
+
+// writableContextName returns the context name that config write commands
+// (set, unset, set-token, login, logout) mutate.
+func writableContextName(g *globals, getenv func(string) string, c *Config) (string, error) {
+	c.normalize()
+	explicit := ""
+	if g != nil && g.context != "" {
+		explicit = g.context
+	} else if getenv != nil {
+		if v := getenv("AGB_CONTEXT"); v != "" {
+			explicit = v
+		}
+	}
+	if explicit != "" {
+		if !validContextName(explicit) {
+			return "", usageErrorf("접속 대상 이름 %q 형식이 올바르지 않습니다 (공백과 제어문자를 쓸 수 없습니다).", explicit)
+		}
+		if _, ok := c.Contexts[explicit]; !ok {
+			if explicit == localContextName {
+				if c.Contexts == nil {
+					c.Contexts = map[string]ContextConfig{}
+				}
+				c.Contexts[localContextName] = ContextConfig{URL: defaultLocalURL}
+				return localContextName, nil
+			}
+			return "", usageErrorf("접속 대상 %q 이 등록되어 있지 않습니다. `agb config set-context %s --url <주소>`로 먼저 등록하세요.", explicit, explicit)
+		}
+		return explicit, nil
+	}
+	if c.CurrentContext != "" {
+		return c.CurrentContext, nil
+	}
+	c.CurrentContext = defaultContextName
+	return defaultContextName, nil
 }
 
 // defaultConfigPath is <user config dir>/agb/config.json.
@@ -56,6 +229,10 @@ func defaultConfigPath() (string, error) {
 }
 
 // loadConfig reads the file. A missing file is an empty configuration.
+// If the file uses the legacy top-level target schema (no "contexts" key and at
+// least one non-empty target field), loadConfig backs up the raw bytes to
+// config.json.bak (preserving any existing .bak) and atomically writes the
+// migrated schema back to path.
 func loadConfig(path string) (Config, error) {
 	var cfg Config
 	raw, err := os.ReadFile(path)
@@ -65,34 +242,114 @@ func loadConfig(path string) (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	var rawKeys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawKeys); err != nil {
 		return Config{}, fmt.Errorf("설정 파일을 읽지 못했습니다 (%s): %w", path, err)
 	}
+	var disk diskConfig
+	if err := json.Unmarshal(raw, &disk); err != nil {
+		return Config{}, fmt.Errorf("설정 파일을 읽지 못했습니다 (%s): %w", path, err)
+	}
+	cfg = Config{
+		CurrentContext: disk.CurrentContext,
+		Contexts:       disk.Contexts,
+		URL:            disk.URL,
+		Token:          disk.Token,
+		Tokens:         disk.Tokens,
+		Actor:          disk.Actor,
+		HookActors:     disk.HookActors,
+		SessionID:      disk.SessionID,
+		ClientHost:     disk.ClientHost,
+	}
+	_, hasContextsKey := rawKeys["contexts"]
+	hasLegacy := disk.URL != "" || disk.Token != "" || len(disk.Tokens) > 0 || disk.Actor != ""
+	cfg.normalize()
+	if !hasContextsKey && hasLegacy {
+		bakPath := path + ".bak"
+		if _, statErr := os.Stat(bakPath); errors.Is(statErr, os.ErrNotExist) {
+			if err := writeFileAtomic(bakPath, raw, 0o600); err != nil {
+				return Config{}, fmt.Errorf("설정 백업 파일을 쓰지 못했습니다 (%s): %w", bakPath, err)
+			}
+		}
+		if err := saveConfig(path, cfg); err != nil {
+			return Config{}, fmt.Errorf("이전된 설정 파일을 쓰지 못했습니다 (%s): %w", path, err)
+		}
+	}
 	return cfg, nil
+}
+
+// writeFileAtomic writes data to path via a temporary file in the same
+// directory with mode perm.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	_ = os.Chmod(dir, 0o700)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Chmod(path, perm)
 }
 
 // saveConfig writes the file readable by the owner only. On Windows the
 // file inherits the permissions of the user's profile directory.
 func saveConfig(path string, cfg Config) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	cfg.normalize()
+	out := diskConfig{
+		CurrentContext: cfg.CurrentContext,
+		HookActors:     cfg.HookActors,
+		SessionID:      cfg.SessionID,
+		ClientHost:     cfg.ClientHost,
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return err
+	if len(cfg.Contexts) > 0 {
+		out.Contexts = make(map[string]ContextConfig, len(cfg.Contexts))
+		for name, cc := range cfg.Contexts {
+			cleaned := cc.clone()
+			if len(cleaned.Tokens) == 0 {
+				cleaned.Tokens = nil
+			}
+			if cleaned.isEmpty() && name != cfg.CurrentContext {
+				continue
+			}
+			out.Contexts[name] = cleaned
+		}
+		if len(out.Contexts) == 0 {
+			out.Contexts = nil
+		}
 	}
-	raw, err := json.MarshalIndent(cfg, "", "  ")
+	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
+	return writeFileAtomic(path, append(raw, '\n'), 0o600)
 }
 
 // Settings is what a command uses to reach the server.
 type Settings struct {
+	Context    string
 	URL        string
 	Token      string
 	Actor      string
@@ -100,13 +357,14 @@ type Settings struct {
 	ClientHost string
 }
 
-// resolveSettings applies the precedence flag > environment > file and
-// fills the defaults for the session ID and the client host. The token is
-// the token of the requesting actor in the file, else AGB_TOKEN, else the
-// shared token in the file. AGB_TOKEN is a shared token for user actors, so it
-// must not shadow the token an agent actor logged in with. Values that would be rejected by the server are
-// refused here with a usage error.
+// resolveSettings selects the context (--context > AGB_CONTEXT > current_context),
+// applies flag > environment > context precedence, and fills the defaults for
+// the session ID and the client host.
 func resolveSettings(g *globals, getenv func(string) string, file Config, now time.Time, hostname string) (Settings, error) {
+	ctxName, cc, err := resolveContext(g, getenv, file)
+	if err != nil {
+		return Settings{}, err
+	}
 	pick := func(flag, envName, fileValue string) string {
 		if flag != "" {
 			return flag
@@ -117,12 +375,13 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 		return fileValue
 	}
 	s := Settings{
-		URL:        strings.TrimRight(pick(g.url, "AGB_URL", file.URL), "/"),
-		Actor:      actorOf(g, getenv, file),
+		Context:    ctxName,
+		URL:        strings.TrimRight(pick(g.url, "AGB_URL", cc.URL), "/"),
+		Actor:      actorOfContext(g, getenv, cc),
 		SessionID:  pick(g.sessionID, "AGB_SESSION_ID", file.SessionID),
 		ClientHost: pick(g.clientHost, "AGB_CLIENT_HOST", file.ClientHost),
 	}
-	s.Token = tokenOf(s.Actor, getenv, file)
+	s.Token = tokenOfContext(s.Actor, getenv, cc)
 	if s.SessionID == "" {
 		s.SessionID = defaultSessionID(now)
 	}
@@ -144,27 +403,53 @@ func resolveSettings(g *globals, getenv func(string) string, file Config, now ti
 	return s, nil
 }
 
-// actorOf is the actor a run acts as: the flag, else AGB_ACTOR, else the file.
-func actorOf(g *globals, getenv func(string) string, file Config) string {
-	if g.actor != "" {
+func actorOfContext(g *globals, getenv func(string) string, cc ContextConfig) string {
+	if g != nil && g.actor != "" {
 		return g.actor
 	}
-	if v := getenv("AGB_ACTOR"); v != "" {
-		return v
+	if getenv != nil {
+		if v := getenv("AGB_ACTOR"); v != "" {
+			return v
+		}
 	}
-	return file.Actor
+	return cc.Actor
 }
 
-// tokenOf is the token a request of actor carries: the actor's token in the
-// file, else AGB_TOKEN, else the shared token in the file.
+// actorOf is the actor a run acts as: the flag, else AGB_ACTOR, else the
+// selected context's actor in the file.
+func actorOf(g *globals, getenv func(string) string, file Config) string {
+	_, cc, err := resolveContext(g, getenv, file)
+	if err != nil {
+		return actorOfContext(g, getenv, ContextConfig{})
+	}
+	return actorOfContext(g, getenv, cc)
+}
+
+func tokenOfContext(actor string, getenv func(string) string, cc ContextConfig) string {
+	if t := cc.Tokens[actor]; t != "" {
+		return t
+	}
+	if getenv != nil {
+		if t := getenv("AGB_TOKEN"); t != "" {
+			return t
+		}
+	}
+	return cc.Token
+}
+
+// tokenOf is the token a request of actor carries in the selected context:
+// the actor's token in the context, else AGB_TOKEN, else the shared token in
+// the context.
 func tokenOf(actor string, getenv func(string) string, file Config) string {
-	if t := file.Tokens[actor]; t != "" {
-		return t
+	return tokenOfWithGlobals(nil, actor, getenv, file)
+}
+
+func tokenOfWithGlobals(g *globals, actor string, getenv func(string) string, file Config) string {
+	_, cc, err := resolveContext(g, getenv, file)
+	if err != nil {
+		return ""
 	}
-	if t := getenv("AGB_TOKEN"); t != "" {
-		return t
-	}
-	return file.Token
+	return tokenOfContext(actor, getenv, cc)
 }
 
 // requireAuth checks that the settings can make an authenticated request.

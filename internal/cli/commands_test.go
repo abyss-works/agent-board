@@ -625,7 +625,8 @@ func TestConfigCommands(t *testing.T) {
 		t.Errorf("token echoed: %s %s", h.stdout, h.stderr)
 	}
 	cfg, err := loadConfig(h.app.ConfigPath)
-	if err != nil || cfg.URL != "http://127.0.0.1:8421" || cfg.Actor != "claude" || cfg.Token != "secret-token-0123456789abcdef0123456789" {
+	def := cfg.Contexts["default"]
+	if err != nil || cfg.CurrentContext != "default" || def.URL != "http://127.0.0.1:8421" || def.Actor != "claude" || def.Token != "secret-token-0123456789abcdef0123456789" {
 		t.Errorf("config = %+v %v", cfg, err)
 	}
 	if code := h.run("config", "show"); code != 0 {
@@ -641,7 +642,7 @@ func TestConfigCommands(t *testing.T) {
 	if code := h.run("config", "unset", "actor"); code != 0 {
 		t.Fatalf("unset: code=%d stderr=%s", code, h.stderr)
 	}
-	if cfg, _ := loadConfig(h.app.ConfigPath); cfg.Actor != "" || cfg.URL == "" {
+	if cfg, _ := loadConfig(h.app.ConfigPath); cfg.Contexts["default"].Actor != "" || cfg.Contexts["default"].URL == "" {
 		t.Errorf("after unset = %+v", cfg)
 	}
 	h.app.Stdin = strings.NewReader("\n")
