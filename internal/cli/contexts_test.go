@@ -203,6 +203,28 @@ func TestMixedConfigConflictDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestSaveConfigConflictDoesNotWrite(t *testing.T) {
+	for _, cfg := range []Config{
+		{URL: "http://legacy", Contexts: map[string]ContextConfig{"default": {URL: "http://other"}}},
+		{Token: "legacy-token", Contexts: map[string]ContextConfig{"default": {Token: "other-token"}}},
+		{Actor: "legacy", Contexts: map[string]ContextConfig{"default": {Actor: "other"}}},
+		{Tokens: map[string]string{"a": "old"}, Contexts: map[string]ContextConfig{"default": {Tokens: map[string]string{"a": "new"}}}},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		raw := `{"current_context":"default","contexts":{"default":{"url":"http://kept"}}}`
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveConfig(path, cfg); err == nil {
+			t.Errorf("conflicting Config saved without error: %+v", cfg)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != raw {
+			t.Errorf("original file changed on conflict: %v", err)
+		}
+	}
+}
+
 func TestContextSelectionPrecedenceAndOverrides(t *testing.T) {
 	prod := newFakeServer(t)
 	prod.on("GET", "/v1/actors/me", canned{body: `{"id":"owner","kind":"user"}`})

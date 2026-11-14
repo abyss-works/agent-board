@@ -399,6 +399,9 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // saveConfig writes the file readable by the owner only. On Windows the
 // file inherits the permissions of the user's profile directory.
 func saveConfig(path string, cfg Config) error {
+	if _, err := cfg.mergeLegacy(); err != nil {
+		return fmt.Errorf("설정 파일을 쓰지 못했습니다 (%s): %w", path, err)
+	}
 	cfg.normalize()
 	out := diskConfig{
 		CurrentContext: cfg.CurrentContext,
