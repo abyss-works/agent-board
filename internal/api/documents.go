@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -11,6 +13,7 @@ import (
 
 func (h *handler) registerDocuments(mux *http.ServeMux) {
 	route(mux, "/v1/projects/{key}/documents", methods{"GET": h.listDocuments})
+	route(mux, "/v1/projects/{key}/documents:batch", methods{"POST": h.putDocumentsBatch})
 	route(mux, "/v1/documents", methods{"GET": h.searchDocuments})
 
 	// A document name may hold slashes, so one pattern takes the name and the
@@ -40,6 +43,12 @@ var documentFields = map[string]bool{
 	"related": true, "issues": true, "archived": true, "imported": true, "path": true,
 }
 
+// batchDocumentFields are the fields of one item in a batch put request.
+var batchDocumentFields = map[string]bool{
+	"name": true, "content": true, "kind": true, "date": true, "title": true, "tags": true, "supersedes": true,
+	"related": true, "issues": true, "archived": true, "imported": true, "path": true,
+}
+
 // putDocument stores a record document: 201 for a new one, 200 for the same
 // content and metadata again. Other content under the same name is a 409, and so
 // is other metadata for the same content. A null field is a field that was not
@@ -55,19 +64,8 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	var in store.DocumentInput
-	if aerr := decodeField(b, "content", &in.Content); aerr != nil {
-		writeError(w, aerr)
-		return
-	}
-	args := &in.Args
-	if aerr := firstError(
-		decodeOptional(b, "kind", &args.Kind), decodeOptional(b, "date", &args.Date),
-		decodeOptional(b, "title", &args.Title), decodeOptional(b, "path", &args.Path),
-		decodeOptional(b, "archived", &args.Archived), decodeOptional(b, "imported", &args.Imported),
-		decodeList(b, "tags", &args.Tags), decodeList(b, "supersedes", &args.Supersedes),
-		decodeList(b, "related", &args.Related), decodeList(b, "issues", &args.Issues),
-	); aerr != nil {
+	in, aerr := decodeDocumentInput(b)
+	if aerr != nil {
 		writeError(w, aerr)
 		return
 	}
@@ -83,6 +81,106 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, d)
+}
+
+func decodeDocumentInput(b body) (store.DocumentInput, *apiError) {
+	var in store.DocumentInput
+	if aerr := decodeField(b, "content", &in.Content); aerr != nil {
+		return in, aerr
+	}
+	args := &in.Args
+	if aerr := firstError(
+		decodeOptional(b, "kind", &args.Kind), decodeOptional(b, "date", &args.Date),
+		decodeOptional(b, "title", &args.Title), decodeOptional(b, "path", &args.Path),
+		decodeOptional(b, "archived", &args.Archived), decodeOptional(b, "imported", &args.Imported),
+		decodeList(b, "tags", &args.Tags), decodeList(b, "supersedes", &args.Supersedes),
+		decodeList(b, "related", &args.Related), decodeList(b, "issues", &args.Issues),
+	); aerr != nil {
+		return in, aerr
+	}
+	return in, nil
+}
+
+// putDocumentsBatch stores a batch of record documents atomically.
+func (h *handler) putDocumentsBatch(w http.ResponseWriter, r *http.Request) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	b, aerr := readBodyLimit(w, r, map[string]bool{"documents": true}, maxDocumentBatchBodyBytes, errDocumentTooLarge)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var rawItems []json.RawMessage
+	present, null, aerr := field(b, "documents", &rawItems)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	if !present || null || len(rawItems) == 0 || len(rawItems) > store.MaxBatchDocuments {
+		writeError(w, validationFailed([]Detail{{
+			Field:   "documents",
+			Reason:  "invalid",
+			Message: fmt.Sprintf("1~%d건이어야 합니다.", store.MaxBatchDocuments),
+		}}))
+		return
+	}
+	items := make([]store.BatchDocumentInput, len(rawItems))
+	for i, raw := range rawItems {
+		prefix := fmt.Sprintf("documents[%d]", i)
+		var ib body
+		if err := json.Unmarshal(raw, &ib); err != nil || ib == nil {
+			writeError(w, badRequest("요청 본문이 JSON 객체가 아닙니다.", Detail{Field: prefix, Reason: "type_mismatch"}))
+			return
+		}
+		var unknown []string
+		for k := range ib {
+			if !batchDocumentFields[k] {
+				unknown = append(unknown, k)
+			}
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			details := make([]Detail, len(unknown))
+			for j, k := range unknown {
+				msg := "모르는 필드입니다."
+				if k == "location" {
+					msg = "location은 더 이상 받지 않습니다. CLI를 v0.9 이상으로 갱신하세요."
+				}
+				details[j] = Detail{Field: prefix + "." + k, Reason: "unknown_field", Message: msg}
+			}
+			writeError(w, badRequest("요청 본문에 모르는 필드가 있습니다.", details...))
+			return
+		}
+		var name string
+		if aerr := decodeField(ib, "name", &name); aerr != nil {
+			prefixErrorDetails(prefix+".", aerr)
+			writeError(w, aerr)
+			return
+		}
+		in, aerr := decodeDocumentInput(ib)
+		if aerr != nil {
+			prefixErrorDetails(prefix+".", aerr)
+			writeError(w, aerr)
+			return
+		}
+		items[i] = store.BatchDocumentInput{Name: name, DocumentInput: in}
+	}
+	docs, err := h.store.PutDocumentsBatch(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), items)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"documents": docs})
+}
+
+func prefixErrorDetails(prefix string, aerr *apiError) {
+	for i := range aerr.Details {
+		if aerr.Details[i].Field != "" {
+			aerr.Details[i].Field = prefix + aerr.Details[i].Field
+		}
+	}
 }
 
 func firstError(errs ...*apiError) *apiError {
