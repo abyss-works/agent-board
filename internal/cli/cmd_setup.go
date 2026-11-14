@@ -103,10 +103,14 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		}
 		// The agent tool runs the hook without the environment of this
 		// shell, so the hook gets its token and its address from the file.
-		if tokenOf(actor, noEnv, file) == "" {
+		_, hookCC, err := resolveContext(&globals{}, noEnv, file)
+		if err != nil {
+			return err
+		}
+		if tokenOfContext(actor, noEnv, hookCC, false) == "" {
 			return usageErrorf("설정 파일에 행위자 %s 가 쓸 토큰이 없습니다. 훅은 이 셸의 환경변수를 물려받지 않으므로 토큰이 설정 파일에 있어야 합니다(AGB_TOKEN 만으로는 부족합니다). `agb login --actor %s`로 토큰을 설정 파일에 받은 뒤 다시 실행하세요.", actor, actor)
 		}
-		if file.URL == "" {
+		if hookCC.URL == "" {
 			return usageErrorf("설정 파일에 서버 주소가 없습니다. 훅은 이 셸의 환경변수와 옵션을 물려받지 않으므로 주소가 설정 파일에 있어야 합니다(AGB_URL 이나 --url 만으로는 부족합니다). `agb config set url <주소>`로 저장한 뒤 다시 실행하세요.")
 		}
 		run := a.RunClaude

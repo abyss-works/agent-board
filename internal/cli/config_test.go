@@ -26,7 +26,7 @@ func TestResolveSettingsPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.URL != "http://flag:3" || s.Actor != "claude" || s.SessionID != "flag-sess" || s.ClientHost != "flag-host" || s.Token != "env-token" {
-		t.Errorf("flags should win: %+v", s)
+		t.Errorf("flags should win (AGB_TOKEN beats file shared token): %+v", s)
 	}
 	s, err = resolveSettings(&globals{}, e, file, noon, "desk")
 	if err != nil {
@@ -99,6 +99,7 @@ func TestResolveSettingsTokenOrder(t *testing.T) {
 		file Config
 		want string
 	}{
+		{"the actor token beats the shared token", &globals{actor: "codex"}, nil, file, "codex-file-token"},
 		{"the actor token beats AGB_TOKEN", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "codex-file-token"},
 		{"AGB_TOKEN beats the shared token when the actor has no token", &globals{actor: "gemini"}, map[string]string{"AGB_TOKEN": "env-token"}, file, "env-token"},
 		{"AGB_TOKEN is used when the file has no tokens", &globals{actor: "codex"}, map[string]string{"AGB_TOKEN": "env-token"}, Config{URL: "http://x"}, "env-token"},
@@ -108,6 +109,8 @@ func TestResolveSettingsTokenOrder(t *testing.T) {
 		{"actor from the file without its own token uses the shared token", &globals{}, nil, file, "shared-file-token"},
 		{"actor without its own token uses the shared token", &globals{actor: "gemini"}, nil, file, "shared-file-token"},
 		{"no actor tokens at all uses the shared token", &globals{actor: "codex"}, nil, Config{URL: "http://x", Token: "shared-file-token"}, "shared-file-token"},
+		{"AGB_TOKEN beats the shared token in a named context", &globals{context: "prod", actor: "gemini"}, map[string]string{"AGB_TOKEN": "env-token"}, Config{CurrentContext: "prod", Contexts: map[string]ContextConfig{"prod": {URL: "http://prod:1", Token: "prod-shared", Tokens: map[string]string{"claude": "prod-claude"}}}}, "env-token"},
+		{"the actor token in a named context beats AGB_TOKEN", &globals{context: "prod", actor: "claude"}, map[string]string{"AGB_TOKEN": "env-token"}, Config{CurrentContext: "prod", Contexts: map[string]ContextConfig{"prod": {URL: "http://prod:1", Token: "prod-shared", Tokens: map[string]string{"claude": "prod-claude"}}}}, "prod-claude"},
 		{"no token anywhere", &globals{actor: "codex"}, nil, Config{URL: "http://x", Tokens: map[string]string{"claude": "claude-file-token"}}, ""},
 	}
 	for _, tc := range cases {
@@ -177,7 +180,12 @@ func TestConfigFileRoundTrip(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(cfg, Config{}) {
 		t.Fatalf("missing file must load as empty: %+v %v", cfg, err)
 	}
-	want := Config{URL: "http://127.0.0.1:8421", Token: "secret-token-value", Actor: "claude", Tokens: map[string]string{"codex": "agb_codex-token", "claude": "agb_claude-token"}}
+	want := Config{
+		CurrentContext: "default",
+		Contexts: map[string]ContextConfig{
+			"default": {URL: "http://127.0.0.1:8421", Token: "secret-token-value", Actor: "claude", Tokens: map[string]string{"codex": "agb_codex-token", "claude": "agb_claude-token"}},
+		},
+	}
 	if err := saveConfig(path, want); err != nil {
 		t.Fatal(err)
 	}

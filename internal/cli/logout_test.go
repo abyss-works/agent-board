@@ -44,7 +44,7 @@ func TestLogoutRevokesTheTokenAndForgetsIt(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", e.stdout.String(), want)
 	}
 	// Only the token of this actor goes.
-	want := Config{Token: "shared-file-token", Tokens: map[string]string{"claude": "agb_claude-token"}}
+	want := Config{CurrentContext: "default", Contexts: map[string]ContextConfig{"default": {Token: "shared-file-token", Tokens: map[string]string{"claude": "agb_claude-token"}}}}
 	if cfg, err := loadConfig(e.app.ConfigPath); err != nil || !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config = %+v %v, want %+v", cfg, err, want)
 	}
@@ -113,7 +113,7 @@ func TestLogoutOfATokenTheServerDoesNotKnow(t *testing.T) {
 	if want := `{"actor":"codex","revoked":false}` + "\n"; e.stdout.String() != want {
 		t.Errorf("stdout = %q, want %q", e.stdout.String(), want)
 	}
-	want := Config{Token: "shared-file-token", Tokens: map[string]string{"claude": "agb_claude-token"}}
+	want := Config{CurrentContext: "default", Contexts: map[string]ContextConfig{"default": {Token: "shared-file-token", Tokens: map[string]string{"claude": "agb_claude-token"}}}}
 	if cfg, _ := loadConfig(e.app.ConfigPath); !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config = %+v, want %+v", cfg, want)
 	}
@@ -177,7 +177,7 @@ func TestLogoutUsageErrors(t *testing.T) {
 			if len(e.srv.reqs) != 0 {
 				t.Errorf("a usage error must not reach the server: %v", e.srv.paths())
 			}
-			if cfg, _ := loadConfig(e.app.ConfigPath); len(cfg.Tokens) != 2 {
+			if cfg, _ := loadConfig(e.app.ConfigPath); len(cfg.Contexts["default"].Tokens) != 2 {
 				t.Errorf("config = %+v", cfg)
 			}
 		})
@@ -193,7 +193,7 @@ func TestLogoutActorFollowsTheUsualSettings(t *testing.T) {
 	if h.Get("Authorization") != "Bearer agb_claude-token" || h.Get("X-Actor") != "claude" {
 		t.Errorf("headers = %v", h)
 	}
-	if cfg, _ := loadConfig(e.app.ConfigPath); !reflect.DeepEqual(cfg.Tokens, map[string]string{"codex": "agb_codex-token"}) {
+	if cfg, _ := loadConfig(e.app.ConfigPath); !reflect.DeepEqual(cfg.Contexts["default"].Tokens, map[string]string{"codex": "agb_codex-token"}) {
 		t.Errorf("config = %+v", cfg)
 	}
 }

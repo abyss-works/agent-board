@@ -104,12 +104,20 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
    ```bash
    agb config set url <서버 주소>
    ```
+   - 접속 대상이 여럿이면 이름 붙인 대상을 만들고 고른다. `agb config set-context <이름> --url <주소> --use`, `agb config use-context <이름>`, `agb config list-contexts`, `agb config current-context`, `agb config delete-context <이름>`을 쓴다.
+   - `--context <이름>`과 `AGB_CONTEXT`로 실행마다 대상을 고를 수 있다. `local`은 내장 대상이라 `contexts`에 없어도 바로 쓸 수 있다.
 2. 토큰을 받는다. 토큰은 행위자마다 다르다.
    - 에이전트: `SKILL.md`의 "로그인이 필요할 때"를 따라 `agb --actor <자기 ID> login`으로 받는다. 사용자가 웹에서 승인한다.
    - 사용자(`owner`): 공용 토큰은 사용자 행위자 전용이다. 사용자가 터미널에서 `agb config set-token`을 실행하고 토큰을 붙여 넣는다. 입력은 화면에 보이지 않는다. 에이전트는 공용 토큰을 넣거나 쓰지 않는다.
 3. 행위자와 세션 ID는 설정 파일에 두지 않는다.
    - 에이전트마다 값이 다르므로 명령마다 옵션이나 환경변수(`AGB_ACTOR`, `AGB_SESSION_ID`)로 준다.
    - 설정 파일이나 셸 프로필에 `owner`를 두지 않는다. 에이전트가 `--actor`를 빠뜨리면 사용자 이름으로 기록되기 때문이다. 사람이 터미널에서 쓸 때는 `--actor owner`를 붙인다.
+
+### 로컬 서버
+
+`agb serve --local`은 이 기기만 쓰는 로컬 서버를 띄운다. 127.0.0.1 외 주소로는 받지 않고 `AGB_TOKEN`, `AGB_ACTORS`를 묻지 않는다. 기본 데이터 폴더는 OS 사용자 데이터 폴더이고 `--data-dir`이나 `AGB_LOCAL_DATA_DIR`로 바꿀 수 있다. 처음 실행하면 `<data-dir>/local-auth.json`에 랜덤 공용 토큰과 에이전트별 토큰을 만든다.
+
+CLI가 `--context local`이나 `AGB_CONTEXT=local`이나 `current_context=local`을 쓰면 설정 파일에 토큰이 없어도 그 시드 파일을 읽어 바로 접속한다. 행위자를 주지 않으면 `owner`로 본다. `agb --actor claude` 등으로 에이전트 행위자를 주면 로그인 없이 그 행위자 토큰을 쓴다. `local` 대상의 토큰 순서는 행위자별 토큰 > 시드 토큰 > 설정 파일의 공용 토큰 > `AGB_TOKEN`이다. 그 밖의 대상은 행위자별 토큰 > `AGB_TOKEN` > 설정 파일의 공용 토큰이다.
 
 ## 4. 접속 확인
 

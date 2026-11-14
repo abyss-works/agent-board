@@ -22,6 +22,7 @@ func (l *stringList) Set(v string) error {
 type globals struct {
 	json       bool
 	table      bool
+	context    string
 	url        string
 	actor      string
 	sessionID  string
@@ -34,6 +35,7 @@ type globals struct {
 func (g *globals) addTo(fs *flag.FlagSet) {
 	fs.BoolVar(&g.json, "json", g.json, "")
 	fs.BoolVar(&g.table, "table", g.table, "")
+	fs.StringVar(&g.context, "context", g.context, "")
 	fs.StringVar(&g.url, "url", g.url, "")
 	fs.StringVar(&g.actor, "actor", g.actor, "")
 	fs.StringVar(&g.sessionID, "session-id", g.sessionID, "")

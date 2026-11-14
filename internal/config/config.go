@@ -22,6 +22,10 @@ type Config struct {
 	Backup  Backup
 	// Embedding configures the search by meaning; it is off without an API key.
 	Embedding Embedding
+	// SeedTokens are per-actor secrets a local server registers at startup,
+	// so agent actors can authenticate without a browser login. Empty for a
+	// remote server.
+	SeedTokens map[string]string
 }
 
 // Backup configures the periodic snapshot upload. It is off until a bucket
