@@ -8,9 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
+
+// setupClaudeTimeout bounds each external claude CLI invocation during setup.
+var setupClaudeTimeout = 60 * time.Second
 
 const (
 	// claudeMarketplaceSource is the repository whose .claude-plugin/marketplace.json
@@ -64,7 +68,9 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 갱신: CLI 를 먼저 갱신한 뒤 플러그인을 갱신합니다. 플러그인이 CLI 에 없는 명령을 부르지 않게 하는 순서입니다.
   claude plugin marketplace update ` + claudeMarketplace + `
   claude plugin update ` + claudePlugin + `@` + claudeMarketplace + `
-제거: claude plugin uninstall ` + claudePlugin + `@` + claudeMarketplace + `
+제거:
+  claude plugin uninstall ` + claudePlugin + `@` + claudeMarketplace + `
+  claude plugin marketplace remove ` + claudeMarketplace + `
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		pos, err := parseArgs(leafFlags("setup claude", g), args)
@@ -119,7 +125,9 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 			{"플러그인 설치", []string{"plugin", "install", claudePlugin + "@" + claudeMarketplace}},
 		} {
 			fmt.Fprintf(a.Stdout, "%s: claude %s\n", step.name, strings.Join(step.args, " "))
-			out, err := run(ctx, step.args...)
+			stepCtx, cancel := context.WithTimeout(ctx, setupClaudeTimeout)
+			out, err := run(stepCtx, step.args...)
+			cancel()
 			if errors.Is(err, exec.ErrNotFound) {
 				return usageErrorf("claude 실행 파일이 PATH 에 없습니다. Claude Code 를 설치하고 claude 가 실행되는지 확인한 뒤 agb setup claude 를 다시 실행하세요.")
 			}
@@ -132,10 +140,13 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 		if err := a.installSkill(filepath.Join(a.SkillsDir, skillName)); err != nil {
 			return err
 		}
-		if a.claudeNeedsOwnSkill() {
-			if err := a.installSkill(filepath.Join(a.ClaudeSkillsDir, skillName)); err != nil {
+		switch claudeTarget := filepath.Join(a.ClaudeSkillsDir, skillName); a.claudeSkillStatus() {
+		case claudeSkillInstall:
+			if err := a.installSkill(claudeTarget); err != nil {
 				return err
 			}
+		case claudeSkillLinked:
+			fmt.Fprintf(a.Stdout, "스킬: 링크 폴더여서 설치를 건너뜁니다 (%s).\n", claudeTarget)
 		}
 		if err := a.updateConfig(g, func(c *Config) error {
 			if c.HookActors == nil {
@@ -176,19 +187,30 @@ func defaultClaudeSkillsDir() (string, error) {
 	return filepath.Join(home, ".claude", "skills"), nil
 }
 
-// claudeNeedsOwnSkill reports whether the skills folder of Claude Code needs
-// a copy of the skill besides the one in the default folder: it is another
-// folder once links are followed, and the skill in it is not a link, which is
-// left as the user set it up.
-func (a *App) claudeNeedsOwnSkill() bool {
+type claudeSkillDisposition int
+
+const (
+	claudeSkillSameFolder claudeSkillDisposition = iota
+	claudeSkillLinked
+	claudeSkillInstall
+)
+
+// claudeSkillStatus reports how the skills folder of Claude Code stands beside
+// the default skills folder: the same folder once links are followed, a
+// separate folder whose tool-agb entry is a link (left as the user set it up),
+// or a separate folder that needs its own copy.
+func (a *App) claudeSkillStatus() claudeSkillDisposition {
 	if a.ClaudeSkillsDir == "" {
-		return false
+		return claudeSkillSameFolder
 	}
 	if def, err := os.Stat(a.SkillsDir); err == nil {
 		if cl, err := os.Stat(a.ClaudeSkillsDir); err == nil && os.SameFile(def, cl) {
-			return false
+			return claudeSkillSameFolder
 		}
 	}
 	fi, err := os.Lstat(filepath.Join(a.ClaudeSkillsDir, skillName))
-	return err != nil || fi.Mode()&(os.ModeSymlink|os.ModeIrregular) == 0
+	if err == nil && fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return claudeSkillLinked
+	}
+	return claudeSkillInstall
 }

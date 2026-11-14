@@ -276,3 +276,61 @@ func TestDocumentStateAgainstRealHandler(t *testing.T) {
 		t.Errorf("unarchive: %v", err)
 	}
 }
+
+func TestPutDocumentsBatchClient(t *testing.T) {
+	rec := newRecorder(t)
+	c := rec.client()
+	ctx := context.Background()
+	const (
+		docA = "2026-10-10-1000-decision-alpha.md"
+		docB = "2026-10-10-1001-decision-beta.md"
+	)
+	if _, err := c.PutDocumentsBatch(ctx, "PROJ", []DocumentBatchItem{
+		{Name: docA, DocumentPut: DocumentPut{Content: "alpha", Related: []string{docB}}},
+		{Name: docB, DocumentPut: DocumentPut{Content: "beta", Related: []string{docA}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec.method != "POST" || rec.path != "/v1/projects/PROJ/documents:batch" {
+		t.Fatalf("request = %s %s", rec.method, rec.path)
+	}
+	var sent struct {
+		Documents []map[string]any `json:"documents"`
+	}
+	if err := json.Unmarshal(rec.body, &sent); err != nil || len(sent.Documents) != 2 ||
+		sent.Documents[0]["name"] != docA || sent.Documents[1]["name"] != docB {
+		t.Fatalf("body = %s (%v)", rec.body, err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "batch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	actors := []model.Actor{{ID: "owner", Kind: model.ActorUser}}
+	if err := st.EnsureActors(ctx, actors); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(api.New(api.Options{Token: testToken, Actors: actors, Version: "t", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Store: st}))
+	defer srv.Close()
+	rc := newClient(srv.URL)
+	if _, err := rc.CreateProject(ctx, "PROJ", "sample"); err != nil {
+		t.Fatal(err)
+	}
+	title := "제목"
+	resp, err := rc.PutDocumentsBatch(ctx, "PROJ", []DocumentBatchItem{
+		{Name: docA, DocumentPut: DocumentPut{Content: "alpha", Title: &title, Related: []string{docB}}},
+		{Name: docB, DocumentPut: DocumentPut{Content: "beta", Title: &title, Related: []string{docA}}},
+	})
+	if err != nil || resp.Status != 200 {
+		t.Fatalf("batch = %+v, %v", resp, err)
+	}
+	var batch struct {
+		Documents []model.DocumentResult `json:"documents"`
+	}
+	if err := resp.Decode(&batch); err != nil || len(batch.Documents) != 2 ||
+		!reflect.DeepEqual(batch.Documents[0].Related, []string{docB}) ||
+		!reflect.DeepEqual(batch.Documents[1].Related, []string{docA}) {
+		t.Fatalf("decoded = %+v, %v", batch, err)
+	}
+}

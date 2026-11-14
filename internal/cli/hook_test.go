@@ -3,10 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -234,6 +236,72 @@ func TestHookSessionStartGivesUpOnASlowServer(t *testing.T) {
 func TestHookQueryTimeoutIsFiveSeconds(t *testing.T) {
 	if hookQueryTimeout != 5*time.Second {
 		t.Errorf("hookQueryTimeout = %v", hookQueryTimeout)
+	}
+}
+
+func TestHookSessionStartGivesUpOnAnUnclosedStdin(t *testing.T) {
+	if hookStdinTimeout != time.Second || hookStdinMax != 1<<20 {
+		t.Fatalf("hookStdinTimeout=%v hookStdinMax=%d", hookStdinTimeout, hookStdinMax)
+	}
+	old := hookStdinTimeout
+	hookStdinTimeout = 40 * time.Millisecond
+	defer func() { hookStdinTimeout = old }()
+
+	h, _ := newMsgHarness(t, false)
+	t.Chdir(hookRepo(t, "CLI"))
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	h.app.Stdin = pr
+	start := time.Now()
+	code := h.run("hook", "session-start")
+	elapsed := time.Since(start)
+	if code != 0 || h.stderr.Len() != 0 {
+		t.Fatalf("code=%d stderr=%q", code, h.stderr)
+	}
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("hook blocked on unclosed stdin for %v", elapsed)
+	}
+	if !strings.HasPrefix(h.stdout.String(), "확인하지 않은 메시지 2건 (프로젝트 CLI)\n") {
+		t.Errorf("stdout = %q, want fallback to working folder", h.stdout.String())
+	}
+
+	// Oversized input (> 1 MiB) stops at hookStdinMax without hanging on an unclosed pipe.
+	pr2, pw2 := io.Pipe()
+	defer pw2.Close()
+	go func() {
+		pw2.Write([]byte(`{"cwd":"` + strings.Repeat("a", hookStdinMax+4096)))
+	}()
+	in := readHookInput(pr2, time.Second)
+	if in != (hookStdin{}) {
+		t.Errorf("oversized truncated JSON gave %+v, want empty hookStdin", in)
+	}
+}
+
+func TestHookSessionStartDoesNotSpawnGitWithoutRepoConfig(t *testing.T) {
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "git-ran")
+	if runtime.GOOS == "windows" {
+		script := "@echo ran > \"" + marker + "\"\r\n@exit /b 1\r\n"
+		if err := os.WriteFile(filepath.Join(bin, "git.bat"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		script := "#!/bin/sh\necho ran > \"" + marker + "\"\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+
+	plain := t.TempDir()
+	t.Chdir(plain)
+	h, _ := newMsgHarness(t, false)
+	if out := runHook(t, h, hookInput(t, plain)); out != "" {
+		t.Errorf("stdout = %q", out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("hook spawned git while looking for .agb.json")
 	}
 }
 

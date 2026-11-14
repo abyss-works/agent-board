@@ -21,6 +21,9 @@ const maxBodyBytes = 1 << 20
 // be six times as long as the content; the rest is room for the other fields.
 const maxDocumentBodyBytes = 6*model.MaxDocumentBytes + 64<<10
 
+// maxDocumentBatchBodyBytes bounds a batch document put (max(16*maxDocumentBodyBytes, 16 MiB)).
+const maxDocumentBatchBodyBytes = 16 * maxDocumentBodyBytes
+
 // body is a decoded JSON object whose keys were checked against the
 // allowed set. Values are decoded lazily so type errors name the field.
 type body map[string]json.RawMessage
@@ -249,8 +252,16 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	case errors.Is(err, store.ErrProjectNotActive):
 		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈, 주제, 마일스톤, 기록 문서, 메시지는 쓸 수 없습니다.")
 	case errors.As(err, &ierr):
+		f := "content"
+		if ierr.Field != "" {
+			f = ierr.Field
+		}
+		msg := "서버에 저장된 내용의 sha256은 " + ierr.SHA256 + "입니다."
+		if ierr.Name != "" {
+			msg = "문서 " + ierr.Name + "에 저장된 내용의 sha256은 " + ierr.SHA256 + "입니다."
+		}
 		return &apiError{Status: 409, Code: "conflict", Message: "같은 이름의 기록 문서가 다른 내용으로 이미 있습니다. 기록 문서는 고칠 수 없습니다.",
-			Details: []Detail{{Field: "content", Reason: "immutable", Message: "서버에 저장된 내용의 sha256은 " + ierr.SHA256 + "입니다.", SHA256: ierr.SHA256}}}
+			Details: []Detail{{Field: f, Reason: "immutable", Message: msg, SHA256: ierr.SHA256}}}
 	case errors.Is(err, store.ErrDuplicateName):
 		return &apiError{Status: 409, Code: "conflict", Message: "같은 상위 주제 아래에 같은 이름의 활성 주제가 이미 있습니다.",
 			Details: []Detail{{Field: "name", Reason: "duplicate"}}}
@@ -266,7 +277,11 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	case errors.As(err, &merr):
 		details := make([]Detail, len(merr.Diffs))
 		for i, d := range merr.Diffs {
-			details[i] = Detail{Field: d.Field, Reason: "metadata_differs", Message: "서버에 저장된 값 " + d.Stored + "과 보낸 값 " + d.Sent + "이 다릅니다."}
+			msg := "서버에 저장된 값 " + d.Stored + "과 보낸 값 " + d.Sent + "이 다릅니다."
+			if merr.Name != "" {
+				msg = "문서 " + merr.Name + "에 저장된 값 " + d.Stored + "과 보낸 값 " + d.Sent + "이 다릅니다."
+			}
+			details[i] = Detail{Field: d.Field, Reason: "metadata_differs", Message: msg}
 		}
 		return &apiError{Status: 409, Code: "conflict", Details: details,
 			Message: "같은 원문의 기록 문서가 다른 메타데이터로 이미 있습니다. 올라간 문서의 아카이브 표시는 POST·DELETE .../archive로, 관계는 POST·DELETE .../relations로 고칩니다."}

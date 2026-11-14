@@ -140,6 +140,11 @@ func TestMessageErrors(t *testing.T) {
 	}{
 		{"missing title", `{"to":"desk"}`, 422, "title"},
 		{"empty title", `{"title":""}`, 422, "title"},
+		{"newline in title", `{"title":"첫줄\n둘째줄"}`, 422, "title"},
+		{"carriage return in title", `{"title":"첫줄\r둘째줄"}`, 422, "title"},
+		{"tab in title", `{"title":"첫줄\t둘째줄"}`, 422, "title"},
+		{"ascii control in title", `{"title":"제어\u0000문자"}`, 422, "title"},
+		{"del in title", `{"title":"삭제\u007f문자"}`, 422, "title"},
 		{"bad ttl", `{"title":"t","ttl":"soon"}`, 422, "ttl"},
 		{"ttl over max", `{"title":"t","ttl":"91d"}`, 422, "ttl"},
 		{"bad to", `{"title":"t","to":"a b"}`, 422, "to"},

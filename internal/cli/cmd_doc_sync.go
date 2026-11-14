@@ -176,10 +176,21 @@ func serverDocs(ctx context.Context, c *client.Client, project string) (map[stri
 	}
 }
 
+const maxSyncBatchSize = 100
+
+type docCandidate struct {
+	file    docFile
+	content string
+	sha     string
+}
+
 // syncDocFiles uploads the files the server lacks, in the order they come, and
-// sorts every file into res. A refusal that is about one file puts that file
-// aside; any other error ends the sync and is returned.
+// sorts every file into res. Candidates that reference one another via related
+// or supersedes are grouped into one weakly connected component and sent as a
+// batch so mutual references resolve atomically, while independent files keep
+// single-file error isolation.
 func syncDocFiles(ctx context.Context, c *client.Client, project string, files []docFile, server map[string]string, headings []string, res *docSyncResult) error {
+	var candidates []docCandidate
 	for _, f := range files {
 		content, err := readDocContent(f.path)
 		if errors.Is(err, errNotUTF8) {
@@ -198,37 +209,213 @@ func syncDocFiles(ctx context.Context, c *client.Client, project string, files [
 			}
 			continue
 		}
-		args := f.rule.putArgs()
-		args.Content = content
-		resp, err := c.PutDocumentWith(ctx, project, f.name, args)
-		if err != nil {
-			var apiErr *client.Error
-			if !errors.As(err, &apiErr) {
-				return err
+		candidates = append(candidates, docCandidate{file: f, content: content, sha: sha})
+	}
+	for _, comp := range candidateComponents(project, candidates) {
+		if len(comp) == 1 || len(comp) > maxSyncBatchSize {
+			for _, cand := range comp {
+				if err := syncOneCandidate(ctx, c, project, cand, server, headings, res); err != nil {
+					return err
+				}
 			}
-			switch {
-			case apiErr.Status == http.StatusConflict && hasReason(apiErr.Details, "immutable"):
-				res.Conflicts = append(res.Conflicts, docConflict{Name: f.name, LocalSHA256: sha, ServerSHA256: immutableSHA(apiErr.Details)})
-				continue
-			case apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusRequestEntityTooLarge:
-				res.Rejected = append(res.Rejected, docRejected{Name: f.name, Reason: apiReason(apiErr)})
-				continue
-			}
+			continue
+		}
+		if err := syncBatchCandidates(ctx, c, project, comp, server, headings, res); err != nil {
 			return err
-		}
-		server[f.name] = sha
-		res.Uploaded = append(res.Uploaded, f.name)
-		if put, err := decode[model.DocumentResult](resp); err == nil {
-			for _, w := range put.Warnings {
-				res.Warnings = append(res.Warnings, docWarning{Name: f.name, Field: w.Field, Message: w.Message})
-			}
-		}
-		// The open items of an imported document are history, not work to track now.
-		if fu := followUps(content, headings); !f.rule.Imported && len(fu) > 0 {
-			res.FollowUps = append(res.FollowUps, docFollowUps{Name: f.name, Sections: fu})
 		}
 	}
 	return nil
+}
+
+func candidateComponents(project string, candidates []docCandidate) [][]docCandidate {
+	n := len(candidates)
+	if n == 0 {
+		return nil
+	}
+	idxByName := make(map[string]int, n)
+	for i, c := range candidates {
+		idxByName[c.file.name] = i
+	}
+	parent := make([]int, n)
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(x int) int {
+		if parent[x] != x {
+			parent[x] = find(parent[x])
+		}
+		return parent[x]
+	}
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			if ra < rb {
+				parent[rb] = ra
+			} else {
+				parent[ra] = rb
+			}
+		}
+	}
+	for i, c := range candidates {
+		fm, ok := model.ParseFrontMatter(c.content)
+		if !ok {
+			continue
+		}
+		for _, list := range [][]string{fm.Supersedes, fm.Related} {
+			for _, raw := range list {
+				target := raw
+				if rest, ok := strings.CutPrefix(raw, project+"/"); ok {
+					target = rest
+				}
+				if j, ok := idxByName[target]; ok && j != i {
+					union(i, j)
+				}
+			}
+		}
+	}
+	groups := make(map[int][]docCandidate)
+	var roots []int
+	for i, c := range candidates {
+		r := find(i)
+		if _, seen := groups[r]; !seen {
+			roots = append(roots, r)
+		}
+		groups[r] = append(groups[r], c)
+	}
+	sort.Ints(roots)
+	out := make([][]docCandidate, len(roots))
+	for i, r := range roots {
+		out[i] = groups[r]
+	}
+	return out
+}
+
+func syncOneCandidate(ctx context.Context, c *client.Client, project string, cand docCandidate, server map[string]string, headings []string, res *docSyncResult) error {
+	f := cand.file
+	args := f.rule.putArgs()
+	args.Content = cand.content
+	resp, err := c.PutDocumentWith(ctx, project, f.name, args)
+	if err != nil {
+		var apiErr *client.Error
+		if !errors.As(err, &apiErr) {
+			return err
+		}
+		switch {
+		case apiErr.Status == http.StatusConflict && hasReason(apiErr.Details, "immutable"):
+			res.Conflicts = append(res.Conflicts, docConflict{Name: f.name, LocalSHA256: cand.sha, ServerSHA256: immutableSHA(apiErr.Details)})
+			return nil
+		case apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusRequestEntityTooLarge ||
+			(apiErr.Status == http.StatusConflict && (hasReason(apiErr.Details, "metadata_differs") || apiErr.Code == "cycle")):
+			res.Rejected = append(res.Rejected, docRejected{Name: f.name, Reason: apiReason(apiErr)})
+			return nil
+		}
+		return err
+	}
+	var warnings []model.DocumentWarning
+	if put, err := decode[model.DocumentResult](resp); err == nil {
+		warnings = put.Warnings
+	}
+	recordUploadedCandidate(cand, warnings, server, headings, res)
+	return nil
+}
+
+func syncBatchCandidates(ctx context.Context, c *client.Client, project string, comp []docCandidate, server map[string]string, headings []string, res *docSyncResult) error {
+	items := make([]client.DocumentBatchItem, len(comp))
+	for i, cand := range comp {
+		args := cand.file.rule.putArgs()
+		args.Content = cand.content
+		items[i] = client.DocumentBatchItem{Name: cand.file.name, DocumentPut: args}
+	}
+	resp, err := c.PutDocumentsBatch(ctx, project, items)
+	if err != nil {
+		var apiErr *client.Error
+		if !errors.As(err, &apiErr) {
+			return err
+		}
+		switch {
+		case apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusMethodNotAllowed:
+			for _, cand := range comp {
+				if err := syncOneCandidate(ctx, c, project, cand, server, headings, res); err != nil {
+					return err
+				}
+			}
+			return nil
+		case apiErr.Status == http.StatusConflict && hasReason(apiErr.Details, "immutable"):
+			idx := batchDetailIndex(apiErr.Details)
+			if idx >= 0 && idx < len(comp) {
+				res.Conflicts = append(res.Conflicts, docConflict{
+					Name:         comp[idx].file.name,
+					LocalSHA256:  comp[idx].sha,
+					ServerSHA256: immutableSHA(apiErr.Details),
+				})
+				reason := fmt.Sprintf("같은 묶음의 문서 %s 충돌로 일괄 등록이 취소되었습니다.", comp[idx].file.name)
+				for i, cand := range comp {
+					if i != idx {
+						res.Rejected = append(res.Rejected, docRejected{Name: cand.file.name, Reason: reason})
+					}
+				}
+				return nil
+			}
+			for _, cand := range comp {
+				res.Conflicts = append(res.Conflicts, docConflict{Name: cand.file.name, LocalSHA256: cand.sha, ServerSHA256: immutableSHA(apiErr.Details)})
+			}
+			return nil
+		case apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusRequestEntityTooLarge ||
+			(apiErr.Status == http.StatusConflict && (hasReason(apiErr.Details, "metadata_differs") || apiErr.Code == "cycle")):
+			reason := apiReason(apiErr)
+			for _, cand := range comp {
+				res.Rejected = append(res.Rejected, docRejected{Name: cand.file.name, Reason: reason})
+			}
+			return nil
+		}
+		return err
+	}
+	batch, err := decode[struct {
+		Documents []model.DocumentResult `json:"documents"`
+	}](resp)
+	if err != nil {
+		return err
+	}
+	for i, cand := range comp {
+		var warnings []model.DocumentWarning
+		if i < len(batch.Documents) {
+			warnings = batch.Documents[i].Warnings
+		}
+		recordUploadedCandidate(cand, warnings, server, headings, res)
+	}
+	return nil
+}
+
+func recordUploadedCandidate(cand docCandidate, warnings []model.DocumentWarning, server map[string]string, headings []string, res *docSyncResult) {
+	f := cand.file
+	server[f.name] = cand.sha
+	res.Uploaded = append(res.Uploaded, f.name)
+	for _, w := range warnings {
+		res.Warnings = append(res.Warnings, docWarning{Name: f.name, Field: w.Field, Message: w.Message})
+	}
+	// The open items of an imported document are history, not work to track now.
+	if fu := followUps(cand.content, headings); !f.rule.Imported && len(fu) > 0 {
+		res.FollowUps = append(res.FollowUps, docFollowUps{Name: f.name, Sections: fu})
+	}
+}
+
+func batchDetailIndex(details []client.Detail) int {
+	for _, d := range details {
+		rest, ok := strings.CutPrefix(d.Field, "documents[")
+		if !ok {
+			continue
+		}
+		end := strings.IndexByte(rest, ']')
+		if end <= 0 {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(rest[:end], "%d", &n); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return -1
 }
 
 // immutableSHA is the hash of the stored content that a refusal reports.
@@ -344,7 +531,10 @@ var docSyncCmd = &command{
 커밋했고 그 뒤 바뀌지 않은 파일만 올리며, 나머지는 skipped 로 알립니다. 1MB 를 넘는 파일과 규칙이 같은
 이름을 만드는 파일도 skipped 입니다. --root 가 git 저장소가 아니면 아무것도 올리지 않고 실패합니다.
 
-- 서버에 없는 파일은 올립니다(uploaded).
+- 서버에 없는 파일은 올립니다(uploaded). 프런트매터의 related, supersedes 로 서로를 가리키는 파일 묶음은
+  POST /v1/projects/{key}/documents:batch 로 한 번에 올라가서 상호 참조가 통과합니다. 일괄 등록이 한 파일의
+  거절로 실패하면 그 묶음의 파일이 모두 rejected 나 conflicts 로 기록됩니다. 서버가 일괄 등록을 모르면
+  (404/405) 단건으로 올립니다.
 - 서버에 같은 내용이 있으면 그대로 둡니다(unchanged). 서버에 있는 문서의 메타데이터가 규칙과 달라도 고치지
   않습니다. 아카이브와 관계는 agb doc archive, agb doc link 로 고칩니다.
 - 서버의 같은 이름 문서와 내용(sha256)이 다르면 올리지 않고 conflicts 로 알립니다. 덮어쓰지 않습니다.

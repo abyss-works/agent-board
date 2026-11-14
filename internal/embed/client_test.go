@@ -125,4 +125,11 @@ func TestClientEmbedSendsTheProviderObject(t *testing.T) {
 	if string(body) != `{"input":["a"],"model":"m","provider":`+provider+`}` {
 		t.Errorf("body with a provider = %s", body)
 	}
+
+	if _, _, err := NewClient(srv.URL, testKey, "m", json.RawMessage(`{}`)).Embed(context.Background(), []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"input":["a"],"model":"m","provider":{}}` {
+		t.Errorf("body with an empty provider object = %s", body)
+	}
 }
