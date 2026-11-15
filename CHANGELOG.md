@@ -4,8 +4,30 @@
 
 ## Unreleased
 
+### 서버와 API
+
+- 기록 문서 일괄 등록 `POST /v1/projects/{key}/documents:batch`를 더한다. 본문 `{"documents": [...]}`의 항목은 `name`과 단건 등록과 같은 필드를 가지며, 1~100건을 한 트랜잭션에서 처리한다. 새 문서를 모두 먼저 넣은 뒤 관계를 풀기 때문에 서로를 `related`나 `supersedes`로 가리키는 문서를 한 번에 올릴 수 있다. 같은 이름에 다른 내용(`immutable`)이나 다른 메타데이터(`metadata_differs`)는 오류이며 오류 상세에 배치 안의 항목 위치가 들어간다. 요청 본문 상한은 문서 상한의 16배다.
+- 메시지 제목에 제어 문자가 있으면 등록을 거절한다(422). 이미 저장된 메시지의 조회는 그대로다.
+- 환경 변수 검증 오류가 입력 값을 120자까지만 보인다. 넘으면 `...(truncated)`를 붙인다.
+
+### 운영자 확인 사항
+
+- 이관 도입 이전 판의 CLI로 설정 파일(`config.json`)을 쓰면 `contexts`와 `current_context`가 유실될 수 있다. 같은 설정 파일을 쓰는 모든 기기의 CLI를 이 판 이상으로 갱신한 뒤에 `agb config set-context`로 접속 대상을 더한다.
+
 ### CLI
 
+- CLI 설정 파일에 이름 붙인 접속 대상 `contexts`와 현재 대상 `current_context`를 더한다. 전역 옵션 `--context <이름>`과 환경변수 `AGB_CONTEXT`가 설정 파일의 `current_context`보다 앞선다. `agb config set-context <이름> [--url <주소>] [--actor <ID>] [--use]`, `use-context`, `list-contexts`, `current-context`, `delete-context`, `set-url`, `set-actor`가 대상을 관리한다. 로그인, 로그아웃, 토큰 저장, 훅 설정 검사와 기존 `agb config` 명령은 선택된 대상에 동작한다.
+- 옛 설정 파일의 최상위 `url`, `token`, `tokens`, `actor`를 처음 읽을 때 `contexts.default`로 자동 이관하고, 원본을 `config.json.bak`으로 남긴다. 이미 있는 `.bak`은 덮어쓰지 않는다.
+  - `contexts.default`에 같은 필드의 서로 다른 비어 있지 않은 값이 있으면 어느 값을 쓸지 정하지 않고 오류로 거부한다. 파일은 바뀌지 않으며 값을 쓰기 전에도 같은 검사를 한다. 행위자별 토큰은 행위자마다 같은 규칙이다. 한쪽이 비어 있으면 비어 있지 않은 값으로 채운다.
+  - 알 수 없는 키는 지우지 않고 그대로 보존한다.
+  - 이관 도입 이전 판의 CLI로 이 설정 파일을 쓰면 `contexts` 정보가 유실될 수 있으므로 CLI를 갱신해야 한다(운영자 확인 사항).
+- 토큰은 `local`이 아닌 대상에서 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고른다. `local` 대상은 행위자별 토큰, 로컬 시드 토큰, 설정 파일의 공용 토큰, `AGB_TOKEN` 순이다.
+- `agb serve --local [--addr <주소>] [--data-dir <경로>]`을 더한다. 이 기기만 쓰는 로컬 서버로, `127.0.0.1`의 주소로만 받고 `AGB_TOKEN`과 `AGB_ACTORS`를 요구하지 않는다. 첫 실행 때 데이터 폴더의 `local-auth.json`에 공용 토큰과 에이전트 토큰(`claude`, `codex`, `gemini`)을 만들고 재시작해도 유지한다. 파일이 손상되었으면 거부한다. CLI의 `local` 접속 대상은 등록이 없어도 `127.0.0.1:8420`으로 해석되며 설정 파일에 토큰이 없으면 이 시드 토큰을 쓰고, 행위자를 주지 않으면 `owner`로 본다.
+- `agb doc sync`가 서로 `related`나 `supersedes`로 참조하는 문서를 한 묶음으로 일괄 등록 API에 보낸다. 서버가 일괄 등록을 지원하지 않거나(404, 405) 묶음이 충돌하면 그 묶음은 전처럼 문서마다 올린다.
+- `agb hook` 명령이 표준 입력을 읽을 때 1초 안에 끝나지 않거나 1MiB를 넘으면 읽기를 멈춘다. `.agb.json`을 찾을 때 불필요한 `git` 실행을 하지 않는다.
+- `agb hook pre-commit`이 셸 명령의 구분자와 산술 확장을 따라가며 커밋 명령을 판정하고, `GIT_DIR`과 `GIT_WORK_TREE`로 커밋이 실행될 폴더를 정한다.
+- `agb setup claude`가 `claude` 실행마다 60초 제한을 둔다. `~/.claude/skills`의 `tool-agb`가 링크 폴더이면 설치를 건너뛰고 그 사실을 알린다. 도움말의 제거 절차에 `claude plugin marketplace remove`를 더한다.
+- `agb find` 도움말이 검색어 임베딩을 5초 안에 한 번만 시도하고 다시 시도하지 않는다고 적는다. 동작은 바뀌지 않는다.
 - `agb hook pre-commit [--tool <이름>]`을 더한다. 도구 호출 전 훅이 부르는 명령이다. 표준 입력의 훅 JSON이 Bash 도구의 `git commit`이면 그 저장소의 기록 문서를 `agb doc check`와 같은 검사로 확인하고, 문제가 있으면 도구 호출을 거절하는 JSON(`hookSpecificOutput.permissionDecision`이 `deny`)을 표준 출력에 적는다. 사유에는 문제가 있는 파일과 `agb doc check`의 문제 문구가 들어가고 4,000자를 넘지 않는다. 사유의 첫 줄에 검사한 저장소의 경로가 들어간다.
   - 커밋으로 보는 명령은 명령 줄을 `&&`, `||`, `;`, `|`, `&`, 줄바꿈으로 나눈 명령 가운데 `git`으로 시작하고 하위 명령이 `commit`인 것이다. 앞의 환경변수 지정과 `git`의 `-C <경로>`, `-c <설정>`은 건너뛴다. 따옴표 안의 글, here-document의 본문, `#` 주석은 명령으로 보지 않는다. `git commit --dry-run`, `--help`, `-h`와 따옴표나 here-document가 닫히지 않은 명령 줄은 커밋으로 보지 않는다.
   - 저장소는 훅 JSON의 `cwd`에서, 명령 줄 첫 명령의 `cd <경로>`와 `git -C <경로>`를 따라 정하고, 그 저장소 최상위에 `.agb.json`이 있을 때만 검사한다. 커밋이 실행될 폴더를 정할 수 없으면 검사하지 않는다. 다른 자리나 다른 형태의 `cd`, `pushd`, `popd`가 커밋 앞에 있거나 커밋이 괄호나 중괄호 묶음의 안이나 뒤에 있을 때이고, `-C`가 절대 경로이면 그 경로로 정한다. `~`로 시작하거나 `$`가 든 경로와, Windows에서 `/c/...`처럼 `/`로 시작하는 경로는 풀지 않으므로 검사하지 않는다.
