@@ -8,7 +8,7 @@
 |---|---|---|
 | 이미지 | `Dockerfile` | `web/`을 빌드해 Go 바이너리 `agb`와 함께 담는다. 이미지에는 `AGB_WEB_DIR=/web`이 설정되어 있어, 서버가 `/v1` 밖의 경로를 웹 화면으로 서빙한다. |
 | 운영 Compose | `deploy/compose.prod.yaml` | `ghcr.io/abyss-works/agent-board:<AGB_IMAGE_TAG>`를 빌드 없이 실행한다. 포트는 `AGB_BIND` 주소에만 묶고, 데이터는 볼륨 `agb-data`에 둔다. |
-| 클러스터 매니페스트 | `deploy/k8s/` | 인그레스가 `<서비스 도메인>`(`deploy/k8s/ingress.yaml`과 `certificate.yaml`에 적힌 호스트와 같은 값) 요청을 서버의 컨테이너 포트로 보내게 한다. 셀렉터 없는 Service, Tailscale 주소를 가리키는 EndpointSlice, Certificate, Ingress로 이루어진다. |
+| 클러스터 매니페스트 | `deploy/k8s/` | `kustomization.yaml`이 Namespace `agb`, RoleBinding `traefik-secret-reader`, Service `agb-host`, EndpointSlice `agb-host-tailscale`, Certificate `agb-tls`, Ingress `agb`를 모은다. 인그레스가 `<서비스 도메인>`(`deploy/k8s/ingress.yaml`과 `certificate.yaml`에 적힌 호스트와 같은 값) 요청을 서버의 컨테이너 포트로 보내게 한다. Service는 셀렉터 없이 EndpointSlice에 적힌 Tailscale 주소로 연결하고, RoleBinding은 네임스페이스 `agb`에서 ServiceAccount `traefik`(`traefik` 네임스페이스)에 ClusterRole `traefik-secret-reader`를 부여한다. |
 | 워크플로 | `.github/workflows/deploy.yml` | `main` 푸시와 수동 실행에서 테스트, 이미지 빌드와 GHCR 업로드, 서버 배포를 차례로 실행한다. 이미지 빌드는 arm64 러너에서, 배포는 서버의 셀프 호스티드 러너에서 돈다. |
 
 ## 요청 경로
@@ -42,6 +42,8 @@ EndpointSlice의 주소와 포트는 환경 파일의 `AGB_BIND`, `AGB_PORT`와 
 ### 클러스터
 
 - cert-manager와 ClusterIssuer `cloudflare-dns01`, `nginx` 인그레스 클래스가 있어야 한다.
+- RoleBinding `traefik-secret-reader`가 가리키는 ServiceAccount `traefik`(네임스페이스 `traefik`)와 ClusterRole `traefik-secret-reader`가 있어야 한다. 둘은 이 저장소의 매니페스트에 없다.
+- Namespace `agb`는 `deploy/k8s/namespace.yaml`이 만들므로 미리 만들 필요가 없다.
 - `<서비스 도메인>`(`deploy/k8s/ingress.yaml`과 `certificate.yaml`에 적힌 호스트)의 DNS가 인그레스의 외부 주소를 가리켜야 한다.
 
 ## GitHub에 미리 해 둘 것
