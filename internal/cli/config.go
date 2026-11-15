@@ -129,7 +129,7 @@ func (c *Config) mergeLegacy() (migrated bool, err error) {
 		return false, err
 	}
 	for actor, tok := range c.Tokens {
-		if existing, ok := cc.Tokens[actor]; ok && existing != tok && tok != "" {
+		if existing, ok := cc.Tokens[actor]; ok && existing != "" && existing != tok && tok != "" {
 			return false, fmt.Errorf("설정 파일의 최상위 tokens.%s 값과 contexts.%s 의 tokens.%s 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요", actor, defaultContextName, actor)
 		}
 	}
