@@ -16,14 +16,14 @@
 
 ### CLI
 
-- CLI 설정 파일에 이름 붙인 접속 대상 `contexts`와 현재 대상 `current_context`를 더한다. 전역 옵션 `--context <이름>`과 환경변수 `AGB_CONTEXT`가 설정 파일의 `current_context`보다 앞선다. `agb config set-context <이름> [--url <주소>] [--actor <ID>] [--use]`, `use-context`, `list-contexts`, `current-context`, `delete-context`, `set-url`, `set-actor`가 대상을 관리한다. 로그인, 로그아웃, 토큰 저장, 훅 설정 검사와 기존 `agb config` 명령은 선택된 대상에 동작한다.
+- CLI 설정 파일에 이름 붙인 접속 대상 `contexts`와 현재 대상 `current_context`를 더한다. 전역 옵션 `--context <이름>`과 환경변수 `AGB_CONTEXT`가 설정 파일의 `current_context`보다 앞선다. `agb config set-context <이름> [--url <주소>] [--actor <ID>] [--use]`, `use-context`, `list-contexts`, `current-context`, `delete-context`, `set-url`, `set-actor`가 대상을 관리한다. 로그인, 로그아웃, 토큰 저장과 기존 `agb config` 명령은 선택된 대상에 동작한다. `agb setup claude`가 훅이 쓸 토큰과 주소를 설정 파일에서 확인할 때는 `--context`와 `AGB_CONTEXT`를 보지 않고 설정 파일의 `current_context` 대상만 본다.
 - 옛 설정 파일의 최상위 `url`, `token`, `tokens`, `actor`를 처음 읽을 때 `contexts.default`로 자동 이관하고, 원본을 `config.json.bak`으로 남긴다. 이미 있는 `.bak`은 덮어쓰지 않는다.
   - `contexts.default`에 같은 필드의 서로 다른 비어 있지 않은 값이 있으면 어느 값을 쓸지 정하지 않고 오류로 거부한다. 파일은 바뀌지 않으며 값을 쓰기 전에도 같은 검사를 한다. 행위자별 토큰은 행위자마다 같은 규칙이다. 한쪽이 비어 있으면 비어 있지 않은 값으로 채운다.
   - 알 수 없는 키는 지우지 않고 그대로 보존한다.
   - 이관 도입 이전 판의 CLI로 이 설정 파일을 쓰면 `contexts` 정보가 유실될 수 있으므로 CLI를 갱신해야 한다(운영자 확인 사항).
 - 토큰은 `local`이 아닌 대상에서 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고른다. `local` 대상은 행위자별 토큰, 로컬 시드 토큰, 설정 파일의 공용 토큰, `AGB_TOKEN` 순이다.
 - `agb serve --local [--addr <주소>] [--data-dir <경로>]`을 더한다. 이 기기만 쓰는 로컬 서버로, `127.0.0.1`의 주소로만 받고 `AGB_TOKEN`과 `AGB_ACTORS`를 요구하지 않는다. 첫 실행 때 데이터 폴더의 `local-auth.json`에 공용 토큰과 에이전트 토큰(`claude`, `codex`, `gemini`)을 만들고 재시작해도 유지한다. 파일이 손상되었으면 거부한다. CLI의 `local` 접속 대상은 등록이 없어도 `127.0.0.1:8420`으로 해석되며 설정 파일에 토큰이 없으면 이 시드 토큰을 쓰고, 행위자를 주지 않으면 `owner`로 본다.
-- `agb doc sync`가 서로 `related`나 `supersedes`로 참조하는 문서를 한 묶음으로 일괄 등록 API에 보낸다. 서버가 일괄 등록을 지원하지 않거나(404, 405) 묶음이 충돌하면 그 묶음은 전처럼 문서마다 올린다.
+- `agb doc sync`가 서로 `related`나 `supersedes`로 참조하는 문서를 한 묶음으로 일괄 등록 API에 보낸다. 일괄 등록을 모르는 서버(404, 405)에서는 그 묶음을 문서마다 올리는 방식으로 넘어간다. 일괄 등록을 지원하는 서버에서 묶음의 한 문서가 조건에 맞지 않으면 묶음 전체가 취소되고 그 묶음의 문서는 올라가지 않는다. 같은 이름의 다른 내용(`immutable`) 충돌은 충돌한 문서를 충돌로 남기고 나머지 문서를 `rejected`로 남기며, 다른 메타데이터(`metadata_differs`), 순환(`cycle`), 값 위반(422), 본문 초과(413)는 묶음의 모든 문서를 `rejected`로 남긴다. 그 밖의 오류는 그대로 실패한다.
 - `agb hook` 명령이 표준 입력을 읽을 때 1초 안에 끝나지 않거나 1MiB를 넘으면 읽기를 멈춘다. `.agb.json`을 찾을 때 불필요한 `git` 실행을 하지 않는다.
 - `agb hook pre-commit`이 셸 명령의 구분자와 산술 확장을 따라가며 커밋 명령을 판정하고, `GIT_DIR`과 `GIT_WORK_TREE`로 커밋이 실행될 폴더를 정한다.
 - `agb setup claude`가 `claude` 실행마다 60초 제한을 둔다. `~/.claude/skills`의 `tool-agb`가 링크 폴더이면 설치를 건너뛰고 그 사실을 알린다. 도움말의 제거 절차에 `claude plugin marketplace remove`를 더한다.
