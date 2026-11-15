@@ -180,6 +180,31 @@ func TestMixedConfigMigration(t *testing.T) {
 	}
 }
 
+func TestMixedConfigEmptyActorTokens(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"empty context", `{"tokens":{"a":"legacy"},"contexts":{"default":{"tokens":{"a":""}}}}`, "legacy"},
+		{"empty legacy", `{"tokens":{"a":""},"contexts":{"default":{"tokens":{"a":"context"}}}}`, "context"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Contexts["default"].Tokens["a"]; got != tc.want {
+				t.Errorf("token = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMixedConfigConflictDoesNotWrite(t *testing.T) {
 	for _, raw := range []string{
 		`{"url":"http://legacy","contexts":{"default":{"url":"http://other"}}}`,
