@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agb
+  namespace: agb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agb
+  template:
+    metadata:
+      labels:
+        app: agb
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: oci-node
+      containers:
+        - name: agb
+          # image tag is set by deploy.yml at release time; the Argo CD Application must be
+          # created only after main has a git-<sha> tag commit, or the first sync pulls git-PLACEHOLDER
+          image: ghcr.io/abyss-works/agent-board:git-PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          # Secret agb-env에 넣을 키. Secret은 이 매니페스트가 만들지 않는다.
+          #   AGB_TOKEN
+          #   AGB_ACTORS
+          #   AGB_BACKUP_BUCKET
+          #   AGB_BACKUP_ENDPOINT
+          #   AGB_BACKUP_ACCESS_KEY_ID
+          #   AGB_BACKUP_SECRET_ACCESS_KEY
+          #   AGB_EMBEDDING_API_KEY
+          #   AGB_EMBEDDING_URL
+          #   AGB_EMBEDDING_MODEL
+          #   AGB_EMBEDDING_QUERY_PREFIX
+          #   AGB_EMBEDDING_INTERVAL
+          #   AGB_EMBEDDING_PROVIDER
+          envFrom:
+            - secretRef:
+                name: agb-env
+          env:
+            - name: AGB_ADDR
+              value: 0.0.0.0:3000
+            - name: AGB_DATA_DIR
+              value: /data
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /v1/health
+              port: 3000
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 3000
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 3000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agb-data

@@ -2,6 +2,13 @@ name: deploy
 
 # Runs only for pushes to main and manual runs. Never add a pull_request or
 # pull_request_target trigger: the deploy job runs on a self-hosted runner.
+#
+# Deployment is GitOps: the workflow never applies manifests to the cluster.
+# Argo CD watches k8s/prod on main, so the deploy job commits the new image tag
+# to k8s/prod/deployment.yaml and pushes it; Argo CD then rolls the pod out.
+# The push uses GITHUB_TOKEN, and pushes made with that token do not start
+# another workflow run. The deploy job also skips bot commits and [skip ci]
+# commits as a second guard against triggering itself.
 on:
   push:
     branches: [main]
@@ -95,52 +102,57 @@ jobs:
         run: docker logout ghcr.io
 
   deploy:
-    # A manual run from another branch must not reach production.
-    if: github.ref == 'refs/heads/main'
+    # A manual run from another branch must not reach production. Bot commits
+    # and [skip ci] commits are the manifest tag commits, so skip them here too.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      !(github.event.head_commit.author.username == 'github-actions[bot]' ||
+        contains(github.event.head_commit.message, '[skip ci]'))
     needs: image
     runs-on: [self-hosted, ab]
     environment: production
     permissions:
-      contents: read
-      packages: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Log in to GHCR
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Pull and start the new image
+      - name: Point the manifest at the new image
         run: |
-          export AGB_IMAGE_TAG="git-${GITHUB_SHA::7}"
-          compose=(docker compose -f deploy/compose.prod.yaml --env-file /home/ubuntu/agb/.env)
-          "${compose[@]}" pull
-          "${compose[@]}" up -d
+          tag="git-${GITHUB_SHA::7}"
+          manifest="k8s/prod/deployment.yaml"
+          sed -i "s|^\( *\)image: ghcr.io/abyss-works/agent-board:.*$|\1image: ghcr.io/abyss-works/agent-board:${tag}|" "$manifest"
+          if git diff --quiet -- "$manifest"; then
+            echo "manifest already points at ${tag}; nothing to commit"
+            exit 0
+          fi
+          # Push as the bot so GITHUB_TOKEN can write to the protected branch.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$manifest"
+          git commit -m "chore(deploy): agb 이미지 태그를 ${tag}로 올린다 [skip ci]"
+          if ! git push origin HEAD:main; then
+            echo "::error::failed to push the manifest commit to main; main branch protection must allow pushes from github-actions[bot]" >&2
+            exit 1
+          fi
       - name: Check health
         run: |
           tag="git-${GITHUB_SHA::7}"
           body="$(mktemp)"
           trap 'rm -f "$body"' EXIT
 
-          # Waits up to 60 seconds for a 200 whose version names this build.
+          # Argo CD syncs the manifest commit, so allow several minutes for the new pod.
           check() {
             local url="$1" code=""
-            for _ in $(seq 1 30); do
+            for _ in $(seq 1 60); do
               code="$(curl -sS --max-time 5 -o "$body" -w '%{http_code}' "$url" 2>/dev/null || true)"
               if [ "$code" = 200 ] && grep -Eq "\"version\":\"[^\"]*${tag}" "$body"; then
                 echo "ok: $url"
                 cat "$body"
                 return 0
               fi
-              sleep 2
+              sleep 5
             done
             echo "health check failed: $url (last status: ${code:-none}, expected version containing ${tag})" >&2
             return 1
           }
 
-          check "http://100.104.90.109:8420/v1/health"
           check "https://agb.abyssworks.dev/v1/health"
-      - name: Log out of GHCR
-        if: always()
-        run: docker logout ghcr.io

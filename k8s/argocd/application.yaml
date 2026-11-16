@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agb
+  namespace: argocd
+spec:
+  project: agent-board
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agb
+  source:
+    repoURL: https://github.com/abyss-works/agent-board
+    path: k8s/prod
+    targetRevision: main
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -8,8 +8,8 @@ services:
         VERSION: ${AGB_VERSION:-dev}
     restart: unless-stopped
     ports:
-      # Bind to a single host address (loopback for local use, the address of the network interface the clients reach on a server).
-      - "${AGB_BIND:-127.0.0.1}:${AGB_PORT:-8420}:8420"
+      # Transitional fallback for local runs. Bind to all host addresses by default; narrow it with AGB_BIND.
+      - "${AGB_BIND:-0.0.0.0}:${AGB_PORT:-3000}:3000"
     environment:
       AGB_TOKEN: ${AGB_TOKEN:?AGB_TOKEN is required}
       AGB_ACTORS: ${AGB_ACTORS:?AGB_ACTORS is required}

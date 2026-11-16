@@ -22,10 +22,10 @@ COPY --from=build /out/agb /agb
 COPY --from=web /src/web/dist /web
 # A named volume copies this directory's ownership on first use, so the nonroot user can write to it.
 COPY --from=build --chown=65532:65532 /out/data /data
-ENV AGB_ADDR=0.0.0.0:8420 \
+ENV AGB_ADDR=0.0.0.0:3000 \
     AGB_DATA_DIR=/data \
     AGB_WEB_DIR=/web
-EXPOSE 8420
+EXPOSE 3000
 VOLUME ["/data"]
 USER nonroot
 ENTRYPOINT ["/agb", "serve"]
