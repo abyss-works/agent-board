@@ -13,7 +13,7 @@ import (
 
 var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*command{
 	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueAckCmd, issueUnackCmd, issueCommentCmd, issueActivityCmd,
-}}
+}, hints: map[string][]string{"comments": {"comment", "activity"}}}
 
 // issueFilterFlags registers the shared list filters.
 func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, milestones *stringList) {

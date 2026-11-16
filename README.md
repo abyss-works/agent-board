@@ -98,7 +98,7 @@ plugin/           Claude Code 플러그인. 훅 설정만 담고, 훅은 "agb ho
 .claude-plugin/   이 저장소를 Claude Code 마켓플레이스로 등록하게 하는 목록(marketplace.json)
 web/              React 19 + Vite + TanStack Query 웹 클라이언트
 e2e/              실행 중인 서버에 대고 도는 종단 테스트(빌드 태그 e2e)
-deploy/           운영용 compose 파일과 Kubernetes Ingress 구성
+deploy/           전환기 폴백 compose 파일. 운영 매니페스트는 k8s/prod에 있다
 ```
 
 - CLI는 서버와 HTTP로만 통신합니다.
@@ -161,6 +161,7 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
    - `서버에 닿지 않습니다`, `서버가 오류를 돌려주었습니다 (...)`, `서버의 응답을 읽지 못했습니다`, 설정 오류 문구: 그 상태로는 세션에 알림이 나오지 않습니다.
 
 - `claude` 실행 파일이 `PATH`에 없으면 아무것도 설치하지 않고 종료 코드 2로 끝납니다.
+- 릴리즈 브랜치(`main`)에 마켓플레이스 파일(`.claude-plugin/marketplace.json`)이 올라가기 전에는 첫 단계인 마켓플레이스 등록이 실패해 멈추므로 스킬도 설치되지 않습니다. 그때는 `agb skill install`을 대신 씁니다.
 - 다시 실행해도 됩니다. 이미 등록하고 설치한 것은 그대로 두고, 스킬은 CLI에 내장된 것으로 맞추고, 훅 행위자는 그 실행의 행위자로 바꿉니다.
 - 설치한 플러그인은 새 세션부터 동작합니다.
 
@@ -175,8 +176,20 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
   1. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 봅니다.
   2. `agb config show`의 `hook_actors`에 `claude=<ID>`가 있고 `actor_tokens`에 그 행위자가 있는지 봅니다.
   3. 플러그인이 옛 판이면 훅이 `--tool claude` 없이 불려 훅 행위자를 쓰지 않습니다. 아래 순서로 플러그인을 갱신합니다.
+- Bash 도구를 호출하기 전에 `agb hook pre-commit --tool claude`를 부릅니다. 이 명령은 호출이 `git commit`일 때만 그 저장소의 기록 문서를 검사하고, 문제가 있으면 커밋을 사유와 함께 막습니다.
+  - 커밋으로 보는 명령: 명령 줄을 `&&`, `||`, `;`, `|`, `&`, 줄바꿈으로 나눈 명령 가운데 `git`으로 시작하고 하위 명령이 `commit`인 것이 있을 때입니다. 앞의 환경변수 지정(`X=y`)과 `git`의 `-C <경로>`, `-c <설정>`은 건너뜁니다. 따옴표 안의 글, here-document의 본문, `#` 주석은 명령으로 보지 않습니다. `git commit --dry-run`, `git commit --help`, 다른 전역 옵션을 준 `git`, `$( )` 안의 명령, 스크립트 안의 커밋, 따옴표나 here-document가 닫히지 않은 명령 줄은 검사하지 않습니다.
+  - 검사하는 저장소: 커밋이 실행될 폴더가 속한 git 저장소입니다. 폴더는 세션의 작업 폴더(`cwd`)이고, 명령 줄의 첫 명령이 `cd <경로>`이면 그 경로, `git -C <경로>`를 쓰면 거기서 본 그 경로입니다. 그 저장소 최상위에 `.agb.json`이 있을 때만 검사합니다.
+  - 폴더를 정할 수 없으면 검사하지 않습니다. 첫 명령이 아닌 `cd`나 옵션을 준 `cd`, `pushd`, `popd`가 커밋 앞에 있을 때, 커밋이 괄호 `( )`나 중괄호 `{ }` 묶음의 안이나 뒤에 있을 때, `bash -c` 같은 중첩 셸 안에 있을 때입니다. `-C`에 절대 경로를 주면 그 경로로 정합니다. `~`로 시작하거나 `$`가 든 경로와, Windows에서 `/c/...`처럼 `/`로 시작하는 경로는 풀지 않으므로 검사하지 않습니다.
+  - 검사하는 파일: `agb doc check`에 파일을 주지 않았을 때와 같습니다. 새 파일이거나 `HEAD`에서 바뀐 파일 중 `.agb.json`의 `documents` 규칙이 맞고 가져온 문서가 아닌 `*.md`입니다. 스테이징하지 않은 파일도 포함하므로, 쓰다 만 기록 문서가 작업 폴더에 있으면 다른 파일의 커밋도 막힙니다.
+  - 막혔을 때: 사유의 첫 줄에 검사한 저장소의 경로가, 그 아래에 문제가 있는 파일과 문제가 `agb doc check`의 문구로 적힙니다(4,000자까지, 넘으면 남은 건수). 그 문제를 고친 뒤 다시 커밋합니다. 전체 결과는 그 저장소에서 `agb doc check`로 봅니다.
+  - 통과시키는 경우: Bash 도구의 `git commit`이 아니거나, git 저장소가 아니거나, `.agb.json`이 없거나 읽지 못하거나, 검사 자체가 실패하면 아무것도 출력하지 않습니다. 행위자나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주면 서버가 필요한 검사(`supersedes`, `related`, `issue`의 대상 확인)만 건너뛰고, 파일만으로 찾은 문제가 있으면 막습니다. `agb`가 `PATH`에 없으면 훅이 실행되지 않고 커밋은 그대로 진행됩니다.
+  - 이 훅은 파일을 고치지 않고 서버에 쓰지 않습니다. 사람이 터미널에서 하는 커밋과 Bash 도구가 아닌 도구의 커밋은 검사하지 않습니다.
 
-갱신은 CLI를 먼저, 플러그인을 나중에 합니다. 새 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서입니다. `hook` 명령을 모르는 옛 CLI에서는 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보입니다. 세션 시작은 막지 않습니다.
+갱신은 CLI를 먼저, 플러그인을 나중에 합니다. 새 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서입니다.
+
+- `hook` 명령을 모르는 옛 CLI에서는 세션 시작 훅이 사용법 오류로 끝나 알림이 나오지 않고, 세션에는 훅 오류 알림만 보입니다. 세션 시작은 막지 않습니다.
+- 이 판부터의 CLI는 모르는 `agb hook <하위 명령>`을 아무것도 출력하지 않고 종료 코드 0으로 끝냅니다. 플러그인이 CLI보다 새로워 CLI에 없는 훅을 불러도 세션과 도구 호출을 막지 않습니다. 그 훅이 하는 일만 빠집니다.
+- v0.14.1 이하의 CLI(v0.14.0과 v0.14.1, `hook` 명령이 없는 그 전 버전)는 그렇지 않습니다. 이 CLI에 커밋 전 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막힙니다. 이 버전을 쓰는 기기는 CLI를 먼저 갱신합니다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리하기 때문입니다. 이렇게 됐으면 터미널에서 CLI를 갱신하거나, 갱신할 때까지 `claude plugin disable agb@agent-board`로 플러그인을 끕니다.
 
 ```bash
 go install -trimpath -ldflags "-X main.version=<버전>" github.com/wsk0715/agent-board/cmd/agb@main   # 1. CLI
@@ -209,20 +222,26 @@ AGB_WEB_DIR=web/dist ./agb serve
 
 기본 주소는 `127.0.0.1:8420`, 기본 데이터 폴더는 `./data`입니다. 로그는 표준 오류에 JSON 한 줄씩 남습니다. 웹 클라이언트는 서버에 선언된 사용자 행위자(`kind=user`)를 씁니다. 웹을 쓰려면 사용자 행위자를 하나 이상 선언합니다.
 
+### 로컬 서버
+
+`agb serve --local`은 이 기기만 쓰는 로컬 서버를 띄웁니다. `127.0.0.1` 외 주소로는 받지 않고 `AGB_TOKEN`, `AGB_ACTORS`를 묻지 않습니다. 기본 데이터 폴더는 OS 사용자 데이터 폴더(Windows `%LocalAppData%\agb`, macOS `~/Library/Application Support/agb`, Linux `$XDG_DATA_HOME/agb`)이고 `--data-dir`이나 `AGB_LOCAL_DATA_DIR`로 바꿀 수 있습니다.
+
+첫 실행 때 `<data-dir>/local-auth.json`에 랜덤 공용 토큰과 에이전트별 토큰(`claude`, `codex`, `gemini`)을 만듭니다. 재시작하면 같은 파일을 다시 읽어 토큰과 데이터가 그대로 유지됩니다. CLI의 `local` 접속 대상은 설정 파일에 토큰이 없어도 이 시드 파일을 읽어 바로 접속하며, 행위자를 주지 않으면 `owner`로 봅니다. `--actor claude` 등으로 에이전트 행위자를 주면 로그인 없이 그 행위자 토큰을 씁니다.
+
 ### Docker
 
 ```bash
 export AGB_TOKEN="$(openssl rand -hex 32)"
 export AGB_ACTORS=owner:user,claude:agent
 docker compose up -d --build
-curl http://127.0.0.1:8420/v1/health
+curl http://127.0.0.1:3000/v1/health
 ```
 
-응답에 `"status":"ok"`가 있으면 서버가 떠 있습니다. 웹 화면은 `http://127.0.0.1:8420/`에서 열립니다.
+응답에 `"status":"ok"`가 있으면 서버가 떠 있습니다. 웹 화면은 `http://127.0.0.1:3000/`에서 열립니다.
 
-- `Dockerfile`은 웹을 빌드한 뒤 Go 바이너리와 함께 distroless 이미지에 담습니다. 컨테이너 안에서는 `AGB_ADDR=0.0.0.0:8420`, `AGB_DATA_DIR=/data`, `AGB_WEB_DIR=/web`이 기본값입니다.
+- `Dockerfile`은 웹을 빌드한 뒤 Go 바이너리와 함께 distroless 이미지에 담습니다. 컨테이너 안에서는 `AGB_ADDR=0.0.0.0:3000`, `AGB_DATA_DIR=/data`, `AGB_WEB_DIR=/web`이 기본값입니다.
 - 이미지를 빌드할 때 `AGB_VERSION`을 지정하면 그 값이 `agb version`과 `/v1/health` 응답의 `version`이 됩니다. 기본값은 `dev`입니다.
-- `compose.yaml`은 호스트의 `AGB_BIND`(기본 `127.0.0.1`)와 `AGB_PORT`(기본 `8420`)에 포트를 열고, 데이터를 이름 있는 볼륨 `agb-data`에 둡니다.
+- `compose.yaml`은 호스트의 `AGB_BIND`(기본 `0.0.0.0`)와 `AGB_PORT`(기본 `3000`)에 포트를 열고, 데이터를 이름 있는 볼륨 `agb-data`에 둡니다.
 
 ### 서버 환경변수
 
@@ -242,7 +261,7 @@ curl http://127.0.0.1:8420/v1/health
 | `AGB_EMBEDDING_MODEL` | 의미 검색 시 | 임베딩 모델 이름 |
 | `AGB_EMBEDDING_QUERY_PREFIX` | | 검색어에만 앞에 붙이는 문자열. 값에 적은 `\n` 두 글자는 줄바꿈으로 읽음 |
 | `AGB_EMBEDDING_INTERVAL` | | 색인 주기. Go duration 형식, 기본 `1m` |
-| `AGB_EMBEDDING_PROVIDER` | | 임베딩 요청 본문의 `provider` 필드에 그대로 싣는 JSON 객체. 예: `{"order":["<공급자>"]}`. 비우면 필드를 보내지 않음 |
+| `AGB_EMBEDDING_PROVIDER` | | 임베딩 요청 본문의 `provider` 필드에 실어 보내는 JSON 객체. 동등한 JSON 객체로 다시 직렬화해 보내며 `{}`를 주면 `"provider":{}`가 실림. 예: `{"order":["<공급자>"]}`. 비우면 필드를 보내지 않음 |
 
 의미 검색의 유사도 하한은 특정 임베딩 모델에 맞춘 값입니다. 다른 모델을 쓰면 검색 결과의 범위가 달라질 수 있습니다. 검색 응답의 `semantic` 필드(`ok`, `disabled`, `failed`)로 의미 검색이 실제로 쓰였는지 알 수 있습니다.
 
@@ -257,8 +276,13 @@ CLI는 옵션, 환경변수, 설정 파일 순으로 값을 정합니다. 설정
 | `AGB_SESSION_ID` | `--session-id` | 세션 ID. 기본 `cli-YYYYMMDD` |
 | `AGB_CLIENT_HOST` | `--client-host` | 기기 이름. 기본 호스트 이름 |
 | `AGB_TOKEN` | (없음) | 공용 토큰. 토큰은 옵션으로 받지 않음 |
+| `AGB_CONTEXT` | `--context` | 접속 대상 이름. `local`은 `agb serve --local`의 내장 대상 |
 
-토큰은 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고릅니다.
+토큰은 설정 파일의 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고릅니다. `local` 대상은 그 앞에 `local-auth.json`의 시드 토큰을 쓰고 `AGB_TOKEN`을 마지막에 씁니다.
+
+이름 붙인 접속 대상을 만들고 고르려면 `agb config set-context <이름> --url <주소>`, `agb config use-context <이름>`, `agb config list-contexts`, `agb config current-context`, `agb config delete-context <이름>`을 씁니다. `--context`와 `AGB_CONTEXT`는 설정 파일의 `current_context`보다 우선합니다. `local`은 등록이 없어도 `127.0.0.1:8420`으로 해석되며, 설정 파일에 토큰이 없으면 `local-auth.json`의 시드 토큰을 자동으로 씁니다.
+
+옛 형식(최상위 `url`, `token`, `tokens`, `actor`)을 읽으면 그 값을 `contexts.default`로 옮기고 원본을 `config.json.bak`으로 남깁니다. `contexts.default`에 같은 필드의 다른 값이 이미 있으면 어느 값을 쓸지 정하지 않고 오류로 멈추며 원본 파일을 바꾸지 않습니다. 알 수 없는 추가 키는 그대로 보존합니다.
 
 ## 사용 흐름
 
@@ -335,7 +359,7 @@ agb stats
 | 주제 | `GET, POST /projects/{key}/topics`, `PATCH, DELETE /topics/{id}` |
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
 | 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
-| 기록 문서 | `GET /projects/{key}/documents`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
+| 기록 문서 | `GET /projects/{key}/documents`, `POST /projects/{key}/documents:batch`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
 | 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |
 | 로그인과 토큰 | `POST /device-authorizations`, `GET, PATCH /device-authorizations/{user_code}`(사용자 전용), `GET /tokens`(사용자 전용), `POST /tokens`, `DELETE /tokens/current`, `DELETE /tokens/{id}`(사용자 전용) |
@@ -384,9 +408,11 @@ pnpm dev         # 개발 서버
 
 1. Go 형식·vet·테스트와 웹 typecheck·lint·test·build를 실행합니다.
 2. `linux/arm64` 이미지를 빌드해 GHCR에 `git-<커밋 7자>`와 `main` 태그로 올립니다. 커밋 제목이 `vX.Y.Z`이면 그 값을 `release`로 넣습니다.
-3. self-hosted 러너에서 `deploy/compose.prod.yaml`로 새 이미지를 받아 띄우고, `/v1/health`의 `version`이 새 빌드인지 확인합니다.
+3. `k8s/prod/deployment.yaml`의 `image` 태그를 `git-<커밋 7자>`로 고쳐 `main`에 커밋하고 푸시합니다.
+4. Argo CD가 `main`의 `k8s/prod`를 sync해 새 이미지로 파드를 굴립니다.
+5. `/v1/health`의 `version`이 새 빌드인지 확인합니다.
 
-`deploy/k8s/`는 컨테이너가 도는 호스트를 Kubernetes 클러스터 밖의 엔드포인트(EndpointSlice)로 등록하고 Ingress와 TLS 인증서를 붙이는 구성입니다.
+`k8s/prod/`는 k3s 클러스터의 Deployment, Service, Ingress, TLS 인증서, PVC와 Argo CD Application을 모은 매니페스트입니다. Argo CD가 `main`의 이 경로를 감시하므로 워크플로는 클러스터에 직접 적용하지 않습니다.
 
 ## 관련 문서
 

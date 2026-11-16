@@ -80,4 +80,10 @@ func TestValidateMessage(t *testing.T) {
 			t.Errorf("ValidateMessage(%q) fields = %s, want %s", in, got, want)
 		}
 	}
+	for _, ctl := range []string{"줄\n바꿈", "캐리지\r리턴", "탭\t포함", "널\x00문자", "제어\x1f문자", "삭제\x7f문자", "다음줄\u0085문자"} {
+		err := ValidateMessage("", ctl, "", "")
+		if got := strings.Join(fieldsOf(err), ","); got != "title" {
+			t.Errorf("ValidateMessage(title=%q) fields = %q (%v), want title", ctl, got, err)
+		}
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeClaude stands for the claude executable: it records the argument lists
@@ -155,6 +156,37 @@ func TestSetupClaudeKeepsALinkedSkillInTheClaudeFolder(t *testing.T) {
 	if readFile(t, filepath.Join(other, "SKILL.md")) != "linked copy" || !installed(h.app.SkillsDir) {
 		t.Errorf("the link's target changed or the default folder lacks the skill")
 	}
+	wantSkip := "스킬: 링크 폴더여서 설치를 건너뜁니다 (" + target + ").\n"
+	if !strings.Contains(h.stdout.String(), wantSkip) {
+		t.Errorf("stdout lacks skip line %q:\n%s", wantSkip, h.stdout)
+	}
+}
+
+func TestSetupClaudeBoundsExternalClaudeCalls(t *testing.T) {
+	if setupClaudeTimeout != 60*time.Second {
+		t.Fatalf("setupClaudeTimeout = %v, want 60s", setupClaudeTimeout)
+	}
+	old := setupClaudeTimeout
+	setupClaudeTimeout = 40 * time.Millisecond
+	defer func() { setupClaudeTimeout = old }()
+
+	h, _ := newSetupHarness(t)
+	h.app.RunClaude = func(ctx context.Context, args ...string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	start := time.Now()
+	code := h.run("setup", "claude")
+	elapsed := time.Since(start)
+	if code != 1 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	if elapsed >= 2*time.Second {
+		t.Errorf("setup claude waited %v on hung claude", elapsed)
+	}
+	if installed(h.app.SkillsDir) || installed(h.app.ClaudeSkillsDir) {
+		t.Errorf("skill installed after timeout")
+	}
 }
 
 func TestSetupClaudeWithoutClaudeInstallsNothing(t *testing.T) {
@@ -219,7 +251,7 @@ func TestSetupUsage(t *testing.T) {
 	if code := h.run("setup", "claude", "--help"); code != 0 {
 		t.Errorf("setup claude --help: code=%d", code)
 	}
-	for _, want := range []string{"claude plugin marketplace add abyss-works/agent-board#main", "claude plugin install agb@agent-board", "~/.claude/skills", "--actor", "hook_actors", "훅 점검"} {
+	for _, want := range []string{"claude plugin marketplace add abyss-works/agent-board#main", "claude plugin install agb@agent-board", "claude plugin marketplace remove agent-board", "~/.claude/skills", "--actor", "hook_actors", "훅 점검"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("setup claude --help lacks %q:\n%s", want, h.stdout)
 		}
@@ -338,7 +370,10 @@ func TestSetupClaudeSavesTheHookActor(t *testing.T) {
 	h, f := newSetupHarness(t)
 	t.Chdir(t.TempDir())
 	before := Config{
-		URL: "http://127.0.0.1:1", Token: "shared-token-value", Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"},
+		CurrentContext: "default",
+		Contexts: map[string]ContextConfig{
+			"default": {URL: "http://127.0.0.1:1", Token: "shared-token-value", Tokens: map[string]string{"reviewer": "agb_token-of-reviewer"}},
+		},
 		SessionID: "keep", ClientHost: "desk2", HookActors: map[string]string{"another": "base"},
 	}
 	if err := saveConfig(h.app.ConfigPath, before); err != nil {
@@ -433,7 +468,12 @@ func TestSetupClaudeChecksTheHook(t *testing.T) {
 func TestSetupClaudeRefusesAnotherConfigFile(t *testing.T) {
 	h, f := newSetupHarness(t)
 	other := filepath.Join(t.TempDir(), "config.json")
-	full := Config{URL: "http://127.0.0.1:1", Tokens: map[string]string{"claude": "agb_file-token-of-claude"}}
+	full := Config{
+		CurrentContext: "default",
+		Contexts: map[string]ContextConfig{
+			"default": {URL: "http://127.0.0.1:1", Tokens: map[string]string{"claude": "agb_file-token-of-claude"}},
+		},
+	}
 	if err := saveConfig(other, full); err != nil {
 		t.Fatal(err)
 	}

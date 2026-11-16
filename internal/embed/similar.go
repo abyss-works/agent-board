@@ -11,7 +11,7 @@ const (
 	// similarPerDocument is how many nearest documents each document links to.
 	similarPerDocument = 3
 	// similarFloor is the lowest cosine similarity that still links two
-	// documents. Chosen on the records of four management repositories with
+	// documents. Chosen on a sample of project records with
 	// qwen/qwen3-embedding-8b; another model may need another floor.
 	similarFloor = 0.70
 )

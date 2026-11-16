@@ -3,10 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -237,15 +239,82 @@ func TestHookQueryTimeoutIsFiveSeconds(t *testing.T) {
 	}
 }
 
-func TestHookUsage(t *testing.T) {
-	h := newHarness(t, nil, false)
-	for _, args := range [][]string{{"hook"}, {"hook", "pre-commit"}, {"hook", "bogus"}} {
-		if code := h.run(args...); code != 2 || h.stderr.Len() == 0 {
-			t.Errorf("%v: code=%d stderr=%q", args, code, h.stderr)
+func TestHookSessionStartGivesUpOnAnUnclosedStdin(t *testing.T) {
+	if hookStdinTimeout != time.Second || hookStdinMax != 1<<20 {
+		t.Fatalf("hookStdinTimeout=%v hookStdinMax=%d", hookStdinTimeout, hookStdinMax)
+	}
+	old := hookStdinTimeout
+	hookStdinTimeout = 40 * time.Millisecond
+	defer func() { hookStdinTimeout = old }()
+
+	h, _ := newMsgHarness(t, false)
+	t.Chdir(hookRepo(t, "CLI"))
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	h.app.Stdin = pr
+	start := time.Now()
+	code := h.run("hook", "session-start")
+	elapsed := time.Since(start)
+	if code != 0 || h.stderr.Len() != 0 {
+		t.Fatalf("code=%d stderr=%q", code, h.stderr)
+	}
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("hook blocked on unclosed stdin for %v", elapsed)
+	}
+	if !strings.HasPrefix(h.stdout.String(), "확인하지 않은 메시지 2건 (프로젝트 CLI)\n") {
+		t.Errorf("stdout = %q, want fallback to working folder", h.stdout.String())
+	}
+
+	// Oversized input (> 1 MiB) stops at hookStdinMax without hanging on an unclosed pipe.
+	pr2, pw2 := io.Pipe()
+	defer pw2.Close()
+	go func() {
+		pw2.Write([]byte(`{"cwd":"` + strings.Repeat("a", hookStdinMax+4096)))
+	}()
+	in := readHookInput(pr2, time.Second)
+	if in != (hookStdin{}) {
+		t.Errorf("oversized truncated JSON gave %+v, want empty hookStdin", in)
+	}
+}
+
+func TestHookSessionStartDoesNotSpawnGitWithoutRepoConfig(t *testing.T) {
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "git-ran")
+	if runtime.GOOS == "windows" {
+		script := "@echo ran > \"" + marker + "\"\r\n@exit /b 1\r\n"
+		if err := os.WriteFile(filepath.Join(bin, "git.bat"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		script := "#!/bin/sh\necho ran > \"" + marker + "\"\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if code := h.run("hook", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "session-start") {
+	t.Setenv("PATH", bin)
+
+	plain := t.TempDir()
+	t.Chdir(plain)
+	h, _ := newMsgHarness(t, false)
+	if out := runHook(t, h, hookInput(t, plain)); out != "" {
+		t.Errorf("stdout = %q", out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("hook spawned git while looking for .agb.json")
+	}
+}
+
+func TestHookUsage(t *testing.T) {
+	h := newHarness(t, nil, false)
+	if code := h.run("hook"); code != 2 || h.stderr.Len() == 0 {
+		t.Errorf("hook: code=%d stderr=%q", code, h.stderr)
+	}
+	if code := h.run("hook", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "session-start") || !strings.Contains(h.stdout.String(), "pre-commit") {
 		t.Errorf("hook --help: code=%d out=%s", code, h.stdout)
+	}
+	if code := h.run("hook", "pre-commit", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "git commit") || h.stderr.Len() != 0 {
+		t.Errorf("hook pre-commit --help: code=%d out=%s", code, h.stdout)
 	}
 	if code := h.run("hook", "session-start", "--help"); code != 0 || !strings.Contains(h.stdout.String(), "cwd") {
 		t.Errorf("hook session-start --help: code=%d out=%s", code, h.stdout)
@@ -395,5 +464,31 @@ func TestConfigShowListsTheHookActors(t *testing.T) {
 	}
 	if code := h.run("config", "show", "--json"); code != 0 || !strings.Contains(h.stdout.String(), `"hook_actors":{"another":"base","claude":"reviewer"}`) {
 		t.Errorf("json: code=%d %s", code, h.stdout)
+	}
+}
+
+// A plugin newer than the CLI may name a hook the CLI lacks. Exit code 2 from a
+// hook that runs before a tool call blocks the call, so the unknown hook ends
+// in silence. Other command groups keep their usage error.
+func TestHookIgnoresASubcommandItDoesNotKnow(t *testing.T) {
+	h := newHarness(t, nil, false)
+	stdin := preCommitInput(t, badRepo(t), "Bash", "git commit -m x")
+	for _, args := range [][]string{
+		{"hook", "future-thing"},
+		{"hook", "future-thing", "--tool", "claude"},
+		{"hook", "future-thing", "--bogus", "extra", "--help"},
+		{"hook", "bogus", "--", "x"},
+	} {
+		for _, in := range []string{"", stdin, `{"cwd":`} {
+			h.app.Stdin = strings.NewReader(in)
+			if code := h.run(args...); code != 0 || h.stdout.Len() != 0 || h.stderr.Len() != 0 {
+				t.Errorf("%v: code=%d stdout=%q stderr=%q", args, code, h.stdout, h.stderr)
+			}
+		}
+	}
+	for _, args := range [][]string{{"msg", "bogus"}, {"doc", "future-thing", "--tool", "claude"}, {"future-thing"}} {
+		if code := h.run(args...); code != 2 || h.stderr.Len() == 0 {
+			t.Errorf("%v: code=%d stderr=%q", args, code, h.stderr)
+		}
 	}
 }

@@ -89,8 +89,12 @@ type command struct {
 	usage   string
 	aliases []string // other names that run the command, for names agents often guess
 	note    string   // lines added to the help of a group, for pages of help it points to
-	run     func(a *App, ctx context.Context, g *globals, args []string) error
-	subs    []*command
+	// hints maps a name that agents often guess for a subcommand of a group to the subcommands it suggests; they must exist.
+	hints map[string][]string
+	// bareHelp makes a group without a subcommand print its help and succeed instead of asking for a subcommand.
+	bareHelp bool
+	run      func(a *App, ctx context.Context, g *globals, args []string) error
+	subs     []*command
 }
 
 func (c *command) find(name string) *command {
@@ -112,6 +116,12 @@ func (c *command) find(name string) *command {
 // name. It returns "" when nothing is close.
 func (c *command) suggest(path, name string) string {
 	var near []string
+	for _, h := range c.hints[name] {
+		near = append(near, path+" "+h)
+	}
+	if len(near) > 0 {
+		return "가까운 명령: " + strings.Join(near, ", ") + "\n"
+	}
 	for _, s := range c.subs {
 		if editDistance(s.name, name) <= 2 {
 			near = append(near, path+" "+s.name)
@@ -185,7 +195,7 @@ const Usage = `사용법: agb <명령> [옵션]
   logout            이 행위자의 토큰 폐기와 로컬 삭제
   skill             내장 에이전트 스킬 출력, 설치, 점검 (~/.agents/skills/tool-agb)
   setup             에이전트 도구에 agb 연결: 플러그인과 스킬 설치 (setup claude)
-  hook              에이전트 도구의 훅이 부르는 명령 (session-start)
+  hook              에이전트 도구의 훅이 부르는 명령 (session-start, pre-commit)
 
 상태:
   health            서버 상태 (인증 없음)
@@ -225,6 +235,7 @@ const Usage = `사용법: agb <명령> [옵션]
   --fields <a,b>    이 필드만 남김. 점 경로(files.name)로 중첩 값을 고름. 목록은 항목마다. JSON 출력을 강제
   --text            --fields 와 함께. 항목마다 한 줄, 필드는 탭으로 구분 (아래 "--fields 와 --text")
   --table           표 출력. 기본: 터미널일 때
+  --context <이름>  접속 대상 (AGB_CONTEXT, 설정 파일의 current_context 보다 우선)
   --url <주소>      서버 주소 (AGB_URL, 설정 파일보다 우선)
   --actor <ID>      행위자 (AGB_ACTOR)
   --session-id <ID> 세션 ID (AGB_SESSION_ID). 기본 cli-YYYYMMDD
@@ -255,6 +266,7 @@ const Usage = `사용법: agb <명령> [옵션]
 
 우선순위: 옵션 > 환경변수 > 설정 파일. 토큰은 옵션으로 받지 않습니다.
 토큰 선택: 설정 파일의 행위자별 토큰(agb login) > AGB_TOKEN > 설정 파일의 공용 토큰.
+local 대상은 시드 토큰(local-auth.json) > 설정 파일의 공용 토큰 순으로 쓰고, AGB_TOKEN 은 마지막에 씁니다.
 공용 토큰은 사용자 행위자(owner)만 씁니다. 에이전트는 agb login --actor <ID> 로 받은 토큰을 씁니다.
 종료 코드: 0 성공, 1 API·네트워크 오류, 2 사용법 오류
 
@@ -310,7 +322,7 @@ func (a *App) helpFor(path []string) int {
 	for _, p := range path {
 		next := cmd.find(p)
 		if next == nil {
-			fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n", strings.Join(path, " "))
+			fmt.Fprintf(a.Stderr, "agb: 모르는 명령 %q\n%s", strings.Join(path, " "), cmd.suggest(name, p))
 			return 2
 		}
 		cmd, name = next, name+" "+p
@@ -325,6 +337,10 @@ func (a *App) helpFor(path []string) int {
 
 func (a *App) dispatch(ctx context.Context, g *globals, cmd *command, path string, args []string) error {
 	if len(cmd.subs) > 0 {
+		if len(args) == 0 && cmd.bareHelp {
+			io.WriteString(a.Stdout, cmd.help(path))
+			return nil
+		}
 		if len(args) == 0 {
 			return &usageError{msg: "하위 명령이 필요합니다.", help: cmd.help(path)}
 		}
@@ -334,6 +350,11 @@ func (a *App) dispatch(ctx context.Context, g *globals, cmd *command, path strin
 		}
 		sub := cmd.find(args[0])
 		if sub == nil {
+			// A plugin newer than this CLI may call a hook that does not exist
+			// yet; ending in silence keeps that from blocking the tool call.
+			if cmd == hookCmd {
+				return nil
+			}
 			return &usageError{msg: fmt.Sprintf("모르는 명령 %q", args[0]), help: cmd.suggest(path, args[0]) + "\n" + cmd.help(path)}
 		}
 		return a.dispatch(ctx, g, sub, path+" "+sub.name, args[1:])
@@ -371,8 +392,36 @@ func (a *App) exit(g *globals, err error) int {
 		return 1
 	default:
 		fmt.Fprintf(a.Stderr, "agb: %v\n", err)
+		if a.isLocalTarget(g) {
+			fmt.Fprintln(a.Stderr, "  로컬 서버가 실행 중이지 않습니다. agb serve --local 로 먼저 실행하세요.")
+		}
 		return 1
 	}
+}
+
+// isLocalTarget reports whether g resolves to the "local" context (without an
+// explicit non-local URL override).
+func (a *App) isLocalTarget(g *globals) bool {
+	if g == nil {
+		return false
+	}
+	var file Config
+	if path, err := a.configPath(g); err == nil {
+		file, _ = loadConfig(path)
+	}
+	name, _, err := resolveContext(g, a.Getenv, file)
+	if err != nil || name != localContextName {
+		return false
+	}
+	if g.url != "" {
+		return strings.HasPrefix(g.url, "http://127.0.0.1:")
+	}
+	if a.Getenv != nil {
+		if v := a.Getenv("AGB_URL"); v != "" {
+			return strings.HasPrefix(v, "http://127.0.0.1:")
+		}
+	}
+	return true
 }
 
 // printAPIError writes the server error: verbatim in JSON mode, as text

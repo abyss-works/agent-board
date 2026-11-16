@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -19,13 +20,23 @@ import (
 
 var hookCmd = &command{name: "hook", summary: "에이전트 도구의 훅이 부르는 명령", subs: []*command{
 	hookSessionStartCmd,
+	hookPreCommitCmd,
 }, note: `에이전트 도구의 훅 설정이 부르는 명령입니다. 사람이 직접 실행할 일은 없습니다.
 Claude Code 에는 agb setup claude 가 이 명령을 부르는 플러그인을 설치합니다.
+두 명령 모두 무엇이 실패해도 표준 오류에 쓰지 않고 종료 코드 0 으로 끝납니다.
+이 CLI 가 모르는 하위 명령도 아무것도 출력하지 않고 종료 코드 0 으로 끝납니다. 플러그인이 CLI 보다 새로워도
+도구 호출을 막지 않게 하기 위해서입니다.
 `}
 
 // hookQueryTimeout bounds the whole server query of a hook, so a server that
 // is slow or away does not hold up the start of a session.
 var hookQueryTimeout = 5 * time.Second
+
+// hookStdinTimeout and hookStdinMax bound how long and how much a hook reads
+// from standard input when a caller leaves the pipe open or sends huge data.
+var hookStdinTimeout = 1 * time.Second
+
+const hookStdinMax = 1 << 20
 
 // hookListMax is how many messages the session start hook lists.
 const hookListMax = 20
@@ -84,48 +95,81 @@ session_id, 기본값 순서로 정합니다.
 		if _, err := parseArgs(fs, args); err == flag.ErrHelp {
 			return err
 		}
-		var in hookStdin
-		if !a.StdinIsTerminal {
-			if raw, err := io.ReadAll(a.Stdin); err == nil {
-				json.Unmarshal(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf")), &in)
-			}
-		}
 		// Every failure ends in silence: the hook must neither hold up the
 		// session nor put an error text into its context.
-		if out, _ := a.unreadNotice(ctx, g, *tool, in); out != "" {
+		if out, _ := a.unreadNotice(ctx, g, *tool, a.hookInput()); out != "" {
 			io.WriteString(a.Stdout, out)
 		}
 		return nil
 	},
 }
 
-// hookStdin is what a hook reads of the JSON on its standard input.
+// hookStdin is what a hook reads of the JSON on its standard input. The tool
+// members are those of a hook that runs before a tool call.
 type hookStdin struct {
 	Cwd       string `json:"cwd"`
 	SessionID string `json:"session_id"`
+	ToolName  string `json:"tool_name"`
+	ToolInput struct {
+		Command string `json:"command"`
+	} `json:"tool_input"`
 }
 
-// unreadNotice is the text of the session start hook, the messages that the
-// project of the session's folder has not acknowledged, and one line that
-// says what the session gets: how many messages, or why there is no text.
-// notice is "" when there are no messages and when anything on the way fails.
-//
-// The request is made as the flag's actor, else AGB_ACTOR, else the hook actor
-// of tool in the config file, else the actor of the file. Its session ID is
-// the flag's, else the one of the input when it is well formed, else what
-// every command uses.
-func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hookStdin) (notice, summary string) {
-	dir := in.Cwd
-	if dir == "" {
-		var err error
-		if dir, err = os.Getwd(); err != nil {
-			return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
+// hookInput reads the JSON on standard input, past a UTF-8 byte order mark.
+// What cannot be read within hookStdinTimeout or hookStdinMax stays empty.
+func (a *App) hookInput() hookStdin {
+	if a.StdinIsTerminal || a.Stdin == nil {
+		return hookStdin{}
+	}
+	return readHookInput(a.Stdin, hookStdinTimeout)
+}
+
+func readHookInput(r io.Reader, timeout time.Duration) hookStdin {
+	type result struct {
+		raw []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				ch <- result{err: errors.New("panic")}
+			}
+		}()
+		raw, err := io.ReadAll(io.LimitReader(r, hookStdinMax))
+		ch <- result{raw: raw, err: err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var in hookStdin
+	select {
+	case got := <-ch:
+		if got.err == nil {
+			json.Unmarshal(bytes.TrimPrefix(got.raw, []byte("\xef\xbb\xbf")), &in)
+		}
+	case <-timer.C:
+	}
+	return in
+}
+
+// repoConfigAbove finds the nearest folder at or above dir that holds a
+// .agb.json and reads it, without invoking git when none is present.
+func repoConfigAbove(dir string) (*repoConfig, error) {
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, repoConfigFile)); err == nil {
+			return loadRepoConfig(d)
+		}
+		if filepath.Dir(d) == d {
+			return nil, nil
 		}
 	}
-	_, cfg, err := fileRepo(dir)
-	if err != nil || cfg == nil {
-		return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
-	}
+}
+
+// hookGlobals is g with the actor and the session ID of a hook. The actor is
+// the flag's, else AGB_ACTOR, else the hook actor of tool in the config file,
+// else the actor of the file. The session ID is the flag's, else the one of the
+// input when it is well formed, else what every command uses.
+func (a *App) hookGlobals(g *globals, tool string, in hookStdin) *globals {
 	hg := *g
 	if hg.actor == "" && a.Getenv("AGB_ACTOR") == "" {
 		if path, err := a.configPath(g); err == nil {
@@ -137,7 +181,27 @@ func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hook
 	if hg.sessionID == "" && model.ValidSessionID(in.SessionID) {
 		hg.sessionID = in.SessionID
 	}
-	c, err := a.client(&hg, true)
+	return &hg
+}
+
+// unreadNotice is the text of the session start hook, the messages that the
+// project of the session's folder has not acknowledged, and one line that
+// says what the session gets: how many messages, or why there is no text.
+// notice is "" when there are no messages and when anything on the way fails.
+// The request is made with the actor and the session ID of hookGlobals.
+func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hookStdin) (notice, summary string) {
+	dir := in.Cwd
+	if dir == "" {
+		var err error
+		if dir, err = os.Getwd(); err != nil {
+			return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
+		}
+	}
+	cfg, err := repoConfigAbove(dir)
+	if err != nil || cfg == nil {
+		return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
+	}
+	c, err := a.client(a.hookGlobals(g, tool, in), true)
 	if err != nil {
 		return "", err.Error()
 	}

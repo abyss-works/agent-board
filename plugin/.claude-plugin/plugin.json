@@ -1,6 +1,6 @@
 {
   "name": "agb",
-  "description": "세션을 시작할 때 프로젝트의 확인하지 않은 agb 메시지를 알립니다. agb CLI가 PATH에 있어야 합니다.",
+  "description": "세션을 시작할 때 프로젝트의 확인하지 않은 agb 메시지를 알리고, git commit 전에 기록 문서를 검사해 문제가 있으면 커밋을 막습니다. agb CLI가 PATH에 있어야 합니다.",
   "author": {
     "name": "abyss-works"
   },

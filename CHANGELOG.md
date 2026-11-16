@@ -2,6 +2,63 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
+## v0.15.0 (2026-11-17)
+
+### 배포
+
+- 운영 배포를 Docker Compose에서 k3s와 Argo CD GitOps로 이관한다. 매니페스트는 `k8s/prod/`(kustomization: namespace, rolebinding, pvc, deployment, service, certificate, ingress)에 두고, Argo CD Application은 `k8s/argocd/application.yaml`이 선언한다. 컨테이너는 3000 포트에서 받고(기존 8420) `AGB_ADDR=0.0.0.0:3000`이다. `deploy/k8s/`의 EndpointSlice 구성은 지운다. compose는 전환기 폴백으로 `deploy/compose.prod.yaml`에 남긴다.
+
+### 서버와 API
+
+- 기록 문서 일괄 등록 `POST /v1/projects/{key}/documents:batch`를 더한다. 본문 `{"documents": [...]}`의 항목은 `name`과 단건 등록과 같은 필드를 가지며, 1~100건을 한 트랜잭션에서 처리한다. 새 문서를 모두 먼저 넣은 뒤 관계를 풀기 때문에 서로를 `related`나 `supersedes`로 가리키는 문서를 한 번에 올릴 수 있다. 같은 이름에 다른 내용(`immutable`)이나 다른 메타데이터(`metadata_differs`)는 오류이며 오류 상세에 배치 안의 항목 위치가 들어간다. 요청 본문 상한은 문서 상한의 16배다.
+- 메시지 제목에 제어 문자가 있으면 등록을 거절한다(422). 이미 저장된 메시지의 조회는 그대로다.
+- 환경 변수 검증 오류가 입력 값을 120자까지만 보인다. 넘으면 `...(truncated)`를 붙인다.
+
+### 운영자 확인 사항
+
+- 이관 도입 이전 판의 CLI로 설정 파일(`config.json`)을 쓰면 `contexts`와 `current_context`가 유실될 수 있다. 같은 설정 파일을 쓰는 모든 기기의 CLI를 이 판 이상으로 갱신한 뒤에 `agb config set-context`로 접속 대상을 더한다.
+
+### CLI
+
+- CLI 설정 파일에 이름 붙인 접속 대상 `contexts`와 현재 대상 `current_context`를 더한다. 전역 옵션 `--context <이름>`과 환경변수 `AGB_CONTEXT`가 설정 파일의 `current_context`보다 앞선다. `agb config set-context <이름> [--url <주소>] [--actor <ID>] [--use]`, `use-context`, `list-contexts`, `current-context`, `delete-context`, `set-url`, `set-actor`가 대상을 관리한다. 로그인, 로그아웃, 토큰 저장과 기존 `agb config` 명령은 선택된 대상에 동작한다. `agb setup claude`가 훅이 쓸 토큰과 주소를 설정 파일에서 확인할 때는 `--context`와 `AGB_CONTEXT`를 보지 않고 설정 파일의 `current_context` 대상만 본다.
+- 옛 설정 파일의 최상위 `url`, `token`, `tokens`, `actor`를 처음 읽을 때 `contexts.default`로 자동 이관하고, 원본을 `config.json.bak`으로 남긴다. 이미 있는 `.bak`은 덮어쓰지 않는다.
+  - `contexts.default`에 같은 필드의 서로 다른 비어 있지 않은 값이 있으면 어느 값을 쓸지 정하지 않고 오류로 거부한다. 파일은 바뀌지 않으며 값을 쓰기 전에도 같은 검사를 한다. 행위자별 토큰은 행위자마다 같은 규칙이다. 한쪽이 비어 있으면 비어 있지 않은 값으로 채운다.
+  - 알 수 없는 키는 지우지 않고 그대로 보존한다.
+  - 이관 도입 이전 판의 CLI로 이 설정 파일을 쓰면 `contexts` 정보가 유실될 수 있으므로 CLI를 갱신해야 한다(운영자 확인 사항).
+- 토큰은 `local`이 아닌 대상에서 행위자별 토큰, `AGB_TOKEN`, 설정 파일의 공용 토큰 순으로 고른다. `local` 대상은 행위자별 토큰, 로컬 시드 토큰, 설정 파일의 공용 토큰, `AGB_TOKEN` 순이다.
+- `agb serve --local [--addr <주소>] [--data-dir <경로>]`을 더한다. 이 기기만 쓰는 로컬 서버로, `127.0.0.1`의 주소로만 받고 `AGB_TOKEN`과 `AGB_ACTORS`를 요구하지 않는다. 첫 실행 때 데이터 폴더의 `local-auth.json`에 공용 토큰과 에이전트 토큰(`claude`, `codex`, `gemini`)을 만들고 재시작해도 유지한다. 파일이 손상되었으면 거부한다. CLI의 `local` 접속 대상은 등록이 없어도 `127.0.0.1:8420`으로 해석되며 설정 파일에 토큰이 없으면 이 시드 토큰을 쓰고, 행위자를 주지 않으면 `owner`로 본다.
+- `agb doc sync`가 서로 `related`나 `supersedes`로 참조하는 문서를 한 묶음으로 일괄 등록 API에 보낸다. 일괄 등록을 모르는 서버(404, 405)에서는 그 묶음을 문서마다 올리는 방식으로 넘어간다. 일괄 등록을 지원하는 서버에서 묶음의 한 문서가 조건에 맞지 않으면 묶음 전체가 취소되고 그 묶음의 문서는 올라가지 않는다. 같은 이름의 다른 내용(`immutable`) 충돌은 충돌한 문서를 충돌로 남기고 나머지 문서를 `rejected`로 남기며, 다른 메타데이터(`metadata_differs`), 순환(`cycle`), 값 위반(422), 본문 초과(413)는 묶음의 모든 문서를 `rejected`로 남긴다. 그 밖의 오류는 그대로 실패한다.
+- `agb hook` 명령이 표준 입력을 읽을 때 1초 안에 끝나지 않거나 1MiB를 넘으면 읽기를 멈춘다. `.agb.json`을 찾을 때 불필요한 `git` 실행을 하지 않는다.
+- `agb hook pre-commit`이 셸 명령의 구분자와 산술 확장을 따라가며 커밋 명령을 판정하고, `GIT_DIR`과 `GIT_WORK_TREE`로 커밋이 실행될 폴더를 정한다.
+- `agb setup claude`가 `claude` 실행마다 60초 제한을 둔다. `~/.claude/skills`의 `tool-agb`가 링크 폴더이면 설치를 건너뛰고 그 사실을 알린다. 도움말의 제거 절차에 `claude plugin marketplace remove`를 더한다.
+- `agb find` 도움말이 검색어 임베딩을 5초 안에 한 번만 시도하고 다시 시도하지 않는다고 적는다. 동작은 바뀌지 않는다.
+- `agb hook pre-commit [--tool <이름>]`을 더한다. 도구 호출 전 훅이 부르는 명령이다. 표준 입력의 훅 JSON이 Bash 도구의 `git commit`이면 그 저장소의 기록 문서를 `agb doc check`와 같은 검사로 확인하고, 문제가 있으면 도구 호출을 거절하는 JSON(`hookSpecificOutput.permissionDecision`이 `deny`)을 표준 출력에 적는다. 사유에는 문제가 있는 파일과 `agb doc check`의 문제 문구가 들어가고 4,000자를 넘지 않는다. 사유의 첫 줄에 검사한 저장소의 경로가 들어간다.
+  - 커밋으로 보는 명령은 명령 줄을 `&&`, `||`, `;`, `|`, `&`, 줄바꿈으로 나눈 명령 가운데 `git`으로 시작하고 하위 명령이 `commit`인 것이다. 앞의 환경변수 지정과 `git`의 `-C <경로>`, `-c <설정>`은 건너뛴다. 따옴표 안의 글, here-document의 본문, `#` 주석은 명령으로 보지 않는다. `git commit --dry-run`, `--help`, `-h`와 따옴표나 here-document가 닫히지 않은 명령 줄은 커밋으로 보지 않는다.
+  - 저장소는 훅 JSON의 `cwd`에서, 명령 줄 첫 명령의 `cd <경로>`와 `git -C <경로>`를 따라 정하고, 그 저장소 최상위에 `.agb.json`이 있을 때만 검사한다. 커밋이 실행될 폴더를 정할 수 없으면 검사하지 않는다. 다른 자리나 다른 형태의 `cd`, `pushd`, `popd`가 커밋 앞에 있거나 커밋이 괄호나 중괄호 묶음의 안이나 뒤에 있을 때이고, `-C`가 절대 경로이면 그 경로로 정한다. `~`로 시작하거나 `$`가 든 경로와, Windows에서 `/c/...`처럼 `/`로 시작하는 경로는 풀지 않으므로 검사하지 않는다.
+  - 검사하는 파일은 `agb doc check`에 파일을 주지 않았을 때와 같다.
+  - 표준 입력을 읽지 못하거나, Bash 도구의 `git commit`이 아니거나, git 저장소가 아니거나, `.agb.json`이 없거나 읽지 못하거나, 검사가 실패하면 아무것도 출력하지 않는다. 행위자나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주면 관계 확인만 건너뛴다. 모르는 옵션과 남는 인자는 무시한다. 어떤 경우에도 종료 코드는 0이고 표준 오류에 쓰지 않는다.
+  - 행위자와 세션 ID는 `agb hook session-start`와 같은 순서로 정한다. 파일을 고치지 않고 서버에 쓰지 않는다.
+- `agb hook <모르는 하위 명령>`이 뒤의 인자와 옵션이 무엇이든 아무것도 출력하지 않고 종료 코드 0으로 끝난다. 전에는 사용법 오류(종료 코드 2)였다. 이 CLI보다 새 플러그인이 아직 없는 훅을 불러도 도구 호출을 막지 않게 한다. 하위 명령 없는 `agb hook`과 `agb hook --help`, 다른 명령의 모르는 하위 명령은 전과 같다.
+- `agb doc check`의 동작은 바뀌지 않는다.
+- `agb doc get`이 프로젝트 키를 `--project`(`-p`)로도 받는다. `agb doc get -p <KEY> <파일명>`과 `agb doc get <KEY> <파일명>`이 같다. 둘을 함께 주거나 `--project`를 여러 번 주면 키가 모두 같아야 하고, 다르면 사용법 오류(종료 코드 2)다. 프로젝트는 하나만 받으므로 쉼표가 든 키도 사용법 오류다. `agb help doc show`도 `agb doc show`처럼 가까운 명령을 알린다.
+- 모르는 하위 명령의 오류가 가까운 명령을 알려 준다. `agb doc show`는 `agb doc get`을, `agb issue comments`는 `agb issue comment`와 `agb issue activity`를 가리킨다. 별칭은 더하지 않아 두 명령은 여전히 실행되지 않는다(종료 코드 2).
+- 하위 명령 없는 `agb config`가 사용법 오류 대신 하위 명령 목록을 표준 출력에 보이고 종료 코드 0으로 끝난다(`agb config --help`와 같다). 다른 명령 묶음은 전과 같이 하위 명령이 필요하다는 사용법 오류(종료 코드 2)다.
+- `agb skill check`가 스킬이 설치되어 있지 않다고 알릴 때, 설치하지 않고 `agb skill show`로 읽어 쓰면 이 결과가 예상한 것이라고 덧붙인다. CLI가 서버보다 오래됐다고 알린 점검에서는 갱신 안내가 묻히지 않게 덧붙이지 않는다. 종료 코드는 그대로 1이다.
+
+### Claude Code 플러그인
+
+- Bash 도구 호출 전 훅(`PreToolUse`)이 `agb hook pre-commit --tool claude`를 부른다. 시간 제한은 15초다. 세션 시작 훅은 그대로다.
+- v0.14.1 이하의 CLI(v0.14.0과 v0.14.1, `hook` 명령이 없는 그 전 버전)에 이 플러그인이 붙으면 Bash 도구 호출이 모두 막힌다. 옛 CLI가 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code가 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리하기 때문이다. CLI를 먼저 갱신하고 플러그인을 나중에 갱신한다.
+
+### 스킬
+
+- 내장 스킬 `tool-agb`의 설치 문서(`references/setup.md`) 2절에 커밋 전 검사가 막는 것과 통과시키는 것, 막혔을 때 할 일, CLI를 먼저 갱신해야 하는 이유를 더한다.
+- 내장 스킬 `tool-agb`가 `agb doc get -p <PROJECT> <이름>` 형식, 댓글을 읽는 `agb issue activity`와 쓰는 `agb issue comment`의 구분, 스킬을 설치하지 않고 `agb skill show`로 읽어 쓸 때 `agb skill check`의 종료 코드 1을 안내한다.
+- 내장 스킬 `tool-agb`가 본문 앞부분(처음 2,000자 안)에 할 일별 명령 표를 두고 각 줄에 상세 절을 가리킨다. 현황, 이슈 등록, 상태 변경, 댓글, 기록 문서, 검색, 값 뽑기(`--fields`, `--text`), 메시지의 명령 형식을 보인다. 긴 출력을 앞부분만 읽는 도구에서도 명령을 찾게 하려는 것이다.
+- 내장 스킬 `tool-agb`의 "2. 등록할 때"가 단계 순서를 바꿔 중복 검색, 종류 고르기, 등록, 주제 붙이기를 최소 경로로 먼저 보이고, 조건부였던 마일스톤 배정을 그 뒤의 선택 단계로 옮긴다. 각 단계의 규칙과 필수 여부는 그대로다.
+- 내장 스킬 `tool-agb`가 검토, 결정 필요, 미확인을 사용자에게 묻는 시점을 기본값으로 적고, 이 스킬을 쓰는 프로젝트의 규칙이 다른 시점을 정하면 그 규칙을 따르게 한다. 묻는 방법과 질문에 담을 내용, 이슈를 맡을 때 그 이슈에 걸린 항목만 묻는 범위, 결정 필요 항목의 답을 받기 전에는 그 이슈의 작업을 진행하지 않는 규칙은 그대로다.
+- 내장 스킬 `tool-agb`의 참조 예시와 테스트 데이터의 참조 키를 일반 값으로 바꾼다. 동작은 바뀌지 않는다.
+
 ## v0.14.1 (2026-11-11)
 
 ### CLI

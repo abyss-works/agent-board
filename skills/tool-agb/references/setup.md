@@ -74,16 +74,25 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
   - `이 폴더에서는 프로젝트를 판정할 수 없습니다`: 현재 폴더 위에 `.agb.json`이 없다.
   - `서버에 닿지 않습니다`, `서버가 오류를 돌려주었습니다 (...)`, `서버의 응답을 읽지 못했습니다`, 설정 오류 문구: 그 상태로는 세션에 알림이 나오지 않는다.
 - `claude 실행 파일이 PATH 에 없습니다`가 나오면 아무것도 설치되지 않은 것이다. Claude Code를 설치한 뒤 다시 실행한다.
+- 릴리즈 브랜치(`main`)에 마켓플레이스 파일(`.claude-plugin/marketplace.json`)이 올라가기 전에는 첫 단계인 마켓플레이스 등록이 실패해 멈추므로 스킬도 설치되지 않는다. 그때는 `agb skill install`을 대신 쓴다.
 - 플러그인은 세션을 시작할 때 `agb hook session-start --tool claude`를 불러, 작업 폴더의 저장소 `.agb.json` 프로젝트가 확인하지 않은 메시지를 알린다. 새 세션부터 동작한다.
   - 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값, 설정 파일의 `actor` 순서로 정한다. 훅의 세션 ID는 Claude Code가 훅에 준 `session_id`다.
   - 알림이 없으면 메시지가 없거나, `.agb.json`, 훅 행위자, 토큰, 서버 접속 중 하나가 없는 것이다. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 보고, `agb config show`의 `hook_actors`와 `actor_tokens`를 확인한다. 플러그인이 옛 판이면 아래 순서로 갱신한다.
+- 플러그인은 Bash 도구를 호출하기 전에 `agb hook pre-commit --tool claude`를 불러, 호출이 `git commit`이면 그 저장소(최상위에 `.agb.json`이 있는 저장소)의 기록 문서를 `agb doc check`와 같은 검사로 확인하고 문제가 있으면 커밋을 사유와 함께 막는다.
+  - 검사하는 파일은 `agb doc check`에 파일을 주지 않았을 때와 같다. 새 파일이거나 `HEAD`에서 바뀐 기록 문서이고, 스테이징하지 않은 파일도 포함한다.
+  - 커밋이 막히면 사유에 적힌 파일의 문제를 고친 뒤 다시 커밋한다. 사유는 4,000자까지이고 넘는 문제는 남은 건수로 적힌다. 전체는 그 저장소에서 `agb doc check`로 본다. 검사를 피하려고 커밋 명령의 형태를 바꾸지 않는다.
+  - 커밋으로 보는 것은 `git commit`, `git -C <경로> commit`, `X=y git commit`, `<다른 명령> && git commit`, `cd <경로> && git commit` 형태다. 저장소는 명령 줄 첫 명령의 `cd <경로>`와 `-C`의 경로를 따르고, 사유의 첫 줄에 그 저장소의 경로가 적힌다.
+  - 검사하지 않는 것: here-document의 본문과 `#` 주석과 따옴표 안에 든 `git commit`, `git commit --dry-run`과 `--help`, 따옴표나 here-document가 닫히지 않은 명령 줄. 커밋이 실행될 폴더를 정할 수 없을 때도 검사하지 않는다. 첫 명령이 아닌 `cd`나 옵션을 준 `cd`, `pushd`, `popd`가 커밋 앞에 있거나, 커밋이 괄호나 중괄호 묶음의 안이나 뒤에 있거나, `bash -c` 같은 중첩 셸 안에 있을 때다(`-C`가 절대 경로이면 그 경로로 정한다). `~`로 시작하거나 `$`가 든 경로와, Windows에서 `/c/...`처럼 `/`로 시작하는 경로도 풀지 않으므로 검사하지 않는다.
+  - Bash 도구의 `git commit`이 아니거나, git 저장소가 아니거나, `.agb.json`이 없거나 읽지 못하거나, 검사가 실패하면 막지 않는다. 행위자나 토큰이 없거나 서버에 5초 안에 닿지 않거나 서버가 오류를 돌려주면 관계(`supersedes`, `related`, `issue`) 확인만 건너뛰고, 파일만으로 찾은 문제는 그대로 막는다.
 - 갱신은 CLI(1절)를 먼저 하고 플러그인을 나중에 한다. 플러그인이 CLI에 없는 명령을 부르지 않게 하는 순서다.
+  - 이 판부터의 CLI는 모르는 `agb hook <하위 명령>`을 아무것도 출력하지 않고 종료 코드 0으로 끝낸다. 플러그인이 CLI보다 새로워도 세션과 도구 호출을 막지 않고, 그 훅이 하는 일만 빠진다.
+  - v0.14.1 이하의 CLI(v0.14.0과 v0.14.1, `hook` 명령이 없는 그 전 버전)는 그렇지 않다. 이 CLI에 커밋 전 훅이 든 플러그인이 붙으면 Bash 도구 호출이 모두 막히므로, 이 버전을 쓰는 기기는 CLI를 먼저 갱신한다. 옛 CLI는 모르는 하위 명령에 종료 코드 2로 끝나고, Claude Code는 도구 호출 전 훅의 종료 코드 2를 호출 거절로 처리한다. Bash 호출이 `모르는 명령 "pre-commit"`으로 막히면 사용자에게 터미널에서 CLI를 갱신하거나 `claude plugin disable agb@agent-board`로 플러그인을 끄도록 알린다.
   ```bash
   agb setup claude --actor <ID>
   claude plugin marketplace update agent-board
   claude plugin update agb@agent-board
   ```
-- 제거: `claude plugin uninstall agb@agent-board`, `claude plugin marketplace remove agent-board`
+- 제거: `claude plugin uninstall agb@agent-board`, `claude plugin marketplace remove agent-board`. 스킬은 `~/.agents/skills/tool-agb` 폴더와, 따로 설치된 경우 `~/.claude/skills/tool-agb` 폴더를 지운다.
 
 제품 저장소의 개발 기기에서 스킬을 고쳤으면, `dev` 체크아웃에서 CLI를 다시 설치(1절의 개발 기기 명령)한 뒤 `agb skill install`을 실행해야 전역 스킬에 반영된다.
 
@@ -95,12 +104,20 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
    ```bash
    agb config set url <서버 주소>
    ```
+   - 접속 대상이 여럿이면 이름 붙인 대상을 만들고 고른다. `agb config set-context <이름> --url <주소> --use`, `agb config use-context <이름>`, `agb config list-contexts`, `agb config current-context`, `agb config delete-context <이름>`을 쓴다.
+   - `--context <이름>`과 `AGB_CONTEXT`로 실행마다 대상을 고를 수 있다. `local`은 내장 대상이라 `contexts`에 없어도 바로 쓸 수 있다.
 2. 토큰을 받는다. 토큰은 행위자마다 다르다.
    - 에이전트: `SKILL.md`의 "로그인이 필요할 때"를 따라 `agb --actor <자기 ID> login`으로 받는다. 사용자가 웹에서 승인한다.
    - 사용자(`owner`): 공용 토큰은 사용자 행위자 전용이다. 사용자가 터미널에서 `agb config set-token`을 실행하고 토큰을 붙여 넣는다. 입력은 화면에 보이지 않는다. 에이전트는 공용 토큰을 넣거나 쓰지 않는다.
 3. 행위자와 세션 ID는 설정 파일에 두지 않는다.
    - 에이전트마다 값이 다르므로 명령마다 옵션이나 환경변수(`AGB_ACTOR`, `AGB_SESSION_ID`)로 준다.
    - 설정 파일이나 셸 프로필에 `owner`를 두지 않는다. 에이전트가 `--actor`를 빠뜨리면 사용자 이름으로 기록되기 때문이다. 사람이 터미널에서 쓸 때는 `--actor owner`를 붙인다.
+
+### 로컬 서버
+
+`agb serve --local`은 이 기기만 쓰는 로컬 서버를 띄운다. 127.0.0.1 외 주소로는 받지 않고 `AGB_TOKEN`, `AGB_ACTORS`를 묻지 않는다. 기본 데이터 폴더는 OS 사용자 데이터 폴더이고 `--data-dir`이나 `AGB_LOCAL_DATA_DIR`로 바꿀 수 있다. 처음 실행하면 `<data-dir>/local-auth.json`에 랜덤 공용 토큰과 에이전트별 토큰을 만든다.
+
+CLI가 `--context local`이나 `AGB_CONTEXT=local`이나 `current_context=local`을 쓰면 설정 파일에 토큰이 없어도 그 시드 파일을 읽어 바로 접속한다. 행위자를 주지 않으면 `owner`로 본다. `agb --actor claude` 등으로 에이전트 행위자를 주면 로그인 없이 그 행위자 토큰을 쓴다. `local` 대상의 토큰 순서는 행위자별 토큰 > 시드 토큰 > 설정 파일의 공용 토큰 > `AGB_TOKEN`이다. 그 밖의 대상은 행위자별 토큰 > `AGB_TOKEN` > 설정 파일의 공용 토큰이다.
 
 ## 4. 접속 확인
 

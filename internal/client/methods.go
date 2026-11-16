@@ -567,6 +567,24 @@ func (c *Client) PutDocumentWith(ctx context.Context, project, name string, p Do
 	return c.Request(ctx, http.MethodPut, documentPath(project, name), p.body(), nil)
 }
 
+// DocumentBatchItem is one document in a batch registration request.
+type DocumentBatchItem struct {
+	Name string
+	DocumentPut
+}
+
+// PutDocumentsBatch registers a batch of record documents atomically so
+// documents in the same batch may reference one another.
+func (c *Client) PutDocumentsBatch(ctx context.Context, project string, items []DocumentBatchItem) (*Response, error) {
+	docs := make([]map[string]any, len(items))
+	for i, it := range items {
+		b := it.DocumentPut.body()
+		b["name"] = it.Name
+		docs[i] = b
+	}
+	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/documents:batch", map[string]any{"documents": docs}, nil)
+}
+
 func documentPath(project, name string) string {
 	return "/v1/projects/" + url.PathEscape(project) + "/documents/" + url.PathEscape(name)
 }
