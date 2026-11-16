@@ -7,8 +7,8 @@
 | 구성 요소 | 위치 | 역할 |
 |---|---|---|
 | 이미지 | `Dockerfile` | `web/`을 빌드해 Go 바이너리 `agb`와 함께 담는다. 이미지에는 `AGB_ADDR=0.0.0.0:3000`, `AGB_DATA_DIR=/data`, `AGB_WEB_DIR=/web`이 설정되어 있어, 서버가 `/v1` 밖의 경로를 웹 화면으로 서빙한다. |
-| 클러스터 매니페스트 | `k8s/prod/` | `kustomization.yaml`이 Namespace `agb`, RoleBinding `traefik-secret-reader`, PVC `agb-data`, Deployment `agb`, Service `agb`, Certificate `agb-tls`, Ingress `agb`, Argo CD Application `agb`를 모은다. Deployment는 컨테이너 포트 3000으로 뜨고 노드를 `kubernetes.io/hostname: oci-node`로 고정한다. Service는 `app: agb` 파드를 80 포트로 받고, Ingress는 `<서비스 도메인>` 요청의 TLS를 끝내 Service로 넘긴다. RoleBinding은 네임스페이스 `agb`에서 ServiceAccount `traefik`(`traefik` 네임스페이스)에 ClusterRole `traefik-secret-reader`를 부여한다. |
-| Argo CD Application | `k8s/prod/application.yaml` | 저장소 `abyss-works/agent-board`의 `main` 브랜치, 경로 `k8s/prod`를 감시한다. `prune`과 `selfHeal`을 켠 자동 sync를 쓴다. |
+| 클러스터 매니페스트 | `k8s/prod/` | `kustomization.yaml`이 Namespace `agb`, RoleBinding `traefik-secret-reader`, PVC `agb-data`, Deployment `agb`, Service `agb`, Certificate `agb-tls`, Ingress `agb`를 모은다. Deployment는 컨테이너 포트 3000으로 뜨고 노드를 `kubernetes.io/hostname: oci-node`로 고정한다. Service는 `app: agb` 파드를 80 포트로 받고, Ingress는 `<서비스 도메인>` 요청의 TLS를 끝내 Service로 넘긴다. RoleBinding은 네임스페이스 `agb`에서 ServiceAccount `traefik`(`traefik` 네임스페이스)에 ClusterRole `traefik-secret-reader`를 부여한다. |
+| Argo CD Application | `k8s/argocd/application.yaml` | 저장소 `abyss-works/agent-board`의 `main` 브랜치, 경로 `k8s/prod`를 감시한다. `prune`과 `selfHeal`을 켠 자동 sync를 쓴다. sync 대상 밖에 두어 Application이 자기를 관리하는 순환을 피한다. |
 | 운영 Compose(폴백) | `deploy/compose.prod.yaml` | 전환기 폴백이다. `ghcr.io/abyss-works/agent-board:<AGB_IMAGE_TAG>`를 빌드 없이 실행한다. 포트는 `AGB_BIND`(기본 `0.0.0.0`)의 `AGB_PORT`(기본 3000)에 열고, 데이터는 볼륨 `agb-data`에 둔다. |
 | 워크플로 | `.github/workflows/deploy.yml` | `main` 푸시와 수동 실행에서 테스트, 이미지 빌드와 GHCR 업로드, 매니페스트 태그 커밋을 차례로 실행한다. 이미지 빌드는 arm64 러너에서, 나머지는 서버의 셀프 호스티드 러너에서 돈다. |
 
@@ -41,7 +41,7 @@
 ## GitHub에 미리 해 둘 것
 
 - Environment `production`을 만든다. 배포 브랜치 제한이나 승인자는 여기서 설정한다.
-- `main`의 브랜치 보호 규칙이 GitHub Actions 봇의 푸시를 허용해야 한다. 허용하지 않으면 deploy 잡의 매니페스트 커밋 푸시가 거부된다.
+- `main`의 브랜치 보호 규칙이 `github-actions[bot]`의 푸시를 허용해야 한다. 허용하지 않으면 deploy 잡이 매니페스트 커밋을 푸시하지 못하고 오류로 끝난다.
 - 첫 `image` 잡이 끝난 뒤 GHCR 패키지 `agent-board`의 Actions 접근 목록에 이 저장소가 있는지 확인한다. 없으면 읽기 이상의 권한으로 추가한다.
 - Actions 설정에서 외부 협업자의 워크플로 실행에 승인을 요구한다.
 
@@ -49,12 +49,19 @@
 
 Argo CD 프로젝트 `agent-board`를 만든 뒤 Application을 한 번 등록한다. 나머지 리소스는 Argo CD가 `main`의 `k8s/prod`를 sync하며 만든다.
 
+전제: `main`에 deploy.yml이 남긴 `git-<커밋 7자>` 이미지 태그 커밋이 있어야 한다. 그 전에 Application을 만들면 첫 sync가 존재하지 않는 `git-PLACEHOLDER` 태그를 받아 파드가 `ImagePullBackOff`가 된다.
+
+1. `main`에 푸시해 이미지 잡과 매니페스트 태그 커밋을 먼저 만든다. Application이 아직 없으므로 이 실행의 deploy 잡은 헬스 확인에서 실패한다.
+2. `main`에 `git-<커밋 7자>` 태그 커밋이 있는지 확인하고 Application을 등록한다.
+3. 워크플로를 수동 실행해 헬스 확인까지 통과하는지 본다. 매니페스트 태그가 이미 같으면 deploy 잡은 커밋 없이 헬스 확인만 한다.
+
 ```bash
-kubectl apply -f k8s/prod/application.yaml
+git log -1 --format=%s origin/main
+kubectl apply -f k8s/argocd/application.yaml
 kubectl -n argocd get application agb
 ```
 
-인증서가 `READY True`가 되면 `main`에 푸시하거나 워크플로를 수동으로 실행해 첫 배포를 한다.
+인증서가 `READY True`가 되면 Argo CD sync가 끝난 것이다.
 
 ```bash
 kubectl -n agb get certificate agb-tls
