@@ -3,7 +3,9 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - rolebinding.yaml
+  - pvc.yaml
+  - deployment.yaml
   - service.yaml
-  - endpointslice.yaml
   - certificate.yaml
   - ingress.yaml
+  - application.yaml

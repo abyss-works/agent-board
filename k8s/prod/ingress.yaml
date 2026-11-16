@@ -19,6 +19,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: agb-host
+                name: agb
                 port:
-                  number: 8420
+                  number: 80
