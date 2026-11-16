@@ -98,7 +98,7 @@ plugin/           Claude Code 플러그인. 훅 설정만 담고, 훅은 "agb ho
 .claude-plugin/   이 저장소를 Claude Code 마켓플레이스로 등록하게 하는 목록(marketplace.json)
 web/              React 19 + Vite + TanStack Query 웹 클라이언트
 e2e/              실행 중인 서버에 대고 도는 종단 테스트(빌드 태그 e2e)
-deploy/           운영용 compose 파일과 Kubernetes Ingress 구성
+deploy/           전환기 폴백 compose 파일. 운영 매니페스트는 k8s/prod에 있다
 ```
 
 - CLI는 서버와 HTTP로만 통신합니다.
@@ -234,14 +234,14 @@ AGB_WEB_DIR=web/dist ./agb serve
 export AGB_TOKEN="$(openssl rand -hex 32)"
 export AGB_ACTORS=owner:user,claude:agent
 docker compose up -d --build
-curl http://127.0.0.1:8420/v1/health
+curl http://127.0.0.1:3000/v1/health
 ```
 
-응답에 `"status":"ok"`가 있으면 서버가 떠 있습니다. 웹 화면은 `http://127.0.0.1:8420/`에서 열립니다.
+응답에 `"status":"ok"`가 있으면 서버가 떠 있습니다. 웹 화면은 `http://127.0.0.1:3000/`에서 열립니다.
 
-- `Dockerfile`은 웹을 빌드한 뒤 Go 바이너리와 함께 distroless 이미지에 담습니다. 컨테이너 안에서는 `AGB_ADDR=0.0.0.0:8420`, `AGB_DATA_DIR=/data`, `AGB_WEB_DIR=/web`이 기본값입니다.
+- `Dockerfile`은 웹을 빌드한 뒤 Go 바이너리와 함께 distroless 이미지에 담습니다. 컨테이너 안에서는 `AGB_ADDR=0.0.0.0:3000`, `AGB_DATA_DIR=/data`, `AGB_WEB_DIR=/web`이 기본값입니다.
 - 이미지를 빌드할 때 `AGB_VERSION`을 지정하면 그 값이 `agb version`과 `/v1/health` 응답의 `version`이 됩니다. 기본값은 `dev`입니다.
-- `compose.yaml`은 호스트의 `AGB_BIND`(기본 `127.0.0.1`)와 `AGB_PORT`(기본 `8420`)에 포트를 열고, 데이터를 이름 있는 볼륨 `agb-data`에 둡니다.
+- `compose.yaml`은 호스트의 `AGB_BIND`(기본 `0.0.0.0`)와 `AGB_PORT`(기본 `3000`)에 포트를 열고, 데이터를 이름 있는 볼륨 `agb-data`에 둡니다.
 
 ### 서버 환경변수
 
@@ -408,9 +408,11 @@ pnpm dev         # 개발 서버
 
 1. Go 형식·vet·테스트와 웹 typecheck·lint·test·build를 실행합니다.
 2. `linux/arm64` 이미지를 빌드해 GHCR에 `git-<커밋 7자>`와 `main` 태그로 올립니다. 커밋 제목이 `vX.Y.Z`이면 그 값을 `release`로 넣습니다.
-3. self-hosted 러너에서 `deploy/compose.prod.yaml`로 새 이미지를 받아 띄우고, `/v1/health`의 `version`이 새 빌드인지 확인합니다.
+3. `k8s/prod/deployment.yaml`의 `image` 태그를 `git-<커밋 7자>`로 고쳐 `main`에 커밋하고 푸시합니다.
+4. Argo CD가 `main`의 `k8s/prod`를 sync해 새 이미지로 파드를 굴립니다.
+5. `/v1/health`의 `version`이 새 빌드인지 확인합니다.
 
-`deploy/k8s/`는 컨테이너가 도는 호스트를 Kubernetes 클러스터 밖의 엔드포인트(EndpointSlice)로 등록하고 Ingress와 TLS 인증서를 붙이는 구성입니다.
+`k8s/prod/`는 k3s 클러스터의 Deployment, Service, Ingress, TLS 인증서, PVC와 Argo CD Application을 모은 매니페스트입니다. Argo CD가 `main`의 이 경로를 감시하므로 워크플로는 클러스터에 직접 적용하지 않습니다.
 
 ## 관련 문서
 
