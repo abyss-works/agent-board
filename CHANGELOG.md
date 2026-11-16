@@ -2,7 +2,11 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
-## Unreleased
+## v0.15.0 (2026-11-17)
+
+### 배포
+
+- 운영 배포를 Docker Compose에서 k3s와 Argo CD GitOps로 이관한다. 매니페스트는 `k8s/prod/`(kustomization: namespace, rolebinding, pvc, deployment, service, certificate, ingress)에 두고, Argo CD Application은 `k8s/argocd/application.yaml`이 선언한다. 컨테이너는 3000 포트에서 받고(기존 8420) `AGB_ADDR=0.0.0.0:3000`이다. `deploy/k8s/`의 EndpointSlice 구성은 지운다. compose는 전환기 폴백으로 `deploy/compose.prod.yaml`에 남긴다.
 
 ### 서버와 API
 
