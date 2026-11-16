@@ -109,9 +109,13 @@ func DefaultLocalDataDir(getenv func(string) string) (string, error) {
 		if xdg != "" && filepath.IsAbs(xdg) {
 			return filepath.Join(xdg, "agb"), nil
 		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
+		home := getenv("HOME")
+		if home == "" {
+			var err error
+			home, err = os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
 		}
 		return filepath.Join(home, ".local", "share", "agb"), nil
 	}
