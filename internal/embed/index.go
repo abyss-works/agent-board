@@ -14,11 +14,20 @@ import (
 	"github.com/wsk0715/agent-board/internal/store"
 )
 
-// queryTimeout bounds the embedding of a search query. A search waits for it,
-// so a slow API must not hold the answer back: past the bound the keywords
-// answer alone. The query is embedded once, without a retry. Indexing in the
-// background does not use it.
-const queryTimeout = 5 * time.Second
+// The embedding of a search query is tried at most twice. The first attempt is
+// short, so a slow API does not hold the answer back; a failed attempt is
+// retried once under Searcher.Timeout, and both attempts together never wait
+// past the total limit. Past that limit the keywords answer alone. Indexing in
+// the background does not use these. They are variables so tests can shorten
+// them.
+var (
+	queryFirstTimeout = 5 * time.Second
+	queryTotalTimeout = 15 * time.Second
+)
+
+// defaultQueryTimeout is the bound of the retry attempt when Searcher.Timeout
+// is zero.
+const defaultQueryTimeout = 10 * time.Second
 
 // Index holds every stored chunk in memory and finds the sources nearest to a
 // query vector.
@@ -114,28 +123,45 @@ type Searcher struct {
 	Embedder Embedder
 	Prefix   string // prepended to the query text before it is embedded
 	Index    *Index
-	Timeout  time.Duration // bound of the query embedding; zero means queryTimeout
+	Timeout  time.Duration // bound of the retry attempt; zero means defaultQueryTimeout
 	Model    string        // named in the log line of each query embedding
 	Logger   *slog.Logger  // nil logs nothing
 }
 
 // Search embeds the query and returns the n nearest sources among allowed, as
-// Index.Search does. The embedding is tried once and ends after the timeout.
+// Index.Search does. A failed first attempt is retried once while the total
+// limit has time left; the last failure is returned.
 func (s *Searcher) Search(ctx context.Context, query string, n int, allowed map[store.SourceRef]struct{}) ([]store.SourceText, error) {
-	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Timeout, queryTimeout))
+	ctx, cancel := context.WithTimeout(ctx, queryTotalTimeout)
 	defer cancel()
-	start := time.Now()
-	vecs, responseID, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
-	s.logEmbed(responseID, time.Since(start), err)
+	retry := s.Timeout
+	if retry <= 0 {
+		retry = defaultQueryTimeout
+	}
+	vecs, err := s.embedQuery(ctx, query, queryFirstTimeout, 1)
+	if err != nil && ctx.Err() == nil {
+		vecs, err = s.embedQuery(ctx, query, retry, 2)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return s.Index.Search(vecs[0], n, allowed), nil
 }
 
-// logEmbed writes one line per query embedding. It holds no query text, vector
-// or error text; a failure is described by the caller's own log.
-func (s *Searcher) logEmbed(responseID string, d time.Duration, err error) {
+// embedQuery makes one attempt of the query embedding under limit and writes
+// its log line.
+func (s *Searcher) embedQuery(ctx context.Context, query string, limit time.Duration, attempt int) ([][]float32, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	start := time.Now()
+	vecs, responseID, err := s.Embedder.Embed(ctx, []string{s.Prefix + query})
+	s.logEmbed(responseID, attempt, time.Since(start), err)
+	return vecs, err
+}
+
+// logEmbed writes one line per attempt. It holds no query text, vector or
+// error text; a failure is described by the caller's own log.
+func (s *Searcher) logEmbed(responseID string, attempt int, d time.Duration, err error) {
 	if s.Logger == nil {
 		return
 	}
@@ -146,5 +172,5 @@ func (s *Searcher) logEmbed(responseID string, d time.Duration, err error) {
 	case err != nil:
 		result = "error"
 	}
-	s.Logger.Info("query embedding", "purpose", "query", "model", s.Model, "response_id", responseID, "duration_ms", d.Milliseconds(), "result", result)
+	s.Logger.Info("query embedding", "purpose", "query", "attempt", attempt, "model", s.Model, "response_id", responseID, "duration_ms", d.Milliseconds(), "result", result)
 }

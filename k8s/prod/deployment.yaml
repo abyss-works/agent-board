@@ -33,6 +33,7 @@ spec:
           #   AGB_EMBEDDING_MODEL
           #   AGB_EMBEDDING_QUERY_PREFIX
           #   AGB_EMBEDDING_INTERVAL
+          #   AGB_EMBEDDING_QUERY_TIMEOUT
           #   AGB_EMBEDDING_PROVIDER
           envFrom:
             - secretRef:
