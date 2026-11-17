@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -414,14 +415,25 @@ func (a *App) isLocalTarget(g *globals) bool {
 		return false
 	}
 	if g.url != "" {
-		return strings.HasPrefix(g.url, "http://127.0.0.1:")
+		return isLocalURL(g.url)
 	}
 	if a.Getenv != nil {
 		if v := a.Getenv("AGB_URL"); v != "" {
-			return strings.HasPrefix(v, "http://127.0.0.1:")
+			return isLocalURL(v)
 		}
 	}
 	return true
+}
+
+// isLocalURL reports whether raw is the local server address the CLI starts:
+// http on 127.0.0.1 with a port. Parsing the URL keeps a path or query after
+// the address from changing the result.
+func isLocalURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Port() != ""
 }
 
 // printAPIError writes the server error: verbatim in JSON mode, as text

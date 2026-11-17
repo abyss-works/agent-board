@@ -115,7 +115,7 @@ func (c *Config) mergeLegacy() (migrated bool, err error) {
 			return nil
 		}
 		if existing != "" && existing != legacy {
-			return fmt.Errorf("설정 파일의 최상위 %s 값과 contexts.%s 의 %s 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요", name, defaultContextName, name)
+			return legacyFieldConflict(name, name)
 		}
 		return nil
 	}
@@ -130,7 +130,8 @@ func (c *Config) mergeLegacy() (migrated bool, err error) {
 	}
 	for actor, tok := range c.Tokens {
 		if existing, ok := cc.Tokens[actor]; ok && existing != "" && existing != tok && tok != "" {
-			return false, fmt.Errorf("설정 파일의 최상위 tokens.%s 값과 contexts.%s 의 tokens.%s 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요", actor, defaultContextName, actor)
+			p := "tokens." + actor
+			return false, legacyFieldConflict(p, p)
 		}
 	}
 	if cc.URL == "" {
@@ -160,6 +161,13 @@ func (c *Config) mergeLegacy() (migrated bool, err error) {
 		c.CurrentContext = defaultContextName
 	}
 	return true, nil
+}
+
+// legacyFieldConflict reports the error for a field that the legacy top-level
+// shape and the default context both set to different values. topPath and
+// ctxPath name the same field in each shape.
+func legacyFieldConflict(topPath, ctxPath string) error {
+	return fmt.Errorf("설정 파일의 최상위 %s 값과 contexts.%s 의 %s 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요", topPath, defaultContextName, ctxPath)
 }
 
 // normalize folds any legacy top-level target fields into Contexts["default"].
