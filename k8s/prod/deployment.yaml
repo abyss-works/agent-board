@@ -19,7 +19,7 @@ spec:
         - name: agb
           # image tag is set by deploy.yml at release time; the Argo CD Application must be
           # created only after main has a git-<sha> tag commit, or the first sync pulls git-PLACEHOLDER
-          image: ghcr.io/abyss-works/agent-board:git-a9e4908
+          image: ghcr.io/abyss-works/agent-board:git-7db4f09
           imagePullPolicy: IfNotPresent
           # Secret agb-env에 넣을 키. Secret은 이 매니페스트가 만들지 않는다.
           #   AGB_TOKEN
