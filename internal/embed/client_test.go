@@ -64,8 +64,9 @@ func TestClientTimeoutIsLoggedAsTimeout(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
+	withQueryTimeouts(t, 50*time.Millisecond, 5*time.Second)
 	lines := logged(NewClient(srv.URL, testKey, "m", nil), 50*time.Millisecond, "q")
-	if len(lines) != 1 || lines[0]["result"] != "timeout" {
+	if len(lines) != 2 || lines[0]["result"] != "timeout" || lines[1]["result"] != "timeout" {
 		t.Errorf("lines = %v", lines)
 	}
 }

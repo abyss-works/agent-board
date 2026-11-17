@@ -377,7 +377,7 @@ func TestHybridSearchScoresWhatBothListsFound(t *testing.T) {
 	}
 }
 
-// A query that is not embedded within the time limit is tried once; the
+// A query that is not embedded within the time limits is tried twice; the
 // keywords then answer alone and the envelope says failed.
 func TestSearchAnswersWithKeywordsWhenTheEmbeddingIsTooSlow(t *testing.T) {
 	e, emb := hybridEnv(t)
@@ -387,7 +387,7 @@ func TestSearchAnswersWithKeywordsWhenTheEmbeddingIsTooSlow(t *testing.T) {
 	if l.Semantic != "failed" || l.Total != 1 {
 		t.Errorf("semantic = %q, total %d, want failed with the one keyword hit", l.Semantic, l.Total)
 	}
-	if emb.calls != 1 {
-		t.Errorf("embedding calls = %d, want 1", emb.calls)
+	if emb.calls != 2 {
+		t.Errorf("embedding calls = %d, want 2 (the first attempt and one retry)", emb.calls)
 	}
 }
