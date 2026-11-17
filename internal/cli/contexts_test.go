@@ -228,6 +228,31 @@ func TestMixedConfigConflictDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestLegacyConfigConflictMessages(t *testing.T) {
+	const tail = " 값이 서로 다릅니다. 어느 값을 쓸지 자동으로 정하지 않습니다. 설정 파일에서 한쪽을 지운 뒤 다시 실행하세요"
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"url", Config{URL: "http://legacy", Contexts: map[string]ContextConfig{"default": {URL: "http://other"}}},
+			"설정 파일의 최상위 url 값과 contexts.default 의 url" + tail},
+		{"token", Config{Token: "old", Contexts: map[string]ContextConfig{"default": {Token: "new"}}},
+			"설정 파일의 최상위 token 값과 contexts.default 의 token" + tail},
+		{"actor", Config{Actor: "old", Contexts: map[string]ContextConfig{"default": {Actor: "new"}}},
+			"설정 파일의 최상위 actor 값과 contexts.default 의 actor" + tail},
+		{"tokens", Config{Tokens: map[string]string{"a": "old"}, Contexts: map[string]ContextConfig{"default": {Tokens: map[string]string{"a": "new"}}}},
+			"설정 파일의 최상위 tokens.a 값과 contexts.default 의 tokens.a" + tail},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.cfg.mergeLegacy(); err == nil || err.Error() != tc.want {
+				t.Errorf("mergeLegacy error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestSaveConfigConflictDoesNotWrite(t *testing.T) {
 	for _, cfg := range []Config{
 		{URL: "http://legacy", Contexts: map[string]ContextConfig{"default": {URL: "http://other"}}},
@@ -466,6 +491,26 @@ func TestConfigContextSubcommands(t *testing.T) {
 	cfg, err := loadConfig(h.app.ConfigPath)
 	if err != nil || cfg.CurrentContext != "" {
 		t.Errorf("current_context after deleting default = %q (err=%v)", cfg.CurrentContext, err)
+	}
+}
+
+func TestIsLocalURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"http://127.0.0.1:8420", true},
+		{"http://127.0.0.1:8420/v1", true},
+		{"http://127.0.0.1:8420?x=1", true},
+		{"http://127.0.0.1", false},
+		{"https://127.0.0.1:8420", false},
+		{"http://localhost:8420", false},
+		{"http://[::1]:8420", false},
+	}
+	for _, tc := range tests {
+		if got := isLocalURL(tc.url); got != tc.want {
+			t.Errorf("isLocalURL(%q) = %v, want %v", tc.url, got, tc.want)
+		}
 	}
 }
 

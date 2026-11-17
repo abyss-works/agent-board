@@ -51,6 +51,9 @@ type Embedding struct {
 	Model       string
 	QueryPrefix string // prepended to the query text only
 	Interval    time.Duration
+	// QueryTimeout bounds the retry attempt of the query embedding; the
+	// first attempt is shorter and both share a total limit.
+	QueryTimeout time.Duration
 	// Provider is a JSON object sent as the "provider" field of each
 	// embeddings request; nil leaves the field out.
 	Provider json.RawMessage
@@ -79,11 +82,12 @@ func Load(getenv func(string) string) (*Config, error) {
 			Retention:       672 * time.Hour,
 		},
 		Embedding: Embedding{
-			APIKey:      getenv("AGB_EMBEDDING_API_KEY"),
-			URL:         getenv("AGB_EMBEDDING_URL"),
-			Model:       getenv("AGB_EMBEDDING_MODEL"),
-			QueryPrefix: strings.ReplaceAll(getenv("AGB_EMBEDDING_QUERY_PREFIX"), `\n`, "\n"),
-			Interval:    time.Minute,
+			APIKey:       getenv("AGB_EMBEDDING_API_KEY"),
+			URL:          getenv("AGB_EMBEDDING_URL"),
+			Model:        getenv("AGB_EMBEDDING_MODEL"),
+			QueryPrefix:  strings.ReplaceAll(getenv("AGB_EMBEDDING_QUERY_PREFIX"), `\n`, "\n"),
+			Interval:     time.Minute,
+			QueryTimeout: 10 * time.Second,
 		},
 	}
 	if cfg.Addr == "" {
@@ -145,6 +149,14 @@ func Load(getenv func(string) string) (*Config, error) {
 			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_INTERVAL must be a positive duration, got %q", previewValue(v)))
 		} else {
 			cfg.Embedding.Interval = d
+		}
+	}
+	if v := getenv("AGB_EMBEDDING_QUERY_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("AGB_EMBEDDING_QUERY_TIMEOUT must be a positive duration, got %q", previewValue(v)))
+		} else {
+			cfg.Embedding.QueryTimeout = d
 		}
 	}
 	if v := getenv("AGB_EMBEDDING_PROVIDER"); v != "" {

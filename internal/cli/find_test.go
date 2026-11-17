@@ -76,10 +76,11 @@ func TestFindJSONIsTheServerBody(t *testing.T) {
 	}
 }
 
-const semanticFailedNotice = "의미 검색을 쓰지 못해 키워드 검색 결과만 나왔습니다."
+const semanticFailedNotice = "의미 검색이 실패해 키워드로만 찾았습니다. 결과가 적거나 없어도 기록이 없다는 뜻은 아닙니다. 잠시 뒤 다시 찾아보세요."
 
 // A failed search by meaning is told in a footer line of the table, for results
-// and for none; ok and disabled add nothing.
+// and for none; ok and disabled add nothing. The search still succeeds, so the
+// exit code stays 0.
 func TestFindTellsWhenTheSearchByMeaningFailed(t *testing.T) {
 	for _, c := range []struct {
 		name, body string

@@ -120,3 +120,33 @@ func TestEmbeddingProviderReachesEveryEmbeddingRequest(t *testing.T) {
 		}
 	}
 }
+
+// The query timeout read from the environment bounds the searcher's retry.
+func TestEmbeddingQueryTimeoutReachesTheSearcher(t *testing.T) {
+	getenv := func(k string) string {
+		return map[string]string{
+			"AGB_TOKEN":                   testToken,
+			"AGB_ACTORS":                  "owner:user",
+			"AGB_DATA_DIR":                filepath.Join(t.TempDir(), "data"),
+			"AGB_EMBEDDING_API_KEY":       "k",
+			"AGB_EMBEDDING_URL":           "https://example.test/v1/embeddings",
+			"AGB_EMBEDDING_MODEL":         "m",
+			"AGB_EMBEDDING_QUERY_TIMEOUT": "7s",
+		}[k]
+	}
+	cfg, err := config.Load(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(cfg, Options{Version: "t", Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.store.Close()
+	if srv.searcher == nil {
+		t.Fatal("searcher is nil with an embedding key")
+	}
+	if srv.searcher.Timeout != 7*time.Second {
+		t.Errorf("Searcher.Timeout = %v, want 7s", srv.searcher.Timeout)
+	}
+}

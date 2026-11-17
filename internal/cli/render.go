@@ -37,10 +37,11 @@ type searchOf struct {
 }
 
 // semanticNotice tells that the search by meaning failed and the keywords
-// answered alone. It says nothing for the other states.
+// answered alone. The line says that the records may exist, so a short or
+// empty list is not read as no records. It says nothing for the other states.
 func semanticNotice(w io.Writer, semantic string) {
 	if semantic == "failed" {
-		fmt.Fprintln(w, "의미 검색을 쓰지 못해 키워드 검색 결과만 나왔습니다.")
+		fmt.Fprintln(w, "의미 검색이 실패해 키워드로만 찾았습니다. 결과가 적거나 없어도 기록이 없다는 뜻은 아닙니다. 잠시 뒤 다시 찾아보세요.")
 	}
 }
 

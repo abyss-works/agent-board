@@ -15,7 +15,7 @@
 ## 요청 경로
 
 1. 클라이언트가 `https://<서비스 도메인>`으로 요청한다.
-2. 클러스터의 인그레스(nginx)가 TLS를 끝내고 Service `agb`로 넘긴다.
+2. 클러스터의 인그레스(nginx)가 TLS를 끝내고 Service `agb`로 넘긴다. 요청 본문은 10MiB까지 받고, 더 큰 본문은 413으로 거절한다(주석 `proxy-body-size: 10m`).
 3. Service가 `app: agb` 파드의 3000 포트로 보낸다.
 4. 파드가 응답한다. `/v1` 아래는 API이고, 그 밖의 경로는 웹 화면이다.
 
@@ -32,8 +32,8 @@
 
 - k3s 클러스터, `nginx` 인그레스 클래스, cert-manager와 ClusterIssuer `cloudflare-dns01`이 있어야 한다.
 - Argo CD와 AppProject `agent-board`가 있어야 한다. Application `agb`가 이 프로젝트를 쓴다.
-- RoleBinding `traefik-secret-reader`가 가리키는 ServiceAccount `traefik`(네임스페이스 `traefik`)와 ClusterRole `traefik-secret-reader`가 있어야 한다. 둘은 이 저장소의 매니페스트에 없다.
-- Secret `agb-env`를 네임스페이스 `agb`에 만든다. 매니페스트는 이 Secret을 만들지 않는다. 키는 `AGB_TOKEN`, `AGB_ACTORS`, `AGB_BACKUP_BUCKET`, `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY`, `AGB_EMBEDDING_API_KEY`, `AGB_EMBEDDING_URL`, `AGB_EMBEDDING_MODEL`, `AGB_EMBEDDING_QUERY_PREFIX`, `AGB_EMBEDDING_INTERVAL`, `AGB_EMBEDDING_PROVIDER`다. 값은 저장소에 적지 않는다.
+- ServiceAccount `traefik`(네임스페이스 `traefik`)과 ClusterRole `traefik-secret-reader`가 있어야 한다. 둘은 이 저장소의 매니페스트에 없다.
+- Secret `agb-env`를 네임스페이스 `agb`에 만든다. 매니페스트는 이 Secret을 만들지 않는다. 키는 `AGB_TOKEN`, `AGB_ACTORS`, `AGB_BACKUP_BUCKET`, `AGB_BACKUP_ENDPOINT`, `AGB_BACKUP_ACCESS_KEY_ID`, `AGB_BACKUP_SECRET_ACCESS_KEY`, `AGB_EMBEDDING_API_KEY`, `AGB_EMBEDDING_URL`, `AGB_EMBEDDING_MODEL`, `AGB_EMBEDDING_QUERY_PREFIX`, `AGB_EMBEDDING_INTERVAL`, `AGB_EMBEDDING_QUERY_TIMEOUT`, `AGB_EMBEDDING_PROVIDER`다. 값은 저장소에 적지 않는다.
 - Deployment의 `nodeSelector`가 `kubernetes.io/hostname: oci-node`이므로 그 호스트명을 가진 노드가 클러스터에 있어야 한다.
 - Namespace `agb`는 Argo CD가 `k8s/prod/namespace.yaml`로 만든다(`CreateNamespace=true`). 미리 만들 필요가 없다.
 - `<서비스 도메인>`(`k8s/prod/ingress.yaml`과 `certificate.yaml`에 적힌 호스트)의 DNS가 인그레스의 외부 주소를 가리켜야 한다.

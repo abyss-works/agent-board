@@ -126,9 +126,9 @@ func scanDocument(sc rowScanner, extra ...any) (*model.Document, int64, error) {
 	return &d, id, nil
 }
 
-// fillDocuments sets the relations, the state and the location of documents,
-// which the document table does not hold. ids are their row ids; one query reads
-// the relations of all of them.
+// fillDocuments sets the relations and the state of documents, which the
+// document table does not hold. ids are their row ids; one query reads the
+// relations of all of them.
 func fillDocuments(ctx context.Context, q querier, docs []*model.Document, ids []int64) error {
 	rels, err := loadRelations(ctx, q, ids)
 	if err != nil {

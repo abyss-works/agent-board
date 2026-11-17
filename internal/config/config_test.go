@@ -150,12 +150,12 @@ func TestLoadEmbedding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("without a key: %v", err)
 	}
-	if cfg.Embedding.Enabled() || cfg.Embedding.Interval != time.Minute {
+	if cfg.Embedding.Enabled() || cfg.Embedding.Interval != time.Minute || cfg.Embedding.QueryTimeout != 10*time.Second {
 		t.Errorf("without a key: %+v", cfg.Embedding)
 	}
 
 	cfg, err = Load(with("AGB_EMBEDDING_API_KEY", "k", "AGB_EMBEDDING_URL", "https://example.test/v1/embeddings", "AGB_EMBEDDING_MODEL", "m",
-		"AGB_EMBEDDING_QUERY_PREFIX", `Instruct: x\nQuery: `, "AGB_EMBEDDING_INTERVAL", "5m"))
+		"AGB_EMBEDDING_QUERY_PREFIX", `Instruct: x\nQuery: `, "AGB_EMBEDDING_INTERVAL", "5m", "AGB_EMBEDDING_QUERY_TIMEOUT", "20s"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestLoadEmbedding(t *testing.T) {
 	if e.Provider != nil {
 		t.Errorf("Provider = %s, want nil when unset", e.Provider)
 	}
-	if !e.Enabled() || e.APIKey != "k" || e.URL != "https://example.test/v1/embeddings" || e.Model != "m" || e.QueryPrefix != "Instruct: x\nQuery: " || e.Interval != 5*time.Minute {
+	if !e.Enabled() || e.APIKey != "k" || e.URL != "https://example.test/v1/embeddings" || e.Model != "m" || e.QueryPrefix != "Instruct: x\nQuery: " || e.Interval != 5*time.Minute || e.QueryTimeout != 20*time.Second {
 		t.Errorf("Embedding = %+v", e)
 	}
 
@@ -192,6 +192,8 @@ func TestLoadEmbedding(t *testing.T) {
 		"url":                    {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_MODEL", "m"}, "AGB_EMBEDDING_URL"},
 		"model":                  {[]string{"AGB_EMBEDDING_API_KEY", "secret-key", "AGB_EMBEDDING_URL", "https://example.test"}, "AGB_EMBEDDING_MODEL"},
 		"interval":               {[]string{"AGB_EMBEDDING_INTERVAL", "soon"}, "AGB_EMBEDDING_INTERVAL"},
+		"query timeout":          {[]string{"AGB_EMBEDDING_QUERY_TIMEOUT", "soon"}, "AGB_EMBEDDING_QUERY_TIMEOUT"},
+		"query timeout zero":     {[]string{"AGB_EMBEDDING_QUERY_TIMEOUT", "0s"}, "AGB_EMBEDDING_QUERY_TIMEOUT"},
 		"provider broken":        {[]string{"AGB_EMBEDDING_PROVIDER", `{"order":`}, "AGB_EMBEDDING_PROVIDER"},
 		"provider array":         {[]string{"AGB_EMBEDDING_PROVIDER", `["x"]`}, "AGB_EMBEDDING_PROVIDER"},
 		"provider string":        {[]string{"AGB_EMBEDDING_PROVIDER", `"x"`}, "AGB_EMBEDDING_PROVIDER"},
@@ -253,15 +255,16 @@ func TestLoadTruncatesLongInvalidValues(t *testing.T) {
 
 	// 10KB broken value and multibyte Hangul across the 120-rune boundary stay valid UTF-8 and bounded.
 	for name, kv := range map[string][2]string{
-		"provider 10KB":    {"AGB_EMBEDDING_PROVIDER", "{" + strings.Repeat("a", 10<<10)},
-		"provider hangul":  {"AGB_EMBEDDING_PROVIDER", "{" + strings.Repeat("가", 200)},
-		"backup interval":  {"AGB_BACKUP_INTERVAL", strings.Repeat("나", 200)},
-		"backup retention": {"AGB_BACKUP_RETENTION", strings.Repeat("다", 200)},
-		"embed interval":   {"AGB_EMBEDDING_INTERVAL", strings.Repeat("라", 200)},
-		"web dir":          {"AGB_WEB_DIR", filepath.Join(t.TempDir(), strings.Repeat("마", 200))},
-		"actors entry":     {"AGB_ACTORS", strings.Repeat("a", 200)},
-		"actors id":        {"AGB_ACTORS", strings.Repeat("A", 200) + ":user"},
-		"actors kind":      {"AGB_ACTORS", "owner:" + strings.Repeat("b", 200)},
+		"provider 10KB":       {"AGB_EMBEDDING_PROVIDER", "{" + strings.Repeat("a", 10<<10)},
+		"provider hangul":     {"AGB_EMBEDDING_PROVIDER", "{" + strings.Repeat("가", 200)},
+		"backup interval":     {"AGB_BACKUP_INTERVAL", strings.Repeat("나", 200)},
+		"backup retention":    {"AGB_BACKUP_RETENTION", strings.Repeat("다", 200)},
+		"embed interval":      {"AGB_EMBEDDING_INTERVAL", strings.Repeat("라", 200)},
+		"embed query timeout": {"AGB_EMBEDDING_QUERY_TIMEOUT", strings.Repeat("사", 200)},
+		"web dir":             {"AGB_WEB_DIR", filepath.Join(t.TempDir(), strings.Repeat("마", 200))},
+		"actors entry":        {"AGB_ACTORS", strings.Repeat("a", 200)},
+		"actors id":           {"AGB_ACTORS", strings.Repeat("A", 200) + ":user"},
+		"actors kind":         {"AGB_ACTORS", "owner:" + strings.Repeat("b", 200)},
 	} {
 		_, err := Load(with(kv[0], kv[1]))
 		if err == nil {
