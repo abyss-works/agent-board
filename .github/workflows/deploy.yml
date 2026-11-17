@@ -109,7 +109,7 @@ jobs:
       !(github.event.head_commit.author.username == 'github-actions[bot]' ||
         contains(github.event.head_commit.message, '[skip ci]'))
     needs: image
-    runs-on: [self-hosted, ab]
+    runs-on: [self-hosted, ab-ci]
     environment: production
     permissions:
       contents: write
