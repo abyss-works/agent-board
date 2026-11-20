@@ -147,6 +147,9 @@ func TestOverviewEndpoint(t *testing.T) {
 	if o.Decisions.Total != 1 || o.Decisions.Items[0].Key != "AGB-4" || o.Decisions.Items[0].DecisionNeeded == nil || *o.Decisions.Items[0].DecisionNeeded != "어느 쪽으로 할지" {
 		t.Errorf("decisions = %+v", o.Decisions)
 	}
+	if !strings.Contains(rec.Body.String(), `"waiting_sessions":[]`) {
+		t.Errorf("overview decisions item without waiting sessions must serialize []: %s", rec.Body.String())
+	}
 	if o.Next.Total != 2 || o.Next.Items[0].Key != "AGB-3" || o.Next.Items[1].Key != "AGB-4" || o.Next.Items[1].DecisionNeeded == nil {
 		t.Errorf("next = %+v", o.Next)
 	}
@@ -244,6 +247,96 @@ func TestAgendaWaitingSessionsEndpoint(t *testing.T) {
 	}
 	if wsB.Total != 0 || wsB.Items == nil || len(wsB.Items) != 0 {
 		t.Errorf("BBB waiting_sessions = %+v", wsB)
+	}
+}
+
+func TestOverviewAndAgendaDecisionWaitingSessionsEndpoint(t *testing.T) {
+	e, clock := newSessionEnv(t)
+	owner := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"}
+	wantStatus(t, e.do(t, "POST", "/v1/projects", `{"key":"AAA","name":"A"}`, owner), 201, "create project")
+	// AAA-1: P0 decision issue with no waiting session.
+	wantStatus(t, e.do(t, "POST", "/v1/issues", `{"project":"AAA","title":"no wait","body":"b","priority":"P0","decision_needed":"어느 안을 고를까요?"}`, owner), 201, "create AAA-1")
+	// AAA-2: P1 decision issue with two waiting sessions (one via session.issue, one via issue_claim) and location conflict.
+	wantStatus(t, e.do(t, "POST", "/v1/issues", `{"project":"AAA","title":"with wait","body":"b","priority":"P1","decision_needed":"승인해 주실까요?"}`, owner), 201, "create AAA-2")
+
+	// s1: linked via session.issue, earlier state_at.
+	s1 := map[string]string{"X-Actor": "claude", "X-Session-Id": "s1", "X-Client-Host": "desk"}
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", s1), 200, "s1 register")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s1",
+		`{"issue":"AAA-2","state":"waiting_approval","state_reason":"승인 대기","location":{"repo_remote":"https://example.com/acme/app.git","branch":"feat/a"}}`,
+		s1), 200, "s1 wait")
+
+	// s2: linked via open issue_claim (overrides session.issue=AAA-1), later state_at, conflicting location.
+	clock.add(2 * time.Minute)
+	s2 := map[string]string{"X-Actor": "codex", "X-Session-Id": "s2", "X-Client-Host": "laptop"}
+	wantStatus(t, e.do(t, "POST", "/v1/issues/AAA-2/claim", "", s2), 201, "s2 claim AAA-2")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/codex/s2",
+		`{"issue":"AAA-1","state":"waiting_input","state_reason":"입력 대기","location":{"repo_remote":"git@example.com:acme/app.git","branch":"feat/a"}}`,
+		s2), 200, "s2 wait")
+
+	// s3: non-waiting active session on AAA-1 must not appear.
+	s3 := map[string]string{"X-Actor": "claude", "X-Session-Id": "s3", "X-Client-Host": "desk"}
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", s3), 200, "s3 register")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s3", `{"issue":"AAA-1"}`, s3), 200, "s3 issue")
+
+	// s4: waiting session on AAA-1 that expires (>24h) before overview/agenda read.
+	s4 := map[string]string{"X-Actor": "codex", "X-Session-Id": "s4", "X-Client-Host": "desk"}
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", s4), 200, "s4 register")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/codex/s4", `{"issue":"AAA-1","state":"waiting_input"}`, s4), 200, "s4 wait")
+	clock.add(25 * time.Hour)
+
+	// Re-arm s1 and s2 within 24h while keeping s4 expired (>24h).
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s1", `{"state":"waiting_approval","state_reason":"승인 대기"}`, s1), 200, "s1 refresh")
+	clock.add(2 * time.Minute)
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/codex/s2", `{"state":"waiting_input","state_reason":"입력 대기"}`, s2), 200, "s2 refresh")
+
+	verifyDecisions := func(name, rawBody string, dec store.Section[model.DecisionItem]) {
+		t.Helper()
+		if strings.Contains(rawBody, `"waiting_sessions":null`) || strings.Contains(rawBody, `"location_conflicts":null`) {
+			t.Errorf("%s contains null array in JSON: %s", name, rawBody)
+		}
+		if strings.Contains(rawBody, `"children"`) {
+			t.Errorf("%s waiting_sessions must not carry children: %s", name, rawBody)
+		}
+		if dec.Total != 2 || len(dec.Items) != 2 {
+			t.Fatalf("%s decisions = %+v", name, dec)
+		}
+		// AAA-1: empty waiting_sessions []
+		if dec.Items[0].Key != "AAA-1" || dec.Items[0].WaitingSessions == nil || len(dec.Items[0].WaitingSessions) != 0 {
+			t.Errorf("%s AAA-1 waiting_sessions = %#v, want empty non-nil", name, dec.Items[0].WaitingSessions)
+		}
+		// AAA-2: [claude/s1, codex/s2] with populated location_conflicts
+		ws := dec.Items[1].WaitingSessions
+		if dec.Items[1].Key != "AAA-2" || len(ws) != 2 ||
+			ws[0].Actor != "claude" || ws[0].SessionID != "s1" ||
+			ws[1].Actor != "codex" || ws[1].SessionID != "s2" {
+			t.Fatalf("%s AAA-2 waiting_sessions = %+v", name, ws)
+		}
+		if len(ws[0].LocationConflicts) != 1 || ws[0].LocationConflicts[0] != (model.SessionRef{Actor: "codex", SessionID: "s2"}) {
+			t.Errorf("%s s1 location_conflicts = %+v", name, ws[0].LocationConflicts)
+		}
+		if len(ws[1].LocationConflicts) != 1 || ws[1].LocationConflicts[0] != (model.SessionRef{Actor: "claude", SessionID: "s1"}) {
+			t.Errorf("%s s2 location_conflicts = %+v", name, ws[1].LocationConflicts)
+		}
+	}
+
+	ovRec := e.do(t, "GET", "/v1/projects/AAA/overview", "", owner)
+	wantStatus(t, ovRec, 200, "overview")
+	var o store.Overview
+	decodeJSON(t, ovRec, &o)
+	verifyDecisions("overview", ovRec.Body.String(), o.Decisions)
+
+	agRec := e.do(t, "GET", "/v1/agenda?project=AAA", "", owner)
+	wantStatus(t, agRec, 200, "agenda")
+	var a store.Agenda
+	decodeJSON(t, agRec, &a)
+	if len(a.Projects) != 1 {
+		t.Fatalf("agenda projects = %d", len(a.Projects))
+	}
+	verifyDecisions("agenda", agRec.Body.String(), a.Projects[0].UserTurn.Decisions)
+	// UserTurn.WaitingSessions remains intact alongside Decisions.
+	if a.Projects[0].UserTurn.WaitingSessions.Total < 2 {
+		t.Errorf("agenda user_turn.waiting_sessions = %+v", a.Projects[0].UserTurn.WaitingSessions)
 	}
 }
 

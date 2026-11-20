@@ -235,6 +235,13 @@ type DoingItem struct {
 	Holder Holder `json:"holder"`
 }
 
+// DecisionItem is an open issue needing a decision together with active waiting
+// sessions linked to it.
+type DecisionItem struct {
+	IssueSummary
+	WaitingSessions []Session `json:"waiting_sessions"`
+}
+
 // Change is one field change in an activity record.
 type Change struct {
 	From json.RawMessage `json:"from,omitempty"`
