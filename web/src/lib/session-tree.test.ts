@@ -5,6 +5,7 @@ import {
   filterSessionsByStatus,
   parseSessionStatusFilter,
   sessionDetailPath,
+  sessionListParamsFor,
   summarizeSessions,
 } from './session-tree'
 
@@ -200,5 +201,31 @@ describe('세션 요약·필터·경로 유틸', () => {
 
   it('세션 상세 경로를 인코딩해 만든다', () => {
     expect(sessionDetailPath({ actor: 'agent-a', session_id: 'sess-1' })).toBe('/sessions?actor=agent-a&session=sess-1')
+  })
+
+  it('상태 필터별로 서버 세션 목록 질의 매개변수를 만든다', () => {
+    expect(sessionListParamsFor({ project: 'APP', named: false, status: 'all', limit: 200 })).toEqual({
+      project: 'APP',
+      named: undefined,
+      limit: 200,
+    })
+    expect(sessionListParamsFor({ project: 'APP', named: true, status: 'active', limit: 200 })).toEqual({
+      project: 'APP',
+      named: true,
+      active: true,
+      limit: 200,
+    })
+    expect(sessionListParamsFor({ project: undefined, named: false, status: 'stale', limit: 200 })).toEqual({
+      project: undefined,
+      named: undefined,
+      active: false,
+      limit: 200,
+    })
+    expect(sessionListParamsFor({ project: 'APP', named: true, status: 'waiting', limit: 200 })).toEqual({
+      project: 'APP',
+      named: true,
+      waiting: true,
+      limit: 200,
+    })
   })
 })

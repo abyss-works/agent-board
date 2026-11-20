@@ -15,9 +15,9 @@ import { Button } from '@/components/ui/button'
 import {
   SESSION_STATUS_FILTERS,
   buildHostSessionTrees,
-  filterSessionsByStatus,
   parseSessionStatusFilter,
   sessionKey,
+  sessionListParamsFor,
   sessionRefLabel,
   summarizeSessions,
   type HostSessionGroup,
@@ -37,14 +37,14 @@ function SummaryStat({
   highlight,
 }: {
   label: string
-  value: number
+  value: number | undefined
   tone?: string
   highlight?: boolean
 }) {
   return (
     <div className={cn('rounded-lg border bg-card px-3 py-2.5', highlight && 'border-amber-500/40 bg-amber-500/[0.08]')}>
       <div className={cn('text-[0.6875rem] text-muted-foreground', highlight && 'font-medium text-amber-300')}>{label}</div>
-      <div className={cn('mt-0.5 text-xl font-semibold tabular-nums tracking-tight', tone)}>{value}</div>
+      <div className={cn('mt-0.5 text-xl font-semibold tabular-nums tracking-tight', tone)}>{value ?? '-'}</div>
     </div>
   )
 }
@@ -460,16 +460,35 @@ export function SessionsPage() {
     setParams(next, { replace: true })
   }
 
-  const sessionsQuery = useSessions({
+  const listParams = sessionListParamsFor({
     project: effectiveProject,
-    named: namedOnly ? true : undefined,
+    named: namedOnly,
+    status: statusFilter,
     limit: SESSION_LIST_LIMIT,
   })
+  const sessionsQuery = useSessions(listParams)
 
-  const allItems = sessionsQuery.data?.items
-  const summary = useMemo(() => summarizeSessions(allItems ?? []), [allItems])
-  const filteredItems = useMemo(() => filterSessionsByStatus(allItems ?? [], statusFilter), [allItems, statusFilter])
-  const hostGroups = useMemo(() => buildHostSessionTrees(filteredItems), [filteredItems])
+  const summaryBase = { project: effectiveProject, named: namedOnly ? true : undefined, limit: 1 } as const
+  const allCountQuery = useSessions(summaryBase, { enabled: statusFilter !== 'all' })
+  const activeCountQuery = useSessions({ ...summaryBase, active: true }, { enabled: statusFilter !== 'active' })
+  const waitingCountQuery = useSessions({ ...summaryBase, waiting: true }, { enabled: statusFilter !== 'waiting' })
+
+  const items = sessionsQuery.data?.items
+  const listTotal = sessionsQuery.data?.total
+  const completeAllLoaded = statusFilter === 'all' && items !== undefined && listTotal !== undefined && listTotal === items.length
+  const fallbackSummary = useMemo(() => (completeAllLoaded ? summarizeSessions(items) : null), [completeAllLoaded, items])
+
+  const totalCount = statusFilter === 'all' ? listTotal : allCountQuery.data?.total
+  const activeCount = statusFilter === 'active' ? listTotal : (activeCountQuery.data?.total ?? fallbackSummary?.active)
+  const waitingCount = statusFilter === 'waiting' ? listTotal : (waitingCountQuery.data?.total ?? fallbackSummary?.waiting)
+  const staleCount =
+    statusFilter === 'stale'
+      ? listTotal
+      : totalCount !== undefined && activeCount !== undefined
+        ? Math.max(0, totalCount - activeCount)
+        : fallbackSummary?.stale
+
+  const hostGroups = useMemo(() => buildHostSessionTrees(items ?? []), [items])
 
   const selectSession = (ref: SessionRef) => {
     updateParams({ actor: ref.actor, session: ref.session_id })
@@ -530,20 +549,20 @@ export function SessionsPage() {
           {sessionsQuery.data ? (
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <SummaryStat label="전체" value={summary.total} />
-                <SummaryStat label="활성" value={summary.active} tone={summary.active > 0 ? 'text-emerald-400' : undefined} />
+                <SummaryStat label="전체" value={totalCount} />
+                <SummaryStat label="활성" value={activeCount} tone={activeCount && activeCount > 0 ? 'text-emerald-400' : undefined} />
                 <SummaryStat
                   label="대기 중"
-                  value={summary.waiting}
-                  tone={summary.waiting > 0 ? 'text-amber-300' : undefined}
-                  highlight={summary.waiting > 0}
+                  value={waitingCount}
+                  tone={waitingCount && waitingCount > 0 ? 'text-amber-300' : undefined}
+                  highlight={Boolean(waitingCount && waitingCount > 0)}
                 />
-                <SummaryStat label="멈춤" value={summary.stale} tone="text-muted-foreground" />
+                <SummaryStat label="멈춤" value={staleCount} tone="text-muted-foreground" />
               </div>
 
               {hostGroups.length === 0 ? (
                 <EmptyState>
-                  {summary.total === 0 ? '기록된 세션이 없습니다.' : '조건에 맞는 세션이 없습니다.'}
+                  {statusFilter === 'all' && !namedOnly ? '기록된 세션이 없습니다.' : '조건에 맞는 세션이 없습니다.'}
                 </EmptyState>
               ) : (
                 <div className={cn('space-y-3', sessionsQuery.isPlaceholderData && 'opacity-70 transition-opacity')}>

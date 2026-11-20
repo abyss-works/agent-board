@@ -1,3 +1,4 @@
+import type { SessionListParams } from '@/api/client'
 import type { Session, SessionRef } from '@/api/types'
 
 export type SessionStatusFilter = 'all' | 'active' | 'waiting' | 'stale'
@@ -12,6 +13,24 @@ export const SESSION_STATUS_FILTERS: ReadonlyArray<{ value: SessionStatusFilter;
 export function parseSessionStatusFilter(value: string | null): SessionStatusFilter {
   if (value === 'active' || value === 'waiting' || value === 'stale') return value
   return 'all'
+}
+
+/** 화면 필터 상태를 `GET /v1/sessions` 서버 질의 매개변수로 변환한다. */
+export function sessionListParamsFor(opts: {
+  project?: string
+  named?: boolean
+  status: SessionStatusFilter
+  limit: number
+}): SessionListParams {
+  const params: SessionListParams = {
+    project: opts.project,
+    named: opts.named ? true : undefined,
+    limit: opts.limit,
+  }
+  if (opts.status === 'active') params.active = true
+  else if (opts.status === 'stale') params.active = false
+  else if (opts.status === 'waiting') params.waiting = true
+  return params
 }
 
 export interface SessionTreeNode {

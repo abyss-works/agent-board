@@ -32,7 +32,13 @@ function listResponse(items: Session[], total = items.length): SessionListRespon
 
 interface RenderOptions {
   sessions?: Session[]
+  total?: number
   listParams?: SessionListParams
+  summaryTotals?: {
+    all?: number
+    active?: number
+    waiting?: number
+  }
   initialEntry?: string
   project?: string | null
   detailSession?: Session
@@ -41,7 +47,9 @@ interface RenderOptions {
 
 function renderSessions({
   sessions = [],
+  total,
   listParams,
+  summaryTotals,
   initialEntry = '/sessions',
   project = 'APP',
   detailSession,
@@ -53,7 +61,29 @@ function renderSessions({
     named: undefined,
     limit: 200,
   }
-  client.setQueryData(sessionsQueryKey(effectiveParams), listResponse(sessions))
+  client.setQueryData(sessionsQueryKey(effectiveParams), listResponse(sessions, total ?? sessions.length))
+  if (summaryTotals) {
+    const base = { project: effectiveParams.project, named: effectiveParams.named, limit: 1 } as const
+    if (summaryTotals.all !== undefined) {
+      client.setQueryData(sessionsQueryKey(base), { items: [], total: summaryTotals.all, limit: 1, offset: 0 })
+    }
+    if (summaryTotals.active !== undefined) {
+      client.setQueryData(sessionsQueryKey({ ...base, active: true }), {
+        items: [],
+        total: summaryTotals.active,
+        limit: 1,
+        offset: 0,
+      })
+    }
+    if (summaryTotals.waiting !== undefined) {
+      client.setQueryData(sessionsQueryKey({ ...base, waiting: true }), {
+        items: [],
+        total: summaryTotals.waiting,
+        limit: 1,
+        offset: 0,
+      })
+    }
+  }
   if (detailSession) {
     client.setQueryData(sessionQueryKey(detailSession.actor, detailSession.session_id), detailSession)
   }
@@ -76,6 +106,12 @@ function renderSessions({
       </AppStateContext.Provider>
     </QueryClientProvider>,
   )
+}
+
+function summaryValueOf(html: string, label: string): string {
+  const match = html.match(new RegExp(`>${label}</div><div[^>]*>([^<]+)</div>`))
+  if (!match) throw new Error(`${label} 요약 카드가 없습니다.`)
+  return match[1]
 }
 
 describe('세션 관제 화면', () => {
@@ -232,8 +268,71 @@ describe('세션 관제 화면', () => {
   })
 
   it('필터 조건에 맞는 세션이 없으면 조건 빈 상태를 표시한다', () => {
-    const active = sessionFixture({ session_id: 'only-active', stale: false, state: null })
-    const html = renderSessions({ sessions: [active], initialEntry: '/sessions?status=waiting' })
+    const html = renderSessions({
+      sessions: [],
+      listParams: { project: 'APP', waiting: true, limit: 200 },
+      initialEntry: '/sessions?status=waiting',
+    })
     expect(html).toContain('조건에 맞는 세션이 없습니다.')
+  })
+
+  it('상태 필터별로 서버 질의 매개변수(active·waiting)를 직접 전달한다', () => {
+    const activeItem = sessionFixture({ session_id: 'srv-active', stale: false })
+    const activeHtml = renderSessions({
+      sessions: [activeItem],
+      listParams: { project: 'APP', named: true, active: true, limit: 200 },
+      initialEntry: '/sessions?status=active&named=true',
+    })
+    expect(activeHtml).toContain('srv-active')
+
+    const staleItem = sessionFixture({ session_id: 'srv-stale', stale: true })
+    const staleHtml = renderSessions({
+      sessions: [staleItem],
+      listParams: { project: 'APP', active: false, limit: 200 },
+      initialEntry: '/sessions?status=stale',
+    })
+    expect(staleHtml).toContain('srv-stale')
+
+    const waitingItem = sessionFixture({ session_id: 'srv-waiting', state: 'waiting_approval', state_reason: '승인 대기' })
+    const waitingHtml = renderSessions({
+      sessions: [waitingItem],
+      listParams: { project: 'APP', waiting: true, limit: 200 },
+      initialEntry: '/sessions?status=waiting',
+    })
+    expect(waitingHtml).toContain('srv-waiting')
+  })
+
+  it('전체가 200건을 초과해도 헤더·요약 카드·절단 안내가 서버 total 기준으로 일치한다', () => {
+    const s1 = sessionFixture({ session_id: 'sess-1', stale: false })
+    const s2 = sessionFixture({ session_id: 'sess-2', stale: true })
+    const html = renderSessions({
+      sessions: [s1, s2],
+      total: 250,
+      summaryTotals: { active: 180, waiting: 12 },
+      initialEntry: '/sessions',
+    })
+    expect(html).toContain('>250개</span>')
+    expect(summaryValueOf(html, '전체')).toBe('250')
+    expect(summaryValueOf(html, '활성')).toBe('180')
+    expect(summaryValueOf(html, '대기 중')).toBe('12')
+    expect(summaryValueOf(html, '멈춤')).toBe('70')
+    expect(html).toContain('총 250개 중 최근 2개 표시')
+  })
+
+  it('대기 필터 결과가 200건을 초과할 때도 헤더·요약·절단 안내가 서버 total 기준으로 일치한다', () => {
+    const w1 = sessionFixture({ session_id: 'wait-1', state: 'waiting_input', state_reason: '입력 요청' })
+    const html = renderSessions({
+      sessions: [w1],
+      total: 215,
+      listParams: { project: 'APP', waiting: true, limit: 200 },
+      summaryTotals: { all: 320, active: 210 },
+      initialEntry: '/sessions?status=waiting',
+    })
+    expect(html).toContain('>215개</span>')
+    expect(summaryValueOf(html, '전체')).toBe('320')
+    expect(summaryValueOf(html, '활성')).toBe('210')
+    expect(summaryValueOf(html, '대기 중')).toBe('215')
+    expect(summaryValueOf(html, '멈춤')).toBe('110')
+    expect(html).toContain('총 215개 중 최근 1개 표시')
   })
 })
