@@ -351,7 +351,7 @@ agb milestone list -p <KEY>
 
 - 서브에이전트에 작업을 맡길 때는 `agb session start --role subagent --issue <KEY>`로 자식 세션을 만들고, 출력된 세션 ID를 맡기는 지시에 넣는다.
 - 서브에이전트는 모든 `agb` 명령에 `--session-id <그 ID>`를 붙인다. 그러지 않으면 부모 세션으로 기록된다.
-- 사용자에게 승인이나 입력을 묻고 멈출 때는 대기 상태를 남긴다. 대기 중인 세션은 `agb agenda`의 사용자 차례(`waiting_sessions`)에 보이며, 그 세션의 다음 쓰기 요청이 성공하면 서버가 자동으로 해제한다.
+- 사용자에게 승인이나 입력을 묻고 멈출 때는 대기 상태를 남긴다. 대기 중인 세션은 `agb agenda`의 사용자 차례(`waiting_sessions`)에 보이며, 점유 중이거나 지정한 이슈가 결정 필요 상태이면 `agb agenda`와 `agb project overview`의 `decisions.items[].waiting_sessions`에도 함께 붙어 나온다. 그 세션의 다음 쓰기 요청이 성공하면 서버가 자동으로 해제한다.
   ```
   agb session set --state waiting_input --reason "<사유>"
   ```
@@ -427,7 +427,7 @@ agb milestone list -p <KEY>
 | 칸 | 사용자에게 묻는 것 |
 |---|---|
 | `review` | 결과를 받아들일지 |
-| `decisions` | 이슈의 `decision_needed` 질문 |
+| `decisions` | 이슈의 `decision_needed` 질문과 기다리는 활성 대기 세션(`waiting_sessions`) |
 | `unacknowledged` | 등록된 이슈를 확인했는지 |
 
 묻는 범위는 시점과 관계없이 다음과 같다.

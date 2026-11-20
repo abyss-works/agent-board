@@ -69,10 +69,7 @@ func addDecisionColumn(tb *table, questions []*string) {
 	}
 }
 
-// issueTable lists issues. The MILESTONE column appears only when some issue
-// has a milestone, the SNIPPET column only for search results and the
-// DECISION column only when some issue asks for a decision.
-func (a *App) issueTable(items []model.IssueSummary) *table {
+func (a *App) baseIssueTable(items []model.IssueSummary) (*table, []*string) {
 	snippet, milestone, dormant := false, false, false
 	for _, it := range items {
 		if it.Dormant {
@@ -113,6 +110,39 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 		}
 		tb.add(row...)
 		questions = append(questions, it.DecisionNeeded)
+	}
+	return tb, questions
+}
+
+// issueTable lists issues. The MILESTONE column appears only when some issue
+// has a milestone, the SNIPPET column only for search results and the
+// DECISION column only when some issue asks for a decision.
+func (a *App) issueTable(items []model.IssueSummary) *table {
+	tb, questions := a.baseIssueTable(items)
+	addDecisionColumn(tb, questions)
+	return tb
+}
+
+func waitingSessionsText(sessions []model.Session) string {
+	if len(sessions) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(sessions))
+	for i, s := range sessions {
+		parts[i] = s.Actor + "/" + s.SessionID
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (a *App) decisionsTable(items []model.DecisionItem) *table {
+	summaries := make([]model.IssueSummary, len(items))
+	for i, it := range items {
+		summaries[i] = it.IssueSummary
+	}
+	tb, questions := a.baseIssueTable(summaries)
+	tb.header = append(tb.header, "WAITING")
+	for i, it := range items {
+		tb.rows[i] = append(tb.rows[i], waitingSessionsText(it.WaitingSessions))
 	}
 	addDecisionColumn(tb, questions)
 	return tb
@@ -512,7 +542,7 @@ type overview struct {
 	Doing          section[model.DoingItem]    `json:"doing"`
 	Review         section[model.IssueSummary] `json:"review"`
 	Blocked        section[model.QueueItem]    `json:"blocked"`
-	Decisions      section[model.IssueSummary] `json:"decisions"`
+	Decisions      section[model.DecisionItem] `json:"decisions"`
 	Next           section[model.QueueItem]    `json:"next"`
 	Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
 	RecentActivity section[model.Activity]     `json:"recent_activity"`
@@ -556,7 +586,10 @@ func (a *App) renderOverview(w io.Writer, resp *client.Response) error {
 	}
 	issues("review", o.Review)
 	queue("blocked", o.Blocked)
-	issues("decisions", o.Decisions)
+	fmt.Fprintf(w, "\n== decisions (%d) ==\n", o.Decisions.Total)
+	if len(o.Decisions.Items) > 0 {
+		a.decisionsTable(o.Decisions.Items).write(w, a.TermWidth)
+	}
 	queue("next", o.Next)
 	issues("unacknowledged", o.Unacknowledged)
 	fmt.Fprintf(w, "\n== recent_activity (%d) ==\n", o.RecentActivity.Total)
@@ -606,7 +639,7 @@ type agenda struct {
 		Dormant  int           `json:"dormant"`
 		UserTurn struct {
 			Review          section[model.IssueSummary] `json:"review"`
-			Decisions       section[model.IssueSummary] `json:"decisions"`
+			Decisions       section[model.DecisionItem] `json:"decisions"`
 			Unacknowledged  section[model.IssueSummary] `json:"unacknowledged"`
 			Tasks           section[model.IssueSummary] `json:"tasks"`
 			WaitingSessions section[model.Session]      `json:"waiting_sessions"`
@@ -634,7 +667,13 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 		u, g, wt := p.UserTurn, p.Agent, p.Waiting
 		fmt.Fprintf(w, "\n### %s (%s)\n", p.Project.Key, p.Project.Name)
 		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d, 사용자 할 일 %d, 대기 세션 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total, u.Tasks.Total, u.WaitingSessions.Total)
-		for _, s := range []section[model.IssueSummary]{u.Review, u.Decisions, u.Unacknowledged, u.Tasks} {
+		if len(u.Review.Items) > 0 {
+			a.issueTable(u.Review.Items).write(w, a.TermWidth)
+		}
+		if len(u.Decisions.Items) > 0 {
+			a.decisionsTable(u.Decisions.Items).write(w, a.TermWidth)
+		}
+		for _, s := range []section[model.IssueSummary]{u.Unacknowledged, u.Tasks} {
 			if len(s.Items) > 0 {
 				a.issueTable(s.Items).write(w, a.TermWidth)
 			}
