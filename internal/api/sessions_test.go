@@ -402,24 +402,24 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 	path := "/v1/sessions/claude/sess-1"
 	e.do(t, "GET", "/v1/actors/me", "", nil) // registers claude/sess-1
 
-	// Edge 4: state is null, state_reason only -> 422 requires_state.
+	// State is null, state_reason only -> 422 requires_state.
 	rec := e.do(t, "PATCH", path, `{"state_reason":"이유"}`, nil)
 	wantStatus(t, rec, 422, "reason without state")
 	wantDetail(t, decodeErr(t, rec), "state_reason", "requires_state")
 
-	// Edge 5: state: null with non-null state_reason -> 422 requires_state.
+	// state: null with non-null state_reason -> 422 requires_state.
 	rec = e.do(t, "PATCH", path, `{"state":null,"state_reason":"이유"}`, nil)
 	wantStatus(t, rec, 422, "null state with reason")
 	wantDetail(t, decodeErr(t, rec), "state_reason", "requires_state")
 
-	// Edge 2: invalid state strings and non-string -> 422 field state.
+	// Invalid state strings and non-string -> 422 field state.
 	for _, body := range []string{`{"state":"paused"}`, `{"state":""}`, `{"state":123}`, `{"state":true}`} {
 		rec = e.do(t, "PATCH", path, body, nil)
 		wantStatus(t, rec, 422, body)
 		wantDetail(t, decodeErr(t, rec), "state", "")
 	}
 
-	// Edge 6: invalid state_reason -> 422 field state_reason.
+	// Invalid state_reason -> 422 field state_reason.
 	for _, body := range []string{
 		`{"state":"waiting_input","state_reason":""}`,
 		`{"state":"waiting_input","state_reason":"   "}`,
@@ -433,7 +433,7 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 		wantDetail(t, decodeErr(t, rec), "state_reason", "")
 	}
 
-	// Edge 1: set waiting_approval + reason -> 200, state_at and updated_at updated.
+	// Set waiting_approval + reason -> 200, state_at and updated_at updated.
 	clock.add(time.Minute)
 	t1 := model.NewTime(clock.Now())
 	rec = e.do(t, "PATCH", path, `{"state":"waiting_approval","state_reason":"배포 승인 대기"}`, nil)
@@ -449,7 +449,7 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 		t.Fatalf("persisted state was cleared: %+v", persisted)
 	}
 
-	// Edge 7: update only state_reason -> 200, reason updated, state_at kept, waiting NOT auto-cleared.
+	// Update only state_reason -> 200, reason updated, state_at kept, waiting NOT auto-cleared.
 	clock.add(time.Minute)
 	t2 := model.NewTime(clock.Now())
 	rec = e.do(t, "PATCH", path, `{"state_reason":"사유만 변경"}`, nil)
@@ -473,7 +473,7 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 		t.Errorf("clear reason only = %s", rec.Body)
 	}
 
-	// Edge 3: set waiting_input with reason, then waiting_external without reason -> new state_at, reason reset to null.
+	// Set waiting_input with reason, then waiting_external without reason -> new state_at, reason reset to null.
 	clock.add(time.Minute)
 	rec = e.do(t, "PATCH", path, `{"state":"waiting_input","state_reason":"입력 필요"}`, nil)
 	wantStatus(t, rec, 200, "set waiting_input")
@@ -486,7 +486,7 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 		t.Errorf("switch state without reason = %s", rec.Body)
 	}
 
-	// Edge 8: explicit state: null -> all three null.
+	// Explicit state: null -> all three null.
 	clock.add(time.Minute)
 	t4 := model.NewTime(clock.Now())
 	rec = e.do(t, "PATCH", path, `{"state":null}`, nil)
@@ -509,7 +509,7 @@ func TestSessionWaitingAutoClearAndFilter(t *testing.T) {
 	rec = e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"state":"waiting_input","state_reason":"확인 요청"}`, nil)
 	wantStatus(t, rec, 200, "set waiting")
 
-	// Edge 14: GET /v1/sessions?waiting=true and waiting=false.
+	// Filter GET /v1/sessions by waiting=true and waiting=false.
 	for _, tc := range []struct {
 		query string
 		want  string
@@ -529,28 +529,28 @@ func TestSessionWaitingAutoClearAndFilter(t *testing.T) {
 		}
 	}
 
-	// Edge 9: GET request by waiting session keeps waiting state.
+	// GET request by waiting session keeps waiting state.
 	rec = e.do(t, "GET", "/v1/issues", "", nil)
 	wantStatus(t, rec, 200, "get issues")
 	if s := e.session(t, "claude", "sess-1"); s.State == nil || *s.State != "waiting_input" {
 		t.Fatalf("GET cleared waiting state: %+v", s)
 	}
 
-	// Edge 10: failed write (422) by waiting session keeps waiting state.
+	// Failed write (422) by waiting session keeps waiting state.
 	rec = e.do(t, "POST", "/v1/issues", `{"project":"APP","title":""}`, nil)
 	wantStatus(t, rec, 422, "invalid issue create")
 	if s := e.session(t, "claude", "sess-1"); s.State == nil || *s.State != "waiting_input" {
 		t.Fatalf("422 write cleared waiting state: %+v", s)
 	}
 
-	// Edge 13: successful write by another session (owner) keeps claude's waiting state.
+	// Successful write by another session (owner) keeps claude's waiting state.
 	rec = e.do(t, "POST", "/v1/issues/APP-1/comments", `{"body":"owner note"}`, map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
 	wantStatus(t, rec, 201, "owner comment")
 	if s := e.session(t, "claude", "sess-1"); s.State == nil || *s.State != "waiting_input" {
 		t.Fatalf("other session write cleared claude waiting state: %+v", s)
 	}
 
-	// Edge 11: successful 2xx write (comment) by waiting session auto-clears waiting state.
+	// Successful 2xx write (comment) by waiting session auto-clears waiting state.
 	clock.add(time.Minute)
 	fpBefore, _ := e.st.FingerprintNow(t.Context())
 	rec = e.do(t, "POST", "/v1/issues/APP-1/comments", `{"body":"재개합니다"}`, nil)
@@ -563,7 +563,7 @@ func TestSessionWaitingAutoClearAndFilter(t *testing.T) {
 		t.Errorf("auto-clear did not change fingerprint: %q", fpBefore)
 	}
 
-	// Edge 12: PATCH {"role":"main"} on self (without state/state_reason) auto-clears waiting state.
+	// PATCH {"role":"main"} on self (without state/state_reason) auto-clears waiting state.
 	clock.add(time.Minute)
 	rec = e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"state":"waiting_approval","state_reason":"승인 대기"}`, nil)
 	wantStatus(t, rec, 200, "re-set waiting")
