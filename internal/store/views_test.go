@@ -304,7 +304,7 @@ func TestOverviewDoingHolder(t *testing.T) {
 
 	// Waiting session keeps claimed issue non-stale within 24h, stale after 24h.
 	stWait := model.SessionStateWaitingInput
-	if _, err := s.UpdateSession(ctx, trClaude.Actor, trClaude.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, trClaude, trClaude.Actor, trClaude.SessionID, SessionPatch{
 		State: Optional[string]{Set: true, Value: &stWait},
 	}); err != nil {
 		t.Fatal(err)
@@ -558,7 +558,7 @@ func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
 	fixClock(s, t0.Add(2*time.Minute))
 	stIn := model.SessionStateWaitingInput
 	reason1 := "승인 필요"
-	if _, err := s.UpdateSession(ctx, tr1.Actor, tr1.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, tr1, tr1.Actor, tr1.SessionID, SessionPatch{
 		Issue:       Optional[string]{Set: true, Value: &issueA.Key},
 		State:       Optional[string]{Set: true, Value: &stIn},
 		StateReason: Optional[string]{Set: true, Value: &reason1},
@@ -574,7 +574,7 @@ func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
 	}
 	fixClock(s, t0.Add(time.Minute))
 	stApp := model.SessionStateWaitingApproval
-	if _, err := s.UpdateSession(ctx, tr2.Actor, tr2.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, tr2, tr2.Actor, tr2.SessionID, SessionPatch{
 		State: Optional[string]{Set: true, Value: &stApp},
 	}); err != nil {
 		t.Fatal(err)
@@ -585,7 +585,7 @@ func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
 	mustTouch(t, s, tr3, t0)
 	fixClock(s, t0.Add(30*time.Second))
 	stExt := model.SessionStateWaitingExternal
-	if _, err := s.UpdateSession(ctx, tr3.Actor, tr3.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, tr3, tr3.Actor, tr3.SessionID, SessionPatch{
 		State: Optional[string]{Set: true, Value: &stExt},
 	}); err != nil {
 		t.Fatal(err)
@@ -594,7 +594,7 @@ func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
 	// Session 4: in AAA (via issue) but NOT waiting -> excluded.
 	tr4 := model.Trace{Actor: "claude", SessionID: "s-not-waiting", ClientHost: "desk"}
 	mustTouch(t, s, tr4, t0)
-	if _, err := s.UpdateSession(ctx, tr4.Actor, tr4.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, tr4, tr4.Actor, tr4.SessionID, SessionPatch{
 		Issue: Optional[string]{Set: true, Value: &issueA.Key},
 	}); err != nil {
 		t.Fatal(err)

@@ -214,9 +214,10 @@ func insertRelation(ctx context.Context, q querier, docID int64, t relTarget) er
 // loop stays as text. A relation that duplicates a resolved one is marked
 // removed. Each document whose relations change gets a record in its activity,
 // by the actor that stored the target.
-func reresolveRelations(ctx context.Context, tx *sql.Tx, tr model.Trace, at model.Time, self docSelf) error {
+func (s *Store) reresolveRelations(ctx context.Context, tx *sql.Tx, tr model.Trace, at model.Time, self docSelf) error {
 	q := querier(tx)
-	rows, err := q.QueryContext(ctx, `select r.id, r.document_id, r.kind from document_relation r join document d on d.id = r.document_id
+	rows, err := q.QueryContext(ctx, `select r.id, r.document_id, r.kind, d.project_id, p.key, d.name
+		from document_relation r join document d on d.id = r.document_id join project p on p.id = d.project_id
 		where r.removed_at is null and r.target_text is not null and r.kind in ('supersedes', 'related')
 		and ((d.project_id = ? and r.target_text = ?) or r.target_text = ?) order by r.id`,
 		self.projectID, self.name, self.projectKey+"/"+self.name)
@@ -224,13 +225,16 @@ func reresolveRelations(ctx context.Context, tx *sql.Tx, tr model.Trace, at mode
 		return err
 	}
 	type pending struct {
-		id, doc int64
-		kind    string
+		id, doc    int64
+		kind       string
+		projectID  int64
+		projectKey string
+		docName    string
 	}
 	var todo []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.doc, &p.kind); err != nil {
+		if err := rows.Scan(&p.id, &p.doc, &p.kind, &p.projectID, &p.projectKey, &p.docName); err != nil {
 			rows.Close()
 			return err
 		}
@@ -240,10 +244,17 @@ func reresolveRelations(ctx context.Context, tx *sql.Tx, tr model.Trace, at mode
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	type docMeta struct {
+		projectID  int64
+		projectKey string
+		name       string
+	}
+	metaByDoc := make(map[int64]docMeta, len(todo))
 	docs := make([]int64, 0, len(todo))
 	for _, p := range todo {
 		if !slices.Contains(docs, p.doc) {
 			docs = append(docs, p.doc)
+			metaByDoc[p.doc] = docMeta{projectID: p.projectID, projectKey: p.projectKey, name: p.docName}
 		}
 	}
 	before, err := loadRelations(ctx, q, docs)
@@ -284,7 +295,14 @@ func reresolveRelations(ctx context.Context, tx *sql.Tx, tr model.Trace, at mode
 	}
 	for _, id := range docs {
 		if changes := relationChanges(before[id], after[id]); len(changes) > 0 {
-			if err := appendDocumentActivity(ctx, tx, id, tr, at, changes); err != nil {
+			actID, err := appendDocumentActivity(ctx, tx, id, tr, at, changes)
+			if err != nil {
+				return err
+			}
+			dm := metaByDoc[id]
+			if err := s.emitEventTx(ctx, tx, at, &dm.projectID, &dm.projectKey, model.EventDocumentUpdated, dm.name, tr.Actor, tr.SessionID, map[string]any{
+				"activity_id": actID,
+			}); err != nil {
 				return err
 			}
 		}

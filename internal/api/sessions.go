@@ -294,7 +294,7 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, validationFailed(details))
 		return
 	}
-	s, err := h.store.UpdateSession(r.Context(), ref.Actor, ref.SessionID, patch)
+	s, err := h.store.UpdateSession(r.Context(), tr, ref.Actor, ref.SessionID, patch)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return

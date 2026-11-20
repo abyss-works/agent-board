@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -197,7 +198,14 @@ func (s *Store) CreateMessage(ctx context.Context, tr model.Trace, project strin
 			return err
 		}
 		id, err = res.LastInsertId()
-		return err
+		if err != nil {
+			return err
+		}
+		data := map[string]any{}
+		if in.To != "" {
+			data["to"] = in.To
+		}
+		return s.emitEventTx(ctx, tx, now, &projectID, &project, model.EventMessageCreated, strconv.FormatInt(id, 10), tr.Actor, tr.SessionID, data)
 	})
 	if err != nil {
 		return nil, err
@@ -214,15 +222,26 @@ func (s *Store) DeleteMessage(ctx context.Context, tr model.Trace, id int64) (*m
 		if _, err := getMessage(ctx, tx, id, now); err != nil {
 			return err
 		}
-		var status string
-		if err := tx.QueryRowContext(ctx, `select p.status from message m join project p on p.id = m.project_id where m.id = ?`, id).Scan(&status); err != nil {
+		var projectID int64
+		var projectKey, status string
+		if err := tx.QueryRowContext(ctx, `select m.project_id, p.key, p.status from message m join project p on p.id = m.project_id where m.id = ?`, id).Scan(&projectID, &projectKey, &status); err != nil {
 			return err
 		}
 		if model.ProjectStatus(status) != model.ProjectActive {
 			return ErrProjectNotActive
 		}
-		_, err := tx.ExecContext(ctx, `update message set deleted_at = ?, deleted_by = ? where id = ? and deleted_at is null`, now.String(), tr.Actor, id)
-		return err
+		res, err := tx.ExecContext(ctx, `update message set deleted_at = ?, deleted_by = ? where id = ? and deleted_at is null`, now.String(), tr.Actor, id)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return s.emitEventTx(ctx, tx, now, &projectID, &projectKey, model.EventMessageDeleted, strconv.FormatInt(id, 10), tr.Actor, tr.SessionID, nil)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -252,8 +271,9 @@ func (s *Store) AckMessage(ctx context.Context, tr model.Trace, id int64, reader
 	const get = `select ` + messageReadCols + ` from message_read where message_id = ? and reader = ?`
 	now := s.stamp()
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var status string
-		err := tx.QueryRowContext(ctx, `select p.status from message m join project p on p.id = m.project_id where m.id = ?`, id).Scan(&status)
+		var projectID int64
+		var projectKey, status string
+		err := tx.QueryRowContext(ctx, `select m.project_id, p.key, p.status from message m join project p on p.id = m.project_id where m.id = ?`, id).Scan(&projectID, &projectKey, &status)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -269,9 +289,13 @@ func (s *Store) AckMessage(ctx context.Context, tr model.Trace, id int64, reader
 		if model.ProjectStatus(status) != model.ProjectActive {
 			return ErrProjectNotActive
 		}
-		_, err = tx.ExecContext(ctx, `insert into message_read(`+messageReadCols+`) values (?, ?, ?, ?, ?, ?)`,
-			id, reader, now.String(), tr.Actor, tr.SessionID, tr.ClientHost)
-		return err
+		if _, err := tx.ExecContext(ctx, `insert into message_read(`+messageReadCols+`) values (?, ?, ?, ?, ?, ?)`,
+			id, reader, now.String(), tr.Actor, tr.SessionID, tr.ClientHost); err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, now, &projectID, &projectKey, model.EventMessageRead, strconv.FormatInt(id, 10), tr.Actor, tr.SessionID, map[string]any{
+			"reader": reader,
+		})
 	})
 	if err != nil {
 		return nil, err

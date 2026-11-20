@@ -65,7 +65,7 @@ func TestClaimIssueLifecycleAndExpiration(t *testing.T) {
 
 	// Waiting state extends claim validity up to 24h.
 	stWait := model.SessionStateWaitingInput
-	if _, err := s.UpdateSession(ctx, trB.Actor, trB.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, trB, trB.Actor, trB.SessionID, SessionPatch{
 		State: Optional[string]{Set: true, Value: &stWait},
 	}); err != nil {
 		t.Fatal(err)
@@ -309,7 +309,7 @@ func TestSessionIssueReflectsValidClaim(t *testing.T) {
 
 	tr := model.Trace{Actor: "claude", SessionID: "sess-claim", ClientHost: "desk"}
 	mustTouch(t, s, tr, now)
-	if _, err := s.UpdateSession(ctx, tr.Actor, tr.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, tr, tr.Actor, tr.SessionID, SessionPatch{
 		Issue: Optional[string]{Set: true, Value: &i1.Key},
 	}); err != nil {
 		t.Fatal(err)
@@ -343,7 +343,7 @@ func TestSessionIssueReflectsValidClaim(t *testing.T) {
 
 	// Waiting session in Agenda shows the claimed issue and attributes to the claimed issue's project (BBB).
 	stWait := model.SessionStateWaitingInput
-	if _, err := s.UpdateSession(ctx, tr.Actor, tr.SessionID, SessionPatch{
+	if _, err := s.UpdateSession(ctx, tr, tr.Actor, tr.SessionID, SessionPatch{
 		State: Optional[string]{Set: true, Value: &stWait},
 	}); err != nil {
 		t.Fatal(err)

@@ -92,38 +92,52 @@ func getOpenClaim(ctx context.Context, q querier, issueID int64) (*openClaimRow,
 	return &c, nil
 }
 
-func insertClaimTx(ctx context.Context, tx *sql.Tx, issueID int64, tr model.Trace, now model.Time) (int64, error) {
+func (s *Store) insertClaimTx(ctx context.Context, tx *sql.Tx, projectID int64, projectKey string, issueID int64, issueKey string, tr model.Trace, now model.Time) (int64, error) {
 	res, err := tx.ExecContext(ctx, `insert into issue_claim(issue_id, actor_id, session_id, claimed_at)
 		values (?, ?, ?, ?)`, issueID, tr.Actor, tr.SessionID, now.String())
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := s.emitEventTx(ctx, tx, now, &projectID, &projectKey, model.EventClaimAcquired, issueKey, tr.Actor, tr.SessionID, map[string]any{
+		"claim_id": id,
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
-func releaseClaimTx(ctx context.Context, tx *sql.Tx, claimID int64, now model.Time, outcome string, reason *string) error {
+func (s *Store) releaseClaimTx(ctx context.Context, tx *sql.Tx, projectID int64, projectKey string, issueKey string, claimID int64, tr model.Trace, now model.Time, outcome string, reason *string) error {
 	var r any
 	if reason != nil {
 		r = *reason
 	}
-	_, err := tx.ExecContext(ctx, `update issue_claim set released_at = ?, outcome = ?, reason = ? where id = ?`,
-		now.String(), outcome, r, claimID)
-	return err
+	if _, err := tx.ExecContext(ctx, `update issue_claim set released_at = ?, outcome = ?, reason = ? where id = ?`,
+		now.String(), outcome, r, claimID); err != nil {
+		return err
+	}
+	return s.emitEventTx(ctx, tx, now, &projectID, &projectKey, model.EventClaimReleased, issueKey, tr.Actor, tr.SessionID, map[string]any{
+		"claim_id": claimID,
+		"outcome":  outcome,
+	})
 }
 
 // syncClaimOnStatusChangeTx updates the issue's claim within the same write
 // transaction as a status change.
-func syncClaimOnStatusChangeTx(ctx context.Context, tx *sql.Tx, issueID int64, tr model.Trace, kind model.ActorKind, nextStatus model.IssueStatus, statusReason *string, now model.Time) error {
+func (s *Store) syncClaimOnStatusChangeTx(ctx context.Context, tx *sql.Tx, projectID int64, projectKey string, issueID int64, issueKey string, tr model.Trace, kind model.ActorKind, nextStatus model.IssueStatus, statusReason *string, now model.Time) error {
 	open, err := getOpenClaim(ctx, tx, issueID)
 	if err != nil {
 		return err
 	}
 	if open == nil {
 		if nextStatus == model.StatusDoing {
-			if err := touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
+			if err := s.touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
 				return err
 			}
-			_, err = insertClaimTx(ctx, tx, issueID, tr, now)
+			_, err = s.insertClaimTx(ctx, tx, projectID, projectKey, issueID, issueKey, tr, now)
 			return err
 		}
 		return nil
@@ -133,20 +147,20 @@ func syncClaimOnStatusChangeTx(ctx context.Context, tx *sql.Tx, issueID int64, t
 	if sameSession {
 		switch nextStatus {
 		case model.StatusDone, model.StatusReview:
-			return releaseClaimTx(ctx, tx, open.id, now, model.ClaimOutcomeDone, nil)
+			return s.releaseClaimTx(ctx, tx, projectID, projectKey, issueKey, open.id, tr, now, model.ClaimOutcomeDone, nil)
 		case model.StatusBacklog, model.StatusCancelled, model.StatusDeleted:
-			return releaseClaimTx(ctx, tx, open.id, now, model.ClaimOutcomeAbandoned, nil)
+			return s.releaseClaimTx(ctx, tx, projectID, projectKey, issueKey, open.id, tr, now, model.ClaimOutcomeAbandoned, nil)
 		case model.StatusDoing:
 			if valid {
 				return nil
 			}
-			if err := releaseClaimTx(ctx, tx, open.id, now, model.ClaimOutcomeExpired, nil); err != nil {
+			if err := s.releaseClaimTx(ctx, tx, projectID, projectKey, issueKey, open.id, tr, now, model.ClaimOutcomeExpired, nil); err != nil {
 				return err
 			}
-			if err := touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
+			if err := s.touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
 				return err
 			}
-			_, err = insertClaimTx(ctx, tx, issueID, tr, now)
+			_, err = s.insertClaimTx(ctx, tx, projectID, projectKey, issueID, issueKey, tr, now)
 			return err
 		}
 		return nil
@@ -155,39 +169,38 @@ func syncClaimOnStatusChangeTx(ctx context.Context, tx *sql.Tx, issueID int64, t
 		if kind != model.ActorUser {
 			return &ErrIssueClaimed{Actor: open.actor, SessionID: open.sessionID}
 		}
-		if err := releaseClaimTx(ctx, tx, open.id, now, model.ClaimOutcomeTakenOver, statusReason); err != nil {
+		if err := s.releaseClaimTx(ctx, tx, projectID, projectKey, issueKey, open.id, tr, now, model.ClaimOutcomeTakenOver, statusReason); err != nil {
 			return err
 		}
 	} else {
-		if err := releaseClaimTx(ctx, tx, open.id, now, model.ClaimOutcomeExpired, nil); err != nil {
+		if err := s.releaseClaimTx(ctx, tx, projectID, projectKey, issueKey, open.id, tr, now, model.ClaimOutcomeExpired, nil); err != nil {
 			return err
 		}
 	}
 	if nextStatus == model.StatusDoing {
-		if err := touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
+		if err := s.touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
 			return err
 		}
-		_, err = insertClaimTx(ctx, tx, issueID, tr, now)
+		_, err = s.insertClaimTx(ctx, tx, projectID, projectKey, issueID, issueKey, tr, now)
 		return err
 	}
 	return nil
 }
 
-func activeIssueIDForClaim(ctx context.Context, tx *sql.Tx, key string) (int64, error) {
-	var issueID int64
+func activeIssueIDForClaim(ctx context.Context, tx *sql.Tx, key string) (issueID, projectID int64, projectKey string, err error) {
 	var projectStatus string
-	err := tx.QueryRowContext(ctx, `select i.id, p.status from issue i join project p on p.id = i.project_id where i.key = ?`, key).
-		Scan(&issueID, &projectStatus)
+	err = tx.QueryRowContext(ctx, `select i.id, i.project_id, p.key, p.status from issue i join project p on p.id = i.project_id where i.key = ?`, key).
+		Scan(&issueID, &projectID, &projectKey, &projectStatus)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
+		return 0, 0, "", ErrNotFound
 	}
 	if err != nil {
-		return 0, err
+		return 0, 0, "", err
 	}
 	if model.ProjectStatus(projectStatus) != model.ProjectActive {
-		return 0, ErrProjectNotActive
+		return 0, 0, "", ErrProjectNotActive
 	}
-	return issueID, nil
+	return issueID, projectID, projectKey, nil
 }
 
 // ClaimIssue atomically claims key for the session of tr. It returns the claim
@@ -197,7 +210,7 @@ func (s *Store) ClaimIssue(ctx context.Context, tr model.Trace, key string) (*mo
 	var out *model.IssueClaim
 	var created bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		issueID, err := activeIssueIDForClaim(ctx, tx, key)
+		issueID, projectID, projectKey, err := activeIssueIDForClaim(ctx, tx, key)
 		if err != nil {
 			return err
 		}
@@ -222,14 +235,14 @@ func (s *Store) ClaimIssue(ctx context.Context, tr model.Trace, key string) (*mo
 				}
 				return &ErrIssueClaimed{Actor: open.actor, SessionID: open.sessionID}
 			}
-			if err := releaseClaimTx(ctx, tx, open.id, now, model.ClaimOutcomeExpired, nil); err != nil {
+			if err := s.releaseClaimTx(ctx, tx, projectID, projectKey, key, open.id, tr, now, model.ClaimOutcomeExpired, nil); err != nil {
 				return err
 			}
 		}
-		if err := touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
+		if err := s.touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
 			return err
 		}
-		id, err := insertClaimTx(ctx, tx, issueID, tr, now)
+		id, err := s.insertClaimTx(ctx, tx, projectID, projectKey, issueID, key, tr, now)
 		if err != nil {
 			return err
 		}
@@ -287,7 +300,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, tr model.Trace, key, outcome s
 	}
 	var out *model.IssueClaim
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		issueID, err := activeIssueIDForClaim(ctx, tx, key)
+		issueID, projectID, projectKey, err := activeIssueIDForClaim(ctx, tx, key)
 		if err != nil {
 			return err
 		}
@@ -302,7 +315,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, tr model.Trace, key, outcome s
 			return ErrClaimForbidden
 		}
 		now := s.stamp()
-		if err := releaseClaimTx(ctx, tx, open.id, now, outcome, cleanedReason); err != nil {
+		if err := s.releaseClaimTx(ctx, tx, projectID, projectKey, key, open.id, tr, now, outcome, cleanedReason); err != nil {
 			return err
 		}
 		oc := outcome

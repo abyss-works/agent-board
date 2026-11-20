@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -192,8 +193,15 @@ func (s *Store) CreateTopic(ctx context.Context, tr model.Trace, project string,
 		if id, err = res.LastInsertId(); err != nil {
 			return err
 		}
-		return insertResourceActivity(ctx, tx, projectID, model.ResourceTopic, id, model.ResourceCreated, tr, at,
-			resourceChanges(nil, topicFields(in.Name, in.Parent, model.TopicActive)))
+		changes := resourceChanges(nil, topicFields(in.Name, in.Parent, model.TopicActive))
+		actID, err := insertResourceActivity(ctx, tx, projectID, model.ResourceTopic, id, model.ResourceCreated, tr, at, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &projectID, &project, model.EventTopicCreated, strconv.FormatInt(id, 10), tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -290,8 +298,15 @@ func (s *Store) UpdateTopic(ctx context.Context, tr model.Trace, id int64, patch
 			next.Name, next.Parent, string(next.Status), at.String(), tr.Actor, cur.ID); err != nil {
 			return err
 		}
-		return insertResourceActivity(ctx, tx, cur.projectID, model.ResourceTopic, cur.ID, model.ResourceUpdated, tr, at,
-			resourceChanges(topicFields(cur.Name, cur.Parent, cur.Status), topicFields(next.Name, next.Parent, next.Status)))
+		changes := resourceChanges(topicFields(cur.Name, cur.Parent, cur.Status), topicFields(next.Name, next.Parent, next.Status))
+		actID, err := insertResourceActivity(ctx, tx, cur.projectID, model.ResourceTopic, cur.ID, model.ResourceUpdated, tr, at, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &cur.projectID, &cur.Project, model.EventTopicUpdated, strconv.FormatInt(cur.ID, 10), tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		})
 	})
 	if err != nil {
 		return nil, err
