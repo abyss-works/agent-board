@@ -211,7 +211,7 @@ func TestGetSession(t *testing.T) {
 	rec := e.do(t, "GET", "/v1/sessions/claude/cli-20261120", "", sess("cli-20261120"))
 	wantStatus(t, rec, 200, "get")
 	m := sessionJSON(t, rec, rec.Body.Bytes())
-	for _, k := range []string{"actor", "session_id", "named", "first_seen_at", "last_seen_at", "last_host", "last_project", "parent", "role", "issue", "location", "state", "state_reason", "state_at", "stale", "updated_at", "children"} {
+	for _, k := range []string{"actor", "session_id", "named", "first_seen_at", "last_seen_at", "last_host", "last_project", "parent", "role", "issue", "location", "location_conflicts", "state", "state_reason", "state_at", "stale", "updated_at", "children"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("field %s missing: %s", k, rec.Body)
 		}
@@ -591,5 +591,117 @@ func TestAutoClearDBErrorDoesNotBreakWriteResponse(t *testing.T) {
 	wantStatus(t, rec, 201, "comment with broken session table")
 	if !strings.Contains(e.log.String(), "session waiting clear failed") {
 		t.Errorf("expected warning log for clear failure, got: %s", e.log.String())
+	}
+}
+
+func TestSessionLocationConflictsAPI(t *testing.T) {
+	e, clock := newSessionEnv(t)
+
+	// Register waiting session (codex/s-wait) 2 hours ago on the same remote+branch.
+	codexWaitHeaders := map[string]string{"X-Actor": "codex", "X-Session-Id": "s-wait", "X-Client-Host": "laptop"}
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", codexWaitHeaders), 200, "register s-wait")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/codex/s-wait",
+		`{"state":"waiting_input","location":{"repo_remote":"ssh://git@example.com:22/acme/app.git","branch":"feat/x"}}`,
+		codexWaitHeaders), 200, "patch s-wait")
+
+	// Register stale non-waiting session (owner/s-stale) 2 hours ago on same remote+branch.
+	ownerStaleHeaders := map[string]string{"X-Actor": "owner", "X-Session-Id": "s-stale", "X-Client-Host": "desk"}
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", ownerStaleHeaders), 200, "register s-stale")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/owner/s-stale",
+		`{"location":{"repo_remote":"https://example.com/acme/app.git","branch":"feat/x"}}`,
+		ownerStaleHeaders), 200, "patch s-stale")
+
+	// Advance clock 45 minutes: s-stale is stale (>30m, non-waiting), s-wait is still WaitingValid (<24h).
+	clock.add(45 * time.Minute)
+
+	claudeHeaders := map[string]string{"X-Actor": "claude", "X-Session-Id": "s1", "X-Client-Host": "desk"}
+	codexHeaders := map[string]string{"X-Actor": "codex", "X-Session-Id": "s2", "X-Client-Host": "laptop"}
+	otherBranchHeaders := map[string]string{"X-Actor": "claude", "X-Session-Id": "s-other", "X-Client-Host": "desk"}
+
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", claudeHeaders), 200, "register s1")
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", codexHeaders), 200, "register s2")
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", otherBranchHeaders), 200, "register s-other")
+
+	// Different branch returns empty JSON array [] (not null).
+	rec := e.do(t, "PATCH", "/v1/sessions/claude/s-other",
+		`{"location":{"repo_remote":"https://example.com/acme/app.git","branch":"feat/y"}}`,
+		otherBranchHeaders)
+	wantStatus(t, rec, 200, "patch s-other")
+	if !strings.Contains(rec.Body.String(), `"location_conflicts":[]`) {
+		t.Errorf("other branch should have empty array []: %s", rec.Body)
+	}
+
+	// s1 (HTTPS) sees s-wait (SSH); s-stale is excluded.
+	rec = e.do(t, "PATCH", "/v1/sessions/claude/s1",
+		`{"location":{"repo_remote":"https://example.com/acme/app.git","branch":"feat/x"}}`,
+		claudeHeaders)
+	wantStatus(t, rec, 200, "patch s1")
+	var s1 model.Session
+	decodeJSON(t, rec, &s1)
+	if len(s1.LocationConflicts) != 1 || s1.LocationConflicts[0] != (model.SessionRef{Actor: "codex", SessionID: "s-wait"}) {
+		t.Errorf("s1 location_conflicts = %+v", s1.LocationConflicts)
+	}
+
+	// s2 (SCP git@) sees claude/s1 and codex/s-wait.
+	rec = e.do(t, "PATCH", "/v1/sessions/codex/s2",
+		`{"location":{"repo_remote":"git@example.com:acme/app.git","branch":"feat/x"}}`,
+		codexHeaders)
+	wantStatus(t, rec, 200, "patch s2")
+	var s2 model.Session
+	decodeJSON(t, rec, &s2)
+	if len(s2.LocationConflicts) != 2 ||
+		s2.LocationConflicts[0] != (model.SessionRef{Actor: "claude", SessionID: "s1"}) ||
+		s2.LocationConflicts[1] != (model.SessionRef{Actor: "codex", SessionID: "s-wait"}) {
+		t.Errorf("s2 location_conflicts = %+v", s2.LocationConflicts)
+	}
+
+	// GET /v1/sessions?actor=claude still detects conflicts with codex sessions.
+	rec = e.do(t, "GET", "/v1/sessions?actor=claude", "", claudeHeaders)
+	wantStatus(t, rec, 200, "list filtered by actor=claude")
+	var listed struct {
+		Items []model.Session `json:"items"`
+	}
+	decodeJSON(t, rec, &listed)
+	var foundS1 bool
+	for _, it := range listed.Items {
+		if it.SessionID == "s1" {
+			foundS1 = true
+			if len(it.LocationConflicts) != 2 ||
+				it.LocationConflicts[0] != (model.SessionRef{Actor: "codex", SessionID: "s-wait"}) ||
+				it.LocationConflicts[1] != (model.SessionRef{Actor: "codex", SessionID: "s2"}) {
+				t.Errorf("filtered list s1 conflicts = %+v", it.LocationConflicts)
+			}
+		}
+	}
+	if !foundS1 {
+		t.Fatal("s1 missing from filtered list")
+	}
+
+	// Child session on same remote+branch populates both parent and child location_conflicts in GET /v1/sessions/claude/s1.
+	wantStatus(t, e.do(t, "POST", "/v1/sessions", `{"session_id":"s1.kid"}`, claudeHeaders), 201, "create child")
+	childHeaders := map[string]string{"X-Actor": "claude", "X-Session-Id": "s1.kid", "X-Client-Host": "desk"}
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s1.kid",
+		`{"location":{"repo_remote":"http://example.com/acme/app/","branch":"feat/x"}}`,
+		childHeaders), 200, "patch child")
+
+	rec = e.do(t, "GET", "/v1/sessions/claude/s1", "", claudeHeaders)
+	wantStatus(t, rec, 200, "get parent with child")
+	var parent model.Session
+	decodeJSON(t, rec, &parent)
+	if len(parent.LocationConflicts) != 3 ||
+		parent.LocationConflicts[0] != (model.SessionRef{Actor: "claude", SessionID: "s1.kid"}) ||
+		parent.LocationConflicts[1] != (model.SessionRef{Actor: "codex", SessionID: "s-wait"}) ||
+		parent.LocationConflicts[2] != (model.SessionRef{Actor: "codex", SessionID: "s2"}) {
+		t.Errorf("parent conflicts = %+v", parent.LocationConflicts)
+	}
+	if parent.Children == nil || len(*parent.Children) != 1 {
+		t.Fatalf("children = %+v", parent.Children)
+	}
+	child := (*parent.Children)[0]
+	if len(child.LocationConflicts) != 3 ||
+		child.LocationConflicts[0] != (model.SessionRef{Actor: "claude", SessionID: "s1"}) ||
+		child.LocationConflicts[1] != (model.SessionRef{Actor: "codex", SessionID: "s-wait"}) ||
+		child.LocationConflicts[2] != (model.SessionRef{Actor: "codex", SessionID: "s2"}) {
+		t.Errorf("child conflicts = %+v", child.LocationConflicts)
 	}
 }

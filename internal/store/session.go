@@ -174,7 +174,7 @@ func (s *Store) TouchSession(ctx context.Context, tr model.Trace, at time.Time) 
 	})
 }
 
-func (s *Store) readSession(ctx context.Context, actor, id string) (*model.Session, model.Time, error) {
+func (s *Store) readSessionBase(ctx context.Context, actor, id string) (*model.Session, model.Time, error) {
 	now := s.stamp()
 	staleCutoff, waitCutoff := sessionCutoffs(now)
 	x, err := scanSession(s.db.QueryRowContext(ctx, sessionSelect+` where s.actor_id = ? and s.session_id = ?`, staleCutoff, waitCutoff, actor, id), now)
@@ -187,10 +187,94 @@ func (s *Store) readSession(ctx context.Context, actor, id string) (*model.Sessi
 	return x, now, nil
 }
 
+func (s *Store) readSession(ctx context.Context, actor, id string) (*model.Session, model.Time, error) {
+	x, now, err := s.readSessionBase(ctx, actor, id)
+	if err != nil {
+		return nil, model.Time{}, err
+	}
+	if err := s.attachLocationConflicts(ctx, now, x); err != nil {
+		return nil, model.Time{}, err
+	}
+	return x, now, nil
+}
+
+// attachLocationConflicts populates LocationConflicts on each session using
+// all active (non-stale or WaitingValid) sessions in the database.
+func (s *Store) attachLocationConflicts(ctx context.Context, now model.Time, sessions ...*model.Session) error {
+	for _, sess := range sessions {
+		if sess != nil {
+			sess.LocationConflicts = []model.SessionRef{}
+		}
+	}
+	if len(sessions) == 0 {
+		return nil
+	}
+	staleCutoff, waitCutoff := sessionCutoffs(now)
+	rows, err := s.db.QueryContext(ctx, `select actor_id, session_id, last_host, location
+		from session
+		where location is not null and (last_seen_at >= ? or (state is not null and state_at is not null and state_at >= ?))`,
+		staleCutoff, waitCutoff)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	bucket := map[string][]model.SessionRef{}
+	for rows.Next() {
+		var actor, sessionID, lastHost, locRaw string
+		if err := rows.Scan(&actor, &sessionID, &lastHost, &locRaw); err != nil {
+			return err
+		}
+		var loc model.SessionLocation
+		if err := json.Unmarshal([]byte(locRaw), &loc); err != nil {
+			return err
+		}
+		key, ok := model.SessionLocationKey(lastHost, &loc)
+		if !ok {
+			continue
+		}
+		bucket[key] = append(bucket[key], model.SessionRef{Actor: actor, SessionID: sessionID})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for k, refs := range bucket {
+		sort.Slice(refs, func(i, j int) bool {
+			if refs[i].Actor != refs[j].Actor {
+				return refs[i].Actor < refs[j].Actor
+			}
+			return refs[i].SessionID < refs[j].SessionID
+		})
+		bucket[k] = refs
+	}
+	nowTime := now.Time()
+	for _, sess := range sessions {
+		if sess == nil || (sess.Stale && !sess.WaitingValid(nowTime)) {
+			continue
+		}
+		key, ok := model.SessionLocationKey(sess.LastHost, sess.Location)
+		if !ok {
+			continue
+		}
+		refs := bucket[key]
+		if len(refs) == 0 {
+			continue
+		}
+		conflicts := make([]model.SessionRef, 0, len(refs))
+		for _, ref := range refs {
+			if ref.Actor == sess.Actor && ref.SessionID == sess.SessionID {
+				continue
+			}
+			conflicts = append(conflicts, ref)
+		}
+		sess.LocationConflicts = conflicts
+	}
+	return nil
+}
+
 // GetSession returns a session with its children, oldest first. The
 // children carry no children of their own.
 func (s *Store) GetSession(ctx context.Context, actor, id string) (*model.Session, error) {
-	x, now, err := s.readSession(ctx, actor, id)
+	x, now, err := s.readSessionBase(ctx, actor, id)
 	if err != nil {
 		return nil, err
 	}
@@ -209,8 +293,19 @@ func (s *Store) GetSession(ctx context.Context, actor, id string) (*model.Sessio
 		}
 		children = append(children, *c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ptrs := make([]*model.Session, 1+len(children))
+	ptrs[0] = x
+	for i := range children {
+		ptrs[i+1] = &children[i]
+	}
+	if err := s.attachLocationConflicts(ctx, now, ptrs...); err != nil {
+		return nil, err
+	}
 	x.Children = &children
-	return x, rows.Err()
+	return x, nil
 }
 
 // ListSessions returns a page of sessions, the most recently seen first, and
@@ -283,7 +378,17 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]model.Sess
 		}
 		items = append(items, *x)
 	}
-	return items, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	ptrs := make([]*model.Session, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := s.attachLocationConflicts(ctx, now, ptrs...); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 // sessionRow is the part of a stored session a patch compares against.

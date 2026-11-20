@@ -469,7 +469,17 @@ func (s *Store) waitingSessionsSection(ctx context.Context, project string, limi
 		}
 		items = append(items, *item)
 	}
-	return Section[model.Session]{Total: total, Items: items}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return Section[model.Session]{}, err
+	}
+	ptrs := make([]*model.Session, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := s.attachLocationConflicts(ctx, now, ptrs...); err != nil {
+		return Section[model.Session]{}, err
+	}
+	return Section[model.Session]{Total: total, Items: items}, nil
 }
 
 // doingSection lists the doing issues with the session holding each. An open

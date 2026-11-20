@@ -629,3 +629,45 @@ func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
 		t.Errorf("limited waiting_sessions = %+v", ws)
 	}
 }
+
+func TestAgendaWaitingSessionsLocationConflicts(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}, {ID: "codex", Kind: model.ActorAgent}}); err != nil {
+		t.Fatal(err)
+	}
+	mustProject(t, s, ctx, "AAA")
+	t0 := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
+
+	ptr := func(v string) *string { return &v }
+	trWait := model.Trace{Actor: "claude", SessionID: "s-wait", ClientHost: "desk"}
+	trOther := model.Trace{Actor: "codex", SessionID: "s-other", ClientHost: "laptop"}
+	mustTouch(t, s, trWait, t0)
+	mustTouch(t, s, trOther, t0)
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "a"})
+	stIn := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, trWait, trWait.Actor, trWait.SessionID, SessionPatch{
+		Issue:    Optional[string]{Set: true, Value: &i.Key},
+		State:    Optional[string]{Set: true, Value: &stIn},
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://example.com/acme/app.git"), Branch: ptr("feat/a")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trOther, trOther.Actor, trOther.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("git@example.com:acme/app.git"), Branch: ptr("feat/a")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := s.Agenda(ctx, []string{"AAA"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := a.Projects[0].UserTurn.WaitingSessions.Items
+	if len(items) != 1 {
+		t.Fatalf("waiting items = %+v", items)
+	}
+	if len(items[0].LocationConflicts) != 1 || items[0].LocationConflicts[0] != (model.SessionRef{Actor: "codex", SessionID: "s-other"}) {
+		t.Errorf("waiting session location_conflicts = %+v", items[0].LocationConflicts)
+	}
+}
