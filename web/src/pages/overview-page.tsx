@@ -1,8 +1,8 @@
-import { ArrowRightIcon, BellDotIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon } from 'lucide-react'
+import { AlertTriangleIcon, ArrowRightIcon, BellDotIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useAgenda, useOverview, useProjects } from '@/api/queries'
-import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DoingItem, type IssueSummary, type Overview, type QueueItem, type Session } from '@/api/types'
+import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DecisionItem, type DoingItem, type IssueSummary, type Overview, type QueueItem, type Session } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { useFlash } from '@/hooks/use-flash'
 import { unacknowledgedListPath } from '@/lib/acknowledge'
 import { PRIORITY_LABEL, PROJECT_STATUS_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
-import { sessionDetailPath, sessionKey } from '@/lib/session-tree'
+import { sessionDetailPath, sessionKey, sessionRefLabel } from '@/lib/session-tree'
 import { formatKst, formatKstTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -116,6 +116,60 @@ function Section({
 // 칸 높이를 이슈 행(h-8) 5개와 행 사이 구분선 높이로 고정하고, 넘치면 칸 안에서 스크롤한다.
 const LIST_ROWS = 5
 const LIST_HEIGHT = `calc(${LIST_ROWS} * 2rem + ${LIST_ROWS - 1}px)`
+
+function DecisionWaitingSessionRow({ session }: { session: Session }) {
+  const conflicts = session.location_conflicts ?? []
+  const conflictTitle = conflicts.length > 0 ? conflicts.map(sessionRefLabel).join(', ') : undefined
+  return (
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-2 py-1 text-xs transition-colors hover:bg-accent/40">
+      <ActorChip actor={session.actor} className="shrink-0" />
+      <Link to={sessionDetailPath(session)} className="font-mono text-foreground/90 break-all hover:underline">
+        {session.session_id}
+      </Link>
+      {session.state ? <WaitingStateBadge state={session.state} /> : null}
+      {conflicts.length > 0 ? (
+        <Badge variant="destructive" title={conflictTitle}>
+          <AlertTriangleIcon className="size-3" />
+          위치 충돌 {conflicts.length}
+        </Badge>
+      ) : null}
+      {session.state_reason ? (
+        <span className="min-w-0 max-w-full truncate text-[0.6875rem] text-muted-foreground" title={session.state_reason}>
+          {session.state_reason}
+        </span>
+      ) : null}
+    </li>
+  )
+}
+
+/** 결정 필요 이슈와 연결된 대기 세션을 그린다. 세션 링크는 IssueRow의 <a> 밖에 형제로 둔다. */
+function DecisionList({ items, flash }: { items: DecisionItem[]; flash: Set<string> }) {
+  return (
+    <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
+      {items.length === 0 ? (
+        <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
+      ) : (
+        <ul className="divide-y divide-border/60">
+          {items.map((item) => {
+            const waiting = item.waiting_sessions ?? []
+            return (
+              <li key={item.key} className={waiting.length > 0 ? '[&>a]:border-b-0' : undefined}>
+                <IssueRow issue={item} compact flash={flash.has(item.key)} />
+                {waiting.length > 0 ? (
+                  <ul className="mr-2 mb-1.5 ml-4 space-y-0.5 border-l border-amber-500/30 pl-2">
+                    {waiting.map((s) => (
+                      <DecisionWaitingSessionRow key={sessionKey(s)} session={s} />
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 function IssueList({ items, flash, showReady }: { items: (IssueSummary | QueueItem)[]; flash: Set<string>; showReady?: boolean }) {
   return (
@@ -302,7 +356,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           ) : null}
           <div className="grid gap-3 xl:grid-cols-3">
             <Section title="결정 필요" total={o.decisions.total} icon={<ScaleIcon className="size-3.5 text-amber-400" />} accent="decision">
-              <IssueList items={o.decisions.items} flash={flash} />
+              <DecisionList items={o.decisions.items} flash={flash} />
             </Section>
             <Section
               title="검토"

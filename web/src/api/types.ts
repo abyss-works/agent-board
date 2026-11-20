@@ -146,6 +146,11 @@ export interface DoingItem extends IssueSummary {
   holder: Holder
 }
 
+/** 결정이 필요한 이슈와 이 이슈에 연결된 대기 세션 목록. */
+export interface DecisionItem extends IssueSummary {
+  waiting_sessions: Session[]
+}
+
 /** 이슈 종류별 본문 템플릿. 에이전트가 만드는 이슈는 서버가 body의 `## 제목`을 순서대로 검사한다. */
 export interface Template {
   type: IssueType
@@ -327,7 +332,7 @@ export interface Overview {
   review: Section<IssueSummary>
   blocked: Section<QueueItem>
   /** decision_needed가 있는 열린 이슈 */
-  decisions: Section<IssueSummary>
+  decisions: Section<DecisionItem>
   next: Section<QueueItem>
   /** 삭제되지 않은 미확인 이슈. 최근에 만든 것부터. */
   unacknowledged: Section<IssueSummary>
@@ -339,7 +344,7 @@ export interface AgendaProject {
   dormant: number
   user_turn: {
     review: Section<IssueSummary>
-    decisions: Section<IssueSummary>
+    decisions: Section<DecisionItem>
     unacknowledged: Section<IssueSummary>
     tasks: Section<IssueSummary>
     waiting_sessions: Section<Session>

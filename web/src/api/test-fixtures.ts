@@ -1,4 +1,4 @@
-import type { Activity, IssueSummary, Session } from './types'
+import type { Activity, DecisionItem, IssueSummary, Session } from './types'
 
 /** 시험용 요약 이슈. 바꿀 필드만 넘긴다. */
 export function issueSummary(partial: Partial<IssueSummary> = {}): IssueSummary {
@@ -33,6 +33,14 @@ export function issueSummary(partial: Partial<IssueSummary> = {}): IssueSummary 
     updated_by: 'owner',
     dormant: false,
     ...partial,
+  }
+}
+
+/** 시험용 결정 필요 항목. 바꿀 필드만 넘긴다. */
+export function decisionItem(partial: Partial<DecisionItem> = {}): DecisionItem {
+  return {
+    ...issueSummary(partial),
+    waiting_sessions: partial.waiting_sessions ?? [],
   }
 }
 

@@ -4,8 +4,8 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import { ApiClient } from '@/api/client'
 import { QUERY_ROOT, agendaQueryKey } from '@/api/queries'
-import { issueSummary, sessionFixture } from '@/api/test-fixtures'
-import type { Agenda, DoingItem, IssueSummary, Overview, Section, Session } from '@/api/types'
+import { decisionItem, issueSummary, sessionFixture } from '@/api/test-fixtures'
+import type { Agenda, DecisionItem, DoingItem, IssueSummary, Overview, Section, Session } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
 import { OverviewPage } from './overview-page'
 
@@ -44,7 +44,7 @@ function overview(partial: Partial<Overview> = {}): Overview {
     doing: section<DoingItem>([]),
     review: section<IssueSummary>([]),
     blocked: section([]),
-    decisions: section<IssueSummary>([]),
+    decisions: section<DecisionItem>([]),
     next: section([]),
     unacknowledged: section<IssueSummary>([]),
     recent_activity: section([]),
@@ -105,7 +105,7 @@ function sectionOf(html: string, title: string): string {
   return found.split('</section>')[0]
 }
 
-const asked = issueSummary({ key: 'AGB-7', number: 7, title: '캐시 도입', decision_needed: 'Redis를 쓸지 정해 주세요' })
+const asked = decisionItem({ key: 'AGB-7', number: 7, title: '캐시 도입', decision_needed: 'Redis를 쓸지 정해 주세요' })
 function held(summary: IssueSummary, actor: string, lastActiveAt: string, stale: boolean): DoingItem {
   return { ...summary, holder: { actor, session_id: `${actor}-s`, last_active_at: lastActiveAt, stale } }
 }
@@ -135,6 +135,87 @@ describe('현황의 결정 필요', () => {
     const empty = sectionOf(render(overview()), '결정 필요')
     expect(empty).toContain('없음')
     expect(empty).not.toContain('AGB-')
+  })
+  it('대기 세션이 없는 결정 항목은 세션 링크나 충돌 배지 없이 깔끔히 그린다', () => {
+    const decisions = sectionOf(html, '결정 필요')
+    expect(decisions).not.toContain('/sessions?')
+    expect(decisions).not.toContain('위치 충돌')
+  })
+  it('연결된 대기 세션이 1건이면 이슈 링크 밖에 세션 링크, 행위자, 대기 상태, 사유를 그린다', () => {
+    const waiting = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-decide-1',
+      issue: 'AGB-7',
+      state: 'waiting_approval',
+      state_reason: 'Redis 클러스터 구성 승인을 기다립니다',
+    })
+    const item = decisionItem({
+      key: 'AGB-7',
+      number: 7,
+      title: '캐시 도입',
+      decision_needed: 'Redis를 쓸지 정해 주세요',
+      waiting_sessions: [waiting],
+    })
+    const decisions = sectionOf(render(overview({ decisions: section([item]) })), '결정 필요')
+    expect(decisions).toContain('Redis를 쓸지 정해 주세요')
+    expect(decisions).toContain('agent-a')
+    expect(decisions).toContain('sess-decide-1')
+    expect(decisions).toContain('승인 대기')
+    expect(decisions).toContain('Redis 클러스터 구성 승인을 기다립니다')
+    expect(decisions).toContain('href="/sessions?actor=agent-a&amp;session=sess-decide-1"')
+
+    const issueLinkStart = decisions.indexOf('href="/issues/AGB-7"')
+    const issueLinkEnd = decisions.indexOf('</a>', issueLinkStart)
+    const sessionLinkStart = decisions.indexOf('href="/sessions?actor=agent-a&amp;session=sess-decide-1"')
+    expect(issueLinkStart).toBeGreaterThanOrEqual(0)
+    expect(issueLinkEnd).toBeGreaterThan(issueLinkStart)
+    expect(decisions.slice(issueLinkStart, issueLinkEnd)).not.toContain('/sessions?')
+    expect(sessionLinkStart).toBeGreaterThan(issueLinkEnd)
+    expect(decisions).not.toMatch(/<a\b[^>]*>(?:(?!<\/a>)[\s\S])*<a\b/)
+  })
+  it('대기 세션이 여럿이고 위치 충돌이 있으면 모두 형제 링크와 배지로 표시한다', () => {
+    const first = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-first',
+      issue: 'AGB-7',
+      state: 'waiting_input',
+      state_reason: '직렬화 형식 선택 필요',
+      location_conflicts: [{ actor: 'agent-c', session_id: 'sess-other' }],
+    })
+    const second = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'sess-second',
+      issue: 'AGB-7',
+      state: 'waiting_external',
+      state_reason: null,
+      location_conflicts: [],
+    })
+    const third = sessionFixture({
+      actor: 'agent-c',
+      session_id: 'sess-third',
+      issue: 'AGB-7',
+      state: null,
+      state_reason: null,
+    })
+    const item = decisionItem({
+      key: 'AGB-7',
+      number: 7,
+      title: '캐시 도입',
+      decision_needed: 'Redis를 쓸지 정해 주세요',
+      waiting_sessions: [first, second, third],
+    })
+    const decisions = sectionOf(render(overview({ decisions: section([item]) })), '결정 필요')
+    expect(decisions).toContain('href="/sessions?actor=agent-a&amp;session=sess-first"')
+    expect(decisions).toContain('href="/sessions?actor=agent-b&amp;session=sess-second"')
+    expect(decisions).toContain('href="/sessions?actor=agent-c&amp;session=sess-third"')
+    expect(decisions).toContain('입력 대기')
+    expect(decisions).toContain('직렬화 형식 선택 필요')
+    expect(decisions).toContain('외부 대기')
+    expect(decisions).toContain('위치 충돌 1')
+    expect(decisions).toContain('agent-c/sess-other')
+    expect(decisions.indexOf('sess-first')).toBeLessThan(decisions.indexOf('sess-second'))
+    expect(decisions.indexOf('sess-second')).toBeLessThan(decisions.indexOf('sess-third'))
+    expect(decisions).not.toMatch(/<a\b[^>]*>(?:(?!<\/a>)[\s\S])*<a\b/)
   })
 })
 
