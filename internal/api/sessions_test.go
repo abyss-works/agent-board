@@ -159,6 +159,42 @@ func TestSessionWriteFailureLeavesTheRequestAlone(t *testing.T) {
 	}
 }
 
+func TestConcurrentFirstRequestsDoNotRaceSessionRegistration(t *testing.T) {
+	e, _ := newSessionEnv(t)
+	tok := e.bearer(t, "claude")
+	tx, err := e.st.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	req := func(idx int) {
+		defer wg.Done()
+		rec := e.do(t, "GET", "/v1/sessions/claude/race-sess", "", map[string]string{
+			"Authorization": "Bearer " + tok,
+			"X-Session-Id":  "race-sess",
+		})
+		codes[idx] = rec.Code
+	}
+	wg.Add(1)
+	go req(0)
+	time.Sleep(50 * time.Millisecond)
+	wg.Add(1)
+	go req(1)
+	time.Sleep(50 * time.Millisecond)
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	for i, code := range codes {
+		if code != 200 {
+			t.Errorf("concurrent request %d: status %d, want 200", i, code)
+		}
+	}
+}
+
 // sessionJSON decodes a session response.
 func sessionJSON(t *testing.T, rec interface{ Result() *http.Response }, body []byte) map[string]any {
 	t.Helper()

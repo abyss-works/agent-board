@@ -46,9 +46,9 @@ func (h *handler) touchSession(next http.Handler) http.Handler {
 	})
 }
 
-// recordCall writes the call of a session unless this process wrote that
-// session less than sessionWriteEvery ago. A failed write is logged and does
-// not fail the request; the next call tries again.
+// recordCall writes the call of a session unless this process completed a
+// write of that session less than sessionWriteEvery ago. A failed write is
+// logged and does not fail the request; the next call tries again.
 func (h *handler) recordCall(ctx context.Context, tr model.Trace) {
 	now := h.opts.Now()
 	key := tr.Actor + "/" + tr.SessionID
@@ -57,6 +57,12 @@ func (h *handler) recordCall(ctx context.Context, tr model.Trace) {
 		h.seenMu.Unlock()
 		return
 	}
+	h.seenMu.Unlock()
+	if err := h.store.TouchSession(ctx, tr, now); err != nil {
+		h.opts.Logger.Warn("session write failed", "actor", tr.Actor, "session_id", truncate(tr.SessionID), "err", err.Error())
+		return
+	}
+	h.seenMu.Lock()
 	if len(h.seen) >= maxSeenSessions {
 		for k, t := range h.seen {
 			if now.Sub(t) >= sessionWriteEvery {
@@ -64,16 +70,10 @@ func (h *handler) recordCall(ctx context.Context, tr model.Trace) {
 			}
 		}
 	}
-	h.seen[key] = now
-	h.seenMu.Unlock()
-	if err := h.store.TouchSession(ctx, tr, now); err != nil {
-		h.seenMu.Lock()
-		if h.seen[key].Equal(now) {
-			delete(h.seen, key)
-		}
-		h.seenMu.Unlock()
-		h.opts.Logger.Warn("session write failed", "actor", tr.Actor, "session_id", truncate(tr.SessionID), "err", err.Error())
+	if last, ok := h.seen[key]; !ok || now.After(last) {
+		h.seen[key] = now
 	}
+	h.seenMu.Unlock()
 }
 
 // parseSessionRef reads "<actor>/<session ID>".
