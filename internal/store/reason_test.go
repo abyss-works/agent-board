@@ -115,7 +115,7 @@ func TestStatusReason(t *testing.T) {
 	if err != nil || !changed || reasonOf(titled) != reasonOf(long) {
 		t.Errorf("title change = %s changed=%v err=%v", reasonOf(titled), changed, err)
 	}
-	if _, changed, err := s.UpdateIssue(ctx, trClaude, "AGB-1", IssuePatch{Status: &titled.Status}, nil); err != nil || changed {
+	if _, changed, err := s.UpdateIssue(ctx, trOwner, "AGB-1", IssuePatch{Status: &titled.Status}, nil); err != nil || changed {
 		t.Errorf("same status = changed %v, err %v", changed, err)
 	}
 

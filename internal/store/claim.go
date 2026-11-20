@@ -173,6 +173,23 @@ func syncClaimOnStatusChangeTx(ctx context.Context, tx *sql.Tx, issueID int64, t
 	return nil
 }
 
+func activeIssueIDForClaim(ctx context.Context, tx *sql.Tx, key string) (int64, error) {
+	var issueID int64
+	var projectStatus string
+	err := tx.QueryRowContext(ctx, `select i.id, p.status from issue i join project p on p.id = i.project_id where i.key = ?`, key).
+		Scan(&issueID, &projectStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	if model.ProjectStatus(projectStatus) != model.ProjectActive {
+		return 0, ErrProjectNotActive
+	}
+	return issueID, nil
+}
+
 // ClaimIssue atomically claims key for the session of tr. It returns the claim
 // and whether a new claim was created (false when the same session already
 // holds a valid open claim).
@@ -180,11 +197,7 @@ func (s *Store) ClaimIssue(ctx context.Context, tr model.Trace, key string) (*mo
 	var out *model.IssueClaim
 	var created bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var issueID int64
-		err := tx.QueryRowContext(ctx, `select id from issue where key = ?`, key).Scan(&issueID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+		issueID, err := activeIssueIDForClaim(ctx, tx, key)
 		if err != nil {
 			return err
 		}
@@ -274,11 +287,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, tr model.Trace, key, outcome s
 	}
 	var out *model.IssueClaim
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		var issueID int64
-		err := tx.QueryRowContext(ctx, `select id from issue where key = ?`, key).Scan(&issueID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+		issueID, err := activeIssueIDForClaim(ctx, tx, key)
 		if err != nil {
 			return err
 		}

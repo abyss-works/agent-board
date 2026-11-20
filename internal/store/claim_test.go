@@ -404,3 +404,125 @@ func TestFingerprintCoversIssueClaims(t *testing.T) {
 		t.Fatalf("releasing claim did not change fingerprint: %q -> %q (%v)", fp1, fp2, err)
 	}
 }
+
+func TestUpdateDoingToDoingSyncsClaimWithoutBumpingVersion(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "claude", Kind: model.ActorAgent},
+		{ID: "codex", Kind: model.ActorAgent},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	clockAt(s, &now)
+	mustProject(t, s, ctx, "AGB")
+
+	trA := model.Trace{Actor: "claude", SessionID: "sess-a", ClientHost: "desk"}
+	trB := model.Trace{Actor: "codex", SessionID: "sess-b", ClientHost: "laptop"}
+	doing := model.StatusDoing
+
+	issue := mustIssue(t, s, ctx, trA, IssueInput{Title: "doing target", Body: tplBody(model.TypeFeature), Status: model.StatusDoing})
+	startVer := issue.Version
+	actsBefore, _, err := s.ListActivity(ctx, ActivityFilter{Issues: []string{issue.Key}, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Same session with valid claim: no-op, keeps claim ID, version, and activity count.
+	claimsBefore, _, _ := s.ListIssueClaims(ctx, issue.Key, 10, 0)
+	got, changed, err := s.UpdateIssue(ctx, trA, issue.Key, IssuePatch{Status: &doing}, nil)
+	if err != nil || changed || got.Version != startVer {
+		t.Fatalf("same session doing->doing: got=%+v changed=%v err=%v", got, changed, err)
+	}
+	claimsAfter, _, _ := s.ListIssueClaims(ctx, issue.Key, 10, 0)
+	if len(claimsAfter) != 1 || claimsAfter[0].ID != claimsBefore[0].ID || !claimsAfter[0].Active {
+		t.Errorf("same session claim changed: %+v", claimsAfter)
+	}
+
+	// Another agent while claim is valid: rejected with ErrIssueClaimed.
+	var cerr *ErrIssueClaimed
+	if _, _, err := s.UpdateIssue(ctx, trB, issue.Key, IssuePatch{Status: &doing}, nil); !errors.As(err, &cerr) || cerr.Actor != "claude" {
+		t.Fatalf("other agent doing->doing while active: err=%v", err)
+	}
+
+	// Another agent combining doing->doing with a field edit while claim is valid: rejected without applying edit.
+	newTitle := "should not apply"
+	cerr = nil
+	if _, _, err := s.UpdateIssue(ctx, trB, issue.Key, IssuePatch{Status: &doing, Title: &newTitle}, nil); !errors.As(err, &cerr) {
+		t.Fatalf("other agent doing->doing with title edit: err=%v", err)
+	}
+	if cur, _ := s.GetIssue(ctx, issue.Key); cur.Title != "doing target" || cur.Version != startVer {
+		t.Errorf("issue mutated on claimed error: %+v", cur)
+	}
+
+	// After 31 minutes, another agent takes over the expired claim without bumping version or activity.
+	now = now.Add(31 * time.Minute)
+	got, changed, err = s.UpdateIssue(ctx, trB, issue.Key, IssuePatch{Status: &doing}, nil)
+	if err != nil || changed || got.Status != model.StatusDoing || got.Version != startVer {
+		t.Fatalf("expired doing->doing takeover: got=%+v changed=%v err=%v", got, changed, err)
+	}
+	claims, _, _ := s.ListIssueClaims(ctx, issue.Key, 10, 0)
+	if len(claims) != 2 || !claims[0].Active || claims[0].Actor != "codex" || claims[1].Active || deref(claims[1].Outcome) != model.ClaimOutcomeExpired {
+		t.Errorf("claims after expired takeover = %+v", claims)
+	}
+	actsAfter, _, _ := s.ListActivity(ctx, ActivityFilter{Issues: []string{issue.Key}, Limit: 50})
+	if len(actsAfter) != len(actsBefore) {
+		t.Errorf("activity count = %d, want %d", len(actsAfter), len(actsBefore))
+	}
+
+	// User taking over a valid doing claim marks it taken_over and creates a new claim without bumping version.
+	got, changed, err = s.UpdateIssue(ctx, trOwner, issue.Key, IssuePatch{Status: &doing}, nil)
+	if err != nil || changed || got.Version != startVer {
+		t.Fatalf("user doing->doing takeover: got=%+v changed=%v err=%v", got, changed, err)
+	}
+	claims, _, _ = s.ListIssueClaims(ctx, issue.Key, 10, 0)
+	if len(claims) != 3 || !claims[0].Active || claims[0].Actor != "owner" || deref(claims[1].Outcome) != model.ClaimOutcomeTakenOver {
+		t.Errorf("claims after user takeover = %+v", claims)
+	}
+
+	// Unclaimed doing issue acquires a new claim on doing->doing without bumping version.
+	if _, err := s.ReleaseClaim(ctx, trOwner, issue.Key, model.ClaimOutcomeAbandoned, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, changed, err = s.UpdateIssue(ctx, trA, issue.Key, IssuePatch{Status: &doing}, nil)
+	if err != nil || changed || got.Version != startVer {
+		t.Fatalf("unclaimed doing->doing: got=%+v changed=%v err=%v", got, changed, err)
+	}
+	claims, _, _ = s.ListIssueClaims(ctx, issue.Key, 10, 0)
+	if len(claims) != 4 || !claims[0].Active || claims[0].Actor != "claude" {
+		t.Errorf("claims after unclaimed doing->doing = %+v", claims)
+	}
+}
+
+func TestClaimAndReleaseRejectInactiveProject(t *testing.T) {
+	s, ctx := seeded(t)
+	now := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	clockAt(s, &now)
+	trA := model.Trace{Actor: "claude", SessionID: "sess-a", ClientHost: "desk"}
+
+	for _, tc := range []struct {
+		key    string
+		status model.ProjectStatus
+	}{
+		{"ARC", model.ProjectArchived},
+		{"DEL", model.ProjectDeleted},
+	} {
+		mustProject(t, s, ctx, tc.key)
+		unclaimed := mustIssue(t, s, ctx, trOwner, IssueInput{Project: tc.key, Title: "unclaimed"})
+		claimed := mustIssue(t, s, ctx, trOwner, IssueInput{Project: tc.key, Title: "claimed"})
+		if _, _, err := s.ClaimIssue(ctx, trA, claimed.Key); err != nil {
+			t.Fatal(err)
+		}
+		st := tc.status
+		if _, err := s.UpdateProject(ctx, trOwner, tc.key, ProjectPatch{Status: &st}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.ClaimIssue(ctx, trA, unclaimed.Key); !errors.Is(err, ErrProjectNotActive) {
+			t.Errorf("%s ClaimIssue: err=%v, want ErrProjectNotActive", tc.status, err)
+		}
+		if _, err := s.ReleaseClaim(ctx, trA, claimed.Key, model.ClaimOutcomeAbandoned, nil); !errors.Is(err, ErrProjectNotActive) {
+			t.Errorf("%s ReleaseClaim: err=%v, want ErrProjectNotActive", tc.status, err)
+		}
+	}
+}

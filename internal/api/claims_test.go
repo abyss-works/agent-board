@@ -363,3 +363,114 @@ func TestOverviewAgendaHolderAndSessionIssueHTTP(t *testing.T) {
 		t.Errorf("session issue after claim expiry = %v, want %s", sess.Issue, fallbackIssue.Key)
 	}
 }
+
+func TestPatchDoingToDoingClaimsHTTP(t *testing.T) {
+	e, clock := newSessionEnv(t)
+	setupClaimProject(t, e)
+	hdrA := map[string]string{"X-Actor": "claude", "X-Session-Id": "sess-a"}
+	hdrB := map[string]string{"X-Actor": "codex", "X-Session-Id": "sess-b"}
+	hdrOwner := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-s"}
+
+	issue := createClaimIssue(t, e, `{"project":"AGB","title":"진행 중 인계","status":"doing"}`, hdrOwner)
+	// Switch claim to claude/sess-a by unclaiming owner then claiming with claude.
+	if rec := e.do(t, "DELETE", "/v1/issues/"+issue.Key+"/claim", "", hdrOwner); rec.Code != 200 {
+		t.Fatalf("unclaim owner: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, hdrA); rec.Code != 200 {
+		t.Fatalf("unclaimed doing->doing: %d %s", rec.Code, rec.Body)
+	}
+	var got model.Issue
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key, "", hdrA), &got)
+	if got.Version != issue.Version {
+		t.Errorf("unclaimed doing->doing bumped version %d -> %d", issue.Version, got.Version)
+	}
+	var list struct {
+		Items []model.IssueClaim `json:"items"`
+		Total int                `json:"total"`
+	}
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key+"/claims", "", hdrA), &list)
+	if list.Total != 2 || !list.Items[0].Active || list.Items[0].Actor != "claude" {
+		t.Fatalf("after unclaimed doing->doing: %+v", list)
+	}
+	activeID := list.Items[0].ID
+
+	// Same session valid doing->doing is 200 no-op.
+	if rec := e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, hdrA); rec.Code != 200 {
+		t.Fatalf("same session doing->doing: %d %s", rec.Code, rec.Body)
+	}
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key+"/claims", "", hdrA), &list)
+	if list.Total != 2 || list.Items[0].ID != activeID || !list.Items[0].Active {
+		t.Errorf("same session doing->doing mutated claim: %+v", list)
+	}
+
+	// Another agent while valid gets 409 claimed.
+	rec := e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, hdrB)
+	if rec.Code != 409 || decodeErr(t, rec).Error.Code != "claimed" {
+		t.Fatalf("other agent valid doing->doing: %d %s", rec.Code, rec.Body)
+	}
+
+	// After 31 minutes, another agent expires the stale claim and acquires a new one without bumping version.
+	clock.add(31 * time.Minute)
+	rec = e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, hdrB)
+	if rec.Code != 200 {
+		t.Fatalf("other agent expired doing->doing: %d %s", rec.Code, rec.Body)
+	}
+	decodeJSON(t, rec, &got)
+	if got.Status != model.StatusDoing || got.Version != issue.Version {
+		t.Errorf("expired doing->doing response: status=%s version=%d (want %d)", got.Status, got.Version, issue.Version)
+	}
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key+"/claims", "", hdrB), &list)
+	if list.Total != 3 || !list.Items[0].Active || list.Items[0].Actor != "codex" || *list.Items[1].Outcome != model.ClaimOutcomeExpired {
+		t.Errorf("claims after expired doing->doing = %+v", list)
+	}
+
+	// User taking over a valid doing claim marks it taken_over and acquires a new claim.
+	rec = e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, hdrOwner)
+	if rec.Code != 200 {
+		t.Fatalf("user doing->doing: %d %s", rec.Code, rec.Body)
+	}
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key+"/claims", "", hdrOwner), &list)
+	if list.Total != 4 || !list.Items[0].Active || list.Items[0].Actor != "owner" || *list.Items[1].Outcome != model.ClaimOutcomeTakenOver {
+		t.Errorf("claims after user doing->doing = %+v", list)
+	}
+}
+
+func TestClaimEndpointsRejectInactiveProjects(t *testing.T) {
+	e, _ := newSessionEnv(t)
+	hdrA := map[string]string{"X-Actor": "claude", "X-Session-Id": "sess-a"}
+	hdrOwner := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-s"}
+
+	for _, tc := range []struct {
+		key    string
+		status string
+	}{
+		{"ARC", "archived"},
+		{"DEL", "deleted"},
+	} {
+		if rec := e.do(t, "POST", "/v1/projects", `{"key":"`+tc.key+`","name":"`+tc.status+`"}`, hdrOwner); rec.Code != 201 {
+			t.Fatalf("create %s: %d %s", tc.key, rec.Code, rec.Body)
+		}
+		unclaimed := createClaimIssue(t, e, `{"project":"`+tc.key+`","title":"미점유"}`, hdrOwner)
+		claimed := createClaimIssue(t, e, `{"project":"`+tc.key+`","title":"점유됨"}`, hdrOwner)
+		if rec := e.do(t, "POST", "/v1/issues/"+claimed.Key+"/claim", "", hdrA); rec.Code != 201 {
+			t.Fatalf("claim before %s: %d %s", tc.status, rec.Code, rec.Body)
+		}
+		if rec := e.do(t, "PATCH", "/v1/projects/"+tc.key, `{"status":"`+tc.status+`"}`, hdrOwner); rec.Code != 200 {
+			t.Fatalf("set project %s: %d %s", tc.status, rec.Code, rec.Body)
+		}
+
+		rec := e.do(t, "POST", "/v1/issues/"+unclaimed.Key+"/claim", "", hdrA)
+		if rec.Code != 409 {
+			t.Errorf("%s POST claim: %d %s", tc.status, rec.Code, rec.Body)
+		} else {
+			wantDetail(t, decodeErr(t, rec), "", "project_not_active")
+		}
+
+		rec = e.do(t, "DELETE", "/v1/issues/"+claimed.Key+"/claim", "", hdrA)
+		if rec.Code != 409 {
+			t.Errorf("%s DELETE claim: %d %s", tc.status, rec.Code, rec.Body)
+		} else {
+			wantDetail(t, decodeErr(t, rec), "", "project_not_active")
+		}
+	}
+}
