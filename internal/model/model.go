@@ -414,3 +414,9 @@ func ParseIssueKey(v string) (project string, n int64, ok bool) {
 	}
 	return m[1], n, true
 }
+
+// ValidIssueKey reports whether v is a well formed issue key.
+func ValidIssueKey(v string) bool {
+	_, _, ok := ParseIssueKey(v)
+	return ok
+}

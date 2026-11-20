@@ -328,9 +328,15 @@ func TestIssueKey(t *testing.T) {
 	if !ok || p != "AGB" || n != 12 {
 		t.Fatalf("ParseIssueKey = %q %d %v", p, n, ok)
 	}
+	if !ValidIssueKey("AGB-12") {
+		t.Error("ValidIssueKey(AGB-12) = false")
+	}
 	for _, bad := range []string{"AGB", "AGB-0", "AGB-01", "agb-1", "AGB-1-2", "AGB-x", "-1"} {
 		if _, _, ok := ParseIssueKey(bad); ok {
 			t.Errorf("%q should be invalid", bad)
+		}
+		if ValidIssueKey(bad) {
+			t.Errorf("ValidIssueKey(%q) = true", bad)
 		}
 	}
 	if IssueKey("AGB", 7) != "AGB-7" {

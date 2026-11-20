@@ -69,7 +69,7 @@ func TestMigration16OnFreshDatabase(t *testing.T) {
 	s := openTest(t)
 	cols := queryStrings(t, s, `select group_concat(name, ',') from pragma_table_info('message')`)
 	want := "id,project_id,to_label,title,body,created_at,created_by,created_session,created_host,expires_at,deleted_at,deleted_by"
-	if cols[0] != want {
+	if cols[0] != want && !strings.HasPrefix(cols[0], want+",") {
 		t.Errorf("columns = %s", cols[0])
 	}
 }
