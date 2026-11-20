@@ -1,7 +1,7 @@
 import { ArrowRightIcon, BellDotIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
-import { useOverview, useProjects, useSessions } from '@/api/queries'
+import { useAgenda, useOverview, useProjects } from '@/api/queries'
 import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DoingItem, type IssueSummary, type Overview, type QueueItem, type Session } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { ActivityItem } from '@/components/activity/activity-item'
@@ -249,10 +249,11 @@ function WaitingSessionList({ items }: { items: Session[] }) {
 
 function ProjectOverview({ projectKey }: { projectKey: string }) {
   const q = useOverview(projectKey)
-  const waitingQ = useSessions({ project: projectKey, waiting: true })
+  const agendaQ = useAgenda(projectKey)
   const o = q.data
-  const waitingSessions = waitingQ.data?.items ?? []
-  const waitingTotal = waitingQ.data?.total ?? 0
+  const waitingSection = agendaQ.data?.projects[0]?.user_turn.waiting_sessions
+  const waitingSessions = waitingSection?.items ?? []
+  const waitingTotal = waitingSection?.total ?? 0
   const issues = o
     ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unacknowledged.items]
     : undefined

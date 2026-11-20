@@ -333,6 +333,31 @@ export interface Overview {
   recent_activity: Section<Activity>
 }
 
+export interface AgendaProject {
+  project: Project
+  dormant: number
+  user_turn: {
+    review: Section<IssueSummary>
+    decisions: Section<IssueSummary>
+    unacknowledged: Section<IssueSummary>
+    tasks: Section<IssueSummary>
+    waiting_sessions: Section<Session>
+  }
+  agent: {
+    doing: Section<DoingItem>
+    next: Section<QueueItem>
+  }
+  waiting: {
+    blocked: Section<QueueItem>
+    external: Section<IssueSummary>
+  }
+}
+
+export interface Agenda {
+  generated_at: string
+  projects: AgendaProject[]
+}
+
 export interface LabelCount {
   label: string
   count: number

@@ -7,6 +7,7 @@ import type {
   Actor,
   ActorToken,
   ActorTokenFilter,
+  Agenda,
   Board,
   DeviceAuthorization,
   DeviceAuthorizationPatch,
@@ -51,6 +52,20 @@ export function useOverview(projectKey: string | null) {
   return useQuery({
     queryKey: [QUERY_ROOT, 'overview', projectKey],
     queryFn: ({ signal }) => api.get<Overview>(`/projects/${projectKey}/overview`, { limit: 50 }, signal),
+    enabled: projectKey !== null,
+  })
+}
+
+export function agendaQueryKey(projectKey: string | null) {
+  return [QUERY_ROOT, 'agenda', projectKey] as const
+}
+
+/** 프로젝트 아젠다 조회(내 차례 대기 세션 포함). 프로젝트를 고르지 않으면 부르지 않는다. */
+export function useAgenda(projectKey: string | null) {
+  const api = useApi()
+  return useQuery<Agenda>({
+    queryKey: agendaQueryKey(projectKey),
+    queryFn: ({ signal }) => api.getAgenda({ project: projectKey!, limit: 50 }, signal),
     enabled: projectKey !== null,
   })
 }

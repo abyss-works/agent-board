@@ -347,4 +347,19 @@ describe('세션 API 호출', () => {
     expect(calls[0].init.method).toBe('GET')
     expect(calls[0].url).toBe('/api/staging/v1/sessions/agent-a/sess.1%2Ba')
   })
+
+  it('getAgenda는 project와 limit을 붙여 GET /v1/agenda를 부른다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { generated_at: '2026-10-17T07:00:00.000Z', projects: [] })
+    const client = new ApiClient(config, fetchFn)
+    await client.getAgenda({ project: 'APP', limit: 50 })
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe('/api/staging/v1/agenda?project=APP&limit=50')
+  })
+
+  it('getAgenda는 매개변수가 없으면 질의 없이 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { generated_at: '2026-10-17T07:00:00.000Z', projects: [] })
+    const client = new ApiClient(config, fetchFn)
+    await client.getAgenda()
+    expect(calls[0].url).toBe('/api/staging/v1/agenda')
+  })
 })

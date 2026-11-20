@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import { ApiClient } from '@/api/client'
-import { QUERY_ROOT, sessionsQueryKey } from '@/api/queries'
+import { QUERY_ROOT, agendaQueryKey } from '@/api/queries'
 import { issueSummary, sessionFixture } from '@/api/test-fixtures'
-import type { DoingItem, IssueSummary, Overview, Section, Session } from '@/api/types'
+import type { Agenda, DoingItem, IssueSummary, Overview, Section, Session } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
 import { OverviewPage } from './overview-page'
 
@@ -52,16 +52,38 @@ function overview(partial: Partial<Overview> = {}): Overview {
   }
 }
 
-function render(o: Overview, waitingSessions?: Session[]): string {
+function agendaOf(o: Overview, waitingSessions: Section<Session>): Agenda {
+  return {
+    generated_at: o.generated_at,
+    projects: [
+      {
+        project: o.project,
+        dormant: 0,
+        user_turn: {
+          review: o.review,
+          decisions: o.decisions,
+          unacknowledged: o.unacknowledged,
+          tasks: section([]),
+          waiting_sessions: waitingSessions,
+        },
+        agent: {
+          doing: o.doing,
+          next: o.next,
+        },
+        waiting: {
+          blocked: o.blocked,
+          external: section([]),
+        },
+      },
+    ],
+  }
+}
+
+function render(o: Overview, waitingSessions?: Section<Session>): string {
   const client = new QueryClient()
   client.setQueryData([QUERY_ROOT, 'overview', 'AGB'], o)
   if (waitingSessions !== undefined) {
-    client.setQueryData(sessionsQueryKey({ project: 'AGB', waiting: true }), {
-      items: waitingSessions,
-      total: waitingSessions.length,
-      limit: 50,
-      offset: 0,
-    })
+    client.setQueryData(agendaQueryKey('AGB'), agendaOf(o, waitingSessions))
   }
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -143,29 +165,45 @@ describe('현황의 진행 중', () => {
 })
 
 describe('현황의 대기 세션', () => {
-  it('대기 세션이 있으면 내 차례에 대기 세션 카드를 보인다', () => {
-    const waiting = sessionFixture({
+  it('아젠다 waiting_sessions를 state_at 순서와 total 기준으로 표시하고 issue 귀속 세션도 누락하지 않는다', () => {
+    const earlierByIssue = sessionFixture({
       actor: 'agent-a',
-      session_id: 'sess-wait-1',
-      last_project: 'AGB',
+      session_id: 'sess-wait-earlier',
+      last_project: null,
       issue: 'APP-12',
+      state: 'waiting_input',
+      state_reason: '옵션 확인이 필요합니다',
+      state_at: '2026-10-17T07:01:00.000Z',
+    })
+    const laterOtherLastProject = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'sess-wait-later',
+      last_project: 'OTHER',
+      issue: 'APP-15',
       state: 'waiting_approval',
       state_reason: '배포 승인이 필요합니다',
       state_at: '2026-10-17T07:05:00.000Z',
     })
-    const html = render(overview(), [waiting])
+    const html = render(overview(), { total: 4, items: [earlierByIssue, laterOtherLastProject] })
     const card = sectionOf(html, '대기 세션')
+    expect(card).toContain('>4</span>')
     expect(card).toContain('agent-a')
-    expect(card).toContain('sess-wait-1')
+    expect(card).toContain('sess-wait-earlier')
+    expect(card).toContain('입력 대기')
+    expect(card).toContain('옵션 확인이 필요합니다')
+    expect(card).toContain('href="/issues/APP-12"')
+    expect(card).toContain('agent-b')
+    expect(card).toContain('sess-wait-later')
     expect(card).toContain('승인 대기')
     expect(card).toContain('배포 승인이 필요합니다')
-    expect(card).toContain('href="/issues/APP-12"')
+    expect(card).toContain('href="/issues/APP-15"')
+    expect(card.indexOf('sess-wait-earlier')).toBeLessThan(card.indexOf('sess-wait-later'))
     expect(card).toContain('href="/sessions"')
-    expect(card).toContain('href="/sessions?actor=agent-a&amp;session=sess-wait-1"')
+    expect(card).toContain('href="/sessions?actor=agent-a&amp;session=sess-wait-earlier"')
   })
 
   it('대기 세션이 0건이면 대기 세션 카드를 보이지 않는다', () => {
-    const html = render(overview(), [])
+    const html = render(overview(), section([]))
     expect(html).not.toContain('>대기 세션</h3>')
   })
 })

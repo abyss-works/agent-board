@@ -1,5 +1,5 @@
 import { userActorIds } from '@/lib/actors'
-import type { Actor, ErrorDetail, Session, SessionListResponse } from './types'
+import type { Actor, Agenda, ErrorDetail, Session, SessionListResponse } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
@@ -169,6 +169,11 @@ export interface SessionListParams {
   offset?: number
 }
 
+export interface AgendaParams {
+  project?: string
+  limit?: number
+}
+
 export interface RequestOptions {
   query?: QueryParams
   body?: unknown
@@ -210,6 +215,10 @@ export class ApiClient {
 
   getSession(actor: string, sessionId: string, signal?: AbortSignal): Promise<Session> {
     return this.get<Session>(`/sessions/${encodeURIComponent(actor)}/${encodeURIComponent(sessionId)}`, undefined, signal)
+  }
+
+  getAgenda(params?: AgendaParams, signal?: AbortSignal): Promise<Agenda> {
+    return this.get<Agenda>('/agenda', params ? { ...params } : undefined, signal)
   }
 
   async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
