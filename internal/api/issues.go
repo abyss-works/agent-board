@@ -12,6 +12,8 @@ func (h *handler) registerIssues(mux *http.ServeMux) {
 	route(mux, "/v1/issues", methods{"GET": h.listIssues, "POST": h.createIssue})
 	route(mux, "/v1/issues/{key}", methods{"GET": h.getIssue, "PATCH": h.patchIssue, "DELETE": h.deleteIssue})
 	route(mux, "/v1/issues/{key}/acknowledge", methods{"POST": h.acknowledge, "DELETE": h.unacknowledge})
+	route(mux, "/v1/issues/{key}/claim", methods{"POST": h.claimIssue, "DELETE": h.releaseClaim})
+	route(mux, "/v1/issues/{key}/claims", methods{"GET": h.listIssueClaims})
 	route(mux, "/v1/issues/{key}/comments", methods{"POST": h.createComment})
 	route(mux, "/v1/issues/{key}/activity", methods{"GET": h.issueActivity})
 	route(mux, "/v1/activity", methods{"GET": h.listActivity})
@@ -503,6 +505,80 @@ func (h *handler) issueActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+}
+
+func (h *handler) claimIssue(w http.ResponseWriter, r *http.Request) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	claim, created, err := h.store.ClaimIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"))
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, claim)
+}
+
+func (h *handler) releaseClaim(w http.ResponseWriter, r *http.Request) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	b, aerr := readOptionalBody(w, r, map[string]bool{"outcome": true, "reason": true})
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var details []Detail
+	var outcome string
+	if present, null, err := field(b, "outcome", &outcome); err != nil {
+		writeError(w, err)
+		return
+	} else if present && (null || (outcome != model.ClaimOutcomeDone && outcome != model.ClaimOutcomeAbandoned)) {
+		details = append(details, Detail{Field: "outcome", Reason: "invalid", Message: "done 또는 abandoned여야 합니다."})
+	}
+	var reason *string
+	var reasonText string
+	if present, null, err := field(b, "reason", &reasonText); err != nil {
+		writeError(w, err)
+		return
+	} else if present && !null {
+		if _, msg, ok := model.CleanClaimReason(reasonText); !ok {
+			details = append(details, Detail{Field: "reason", Reason: "invalid", Message: msg})
+		} else {
+			reason = &reasonText
+		}
+	}
+	if len(details) > 0 {
+		writeError(w, validationFailed(details))
+		return
+	}
+	claim, err := h.store.ReleaseClaim(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), outcome, reason)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, claim)
+}
+
+func (h *handler) listIssueClaims(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	limit, offset := q.limit(50, 200), q.offset()
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	items, total, err := h.store.ListIssueClaims(r.Context(), r.PathValue("key"), limit, offset)
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope(items, total, limit, offset))
 }
 
 func (h *handler) listActivity(w http.ResponseWriter, r *http.Request) {

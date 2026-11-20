@@ -219,12 +219,14 @@ const UserTaskLabel = "user-task"
 // before the issue counts as stale.
 const StaleAfter = 2 * time.Hour
 
-// Holder is the session that moved a doing issue to doing.
+// Holder is the session holding a doing issue, either from a stored claim
+// (source "claim") or derived from activity history (source "activity").
 type Holder struct {
 	Actor        string `json:"actor"`
 	SessionID    string `json:"session_id"`
-	LastActiveAt Time   `json:"last_active_at"` // the session's latest activity on any issue
+	LastActiveAt Time   `json:"last_active_at"` // session last_seen_at for claims, or latest issue activity for fallbacks
 	Stale        bool   `json:"stale"`
+	Source       string `json:"source,omitempty"`
 }
 
 // DoingItem is a doing issue in the overview with the session holding it.

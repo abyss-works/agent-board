@@ -261,6 +261,55 @@ func (a *App) activityTable(items []model.Activity) *table {
 	return tb
 }
 
+func (a *App) renderIssueClaim(w io.Writer, resp *client.Response) error {
+	c, err := decode[model.IssueClaim](resp)
+	if err != nil {
+		return err
+	}
+	pairs := [][2]string{
+		{"key", c.Issue},
+		{"actor", c.Actor},
+		{"session_id", c.SessionID},
+		{"claimed_at", formatTime(c.ClaimedAt, a.Location)},
+		{"active", strconv.FormatBool(c.Active)},
+	}
+	if c.ReleasedAt != nil {
+		pairs = append(pairs,
+			[2]string{"released_at", formatTimePtr(c.ReleasedAt, a.Location)},
+			[2]string{"outcome", deref(c.Outcome, "-")},
+			[2]string{"reason", deref(c.Reason, "-")},
+		)
+	}
+	fields(w, pairs)
+	return nil
+}
+
+func (a *App) renderIssueClaimList(w io.Writer, resp *client.Response) error {
+	l, err := decode[listOf[model.IssueClaim]](resp)
+	if err != nil {
+		return err
+	}
+	if len(l.Items) == 0 {
+		fmt.Fprintln(w, "점유 이력이 없습니다.")
+		return nil
+	}
+	tb := &table{header: []string{"ID", "ACTOR", "SESSION", "CLAIMED_AT", "RELEASED_AT", "OUTCOME", "REASON"}}
+	for _, c := range l.Items {
+		tb.add(
+			strconv.FormatInt(c.ID, 10),
+			c.Actor,
+			c.SessionID,
+			formatTime(c.ClaimedAt, a.Location),
+			formatTimePtr(c.ReleasedAt, a.Location),
+			deref(c.Outcome, "-"),
+			deref(c.Reason, "-"),
+		)
+	}
+	tb.write(w, a.TermWidth)
+	footer(w, len(l.Items), l.Total, l.Offset)
+	return nil
+}
+
 func (a *App) renderActivityList(w io.Writer, resp *client.Response) error {
 	l, err := decode[listOf[model.Activity]](resp)
 	if err != nil {
