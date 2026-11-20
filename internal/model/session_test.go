@@ -105,3 +105,59 @@ func TestSessionWaitingValid(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRepoRemote(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"https://github.com/acme/app.git", "github.com/acme/app"},
+		{"  https://user:secret@GitHub.COM/acme/app.git/  ", "github.com/acme/app"},
+		{"http://Example.COM/acme/app/", "example.com/acme/app"},
+		{"git@github.com:acme/app.git", "github.com/acme/app"},
+		{"user:tok@GitLab.Example.com:/team/sub/repo.git/", "gitlab.example.com/team/sub/repo"},
+		{"ssh://git@github.com:22/acme/app.git", "github.com/acme/app"},
+		{"ssh://user:pass@Example.COM:2222/acme/app/", "example.com/acme/app"},
+		{"/srv/repos/app/", "/srv/repos/app"},
+		{`C:\work\repos\app\`, "C:/work/repos/app"},
+		{"  /var/git/app.git/  ", "/var/git/app.git"},
+		{"my-local-repo/", "my-local-repo"},
+		{"", ""},
+		{"   ", ""},
+	}
+	for _, c := range cases {
+		if got := NormalizeRepoRemote(c.raw); got != c.want {
+			t.Errorf("NormalizeRepoRemote(%q) = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
+func TestSessionLocationKey(t *testing.T) {
+	str := func(v string) *string { return &v }
+	cases := []struct {
+		name    string
+		host    string
+		loc     *SessionLocation
+		wantKey string
+		wantOK  bool
+	}{
+		{"nil location", "desk", nil, "", false},
+		{"nil branch", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git")}, "", false},
+		{"empty branch", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git"), Branch: str("   ")}, "", false},
+		{"detached HEAD", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git"), Branch: str("HEAD")}, "", false},
+		{"detached HEAD trimmed", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git"), Branch: str(" HEAD ")}, "", false},
+		{"https remote", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git"), Branch: str("feat/x"), Worktree: str("/work/app")}, "remote:example.com/acme/app#feat/x", true},
+		{"scp remote", "laptop", &SessionLocation{RepoRemote: str("git@example.com:acme/app.git"), Branch: str("feat/x"), Worktree: str(`C:\Users\dev\app`)}, "remote:example.com/acme/app#feat/x", true},
+		{"ssh remote", "box", &SessionLocation{RepoRemote: str("ssh://git@example.com:22/acme/app.git"), Branch: str("feat/x")}, "remote:example.com/acme/app#feat/x", true},
+		{"local fallback windows", "desk", &SessionLocation{Worktree: str(`C:\Work\App\`), Branch: str("feat/x")}, "local:desk:c:/Work/App#feat/x", true},
+		{"local fallback blank remote", "desk", &SessionLocation{RepoRemote: str("  "), Worktree: str("c:/Work/App/"), Branch: str("feat/x")}, "local:desk:c:/Work/App#feat/x", true},
+		{"local fallback unix", "laptop", &SessionLocation{Worktree: str("/home/dev/app/"), Branch: str("main")}, "local:laptop:/home/dev/app#main", true},
+		{"no remote and no worktree", "desk", &SessionLocation{Branch: str("main"), Worktree: str("  ")}, "", false},
+	}
+	for _, c := range cases {
+		gotKey, gotOK := SessionLocationKey(c.host, c.loc)
+		if gotKey != c.wantKey || gotOK != c.wantOK {
+			t.Errorf("%s: SessionLocationKey = (%q, %v), want (%q, %v)", c.name, gotKey, gotOK, c.wantKey, c.wantOK)
+		}
+	}
+}

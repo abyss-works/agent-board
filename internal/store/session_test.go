@@ -597,3 +597,182 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 		t.Errorf("explicit null clear = %+v err=%v", got, err)
 	}
 }
+
+func TestSessionLocationConflicts(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}, {ID: "codex", Kind: model.ActorAgent}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	fixClock(s, now)
+
+	ptr := func(v string) *string { return &v }
+	sameRefs := func(got, want []model.SessionRef) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Active sessions on same remote+branch (HTTPS vs SCP) conflict with each other.
+	tr1 := model.Trace{Actor: "claude", SessionID: "s1", ClientHost: "desk"}
+	tr2 := model.Trace{Actor: "codex", SessionID: "s2", ClientHost: "laptop"}
+	trDiffBranch := model.Trace{Actor: "claude", SessionID: "s-diff", ClientHost: "desk"}
+	trDetached := model.Trace{Actor: "claude", SessionID: "s-head", ClientHost: "desk"}
+	trStale := model.Trace{Actor: "owner", SessionID: "s-stale", ClientHost: "desk"}
+	trWait := model.Trace{Actor: "owner", SessionID: "s-wait", ClientHost: "desk"}
+
+	for _, tr := range []model.Trace{tr1, tr2, trDiffBranch, trDetached} {
+		mustTouch(t, s, tr, now.Add(-5*time.Minute))
+	}
+	mustTouch(t, s, trStale, now.Add(-40*time.Minute))
+	mustTouch(t, s, trWait, now.Add(-2*time.Hour))
+
+	// s-wait sets waiting_input at -2h (within 24h WaitingValid hold).
+	fixClock(s, now.Add(-2*time.Hour))
+	stWait := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, trWait, trWait.Actor, trWait.SessionID, SessionPatch{
+		State:    Optional[string]{Set: true, Value: &stWait},
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("ssh://git@example.com:22/acme/app.git"), Branch: ptr("feat/x")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fixClock(s, now)
+	if _, err := s.UpdateSession(ctx, trStale, trStale.Actor, trStale.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://example.com/acme/app.git"), Branch: ptr("feat/x")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trDiffBranch, trDiffBranch.Actor, trDiffBranch.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://example.com/acme/app.git"), Branch: ptr("feat/y")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trDetached, trDetached.Actor, trDetached.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://example.com/acme/app.git"), Branch: ptr("HEAD")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u1, err := s.UpdateSession(ctx, tr1, tr1.Actor, tr1.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://user:tok@example.com/acme/app.git"), Branch: ptr("feat/x")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want1 := []model.SessionRef{{Actor: "owner", SessionID: "s-wait"}}
+	if !sameRefs(u1.LocationConflicts, want1) {
+		t.Errorf("u1 conflicts = %+v, want %+v", u1.LocationConflicts, want1)
+	}
+
+	u2, err := s.UpdateSession(ctx, tr2, tr2.Actor, tr2.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("git@example.com:acme/app.git"), Branch: ptr("feat/x")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := []model.SessionRef{{Actor: "claude", SessionID: "s1"}, {Actor: "owner", SessionID: "s-wait"}}
+	if !sameRefs(u2.LocationConflicts, want2) {
+		t.Errorf("u2 conflicts = %+v, want %+v", u2.LocationConflicts, want2)
+	}
+
+	// Child session on same remote+branch gets conflicts and parent sees child too.
+	child, err := s.CreateChildSession(ctx, tr1, ChildSessionInput{SessionID: "s1.kid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.LocationConflicts == nil || len(child.LocationConflicts) != 0 {
+		t.Errorf("new child without location conflicts = %#v, want empty non-nil", child.LocationConflicts)
+	}
+	if _, err := s.UpdateSession(ctx, tr1, tr1.Actor, "s1.kid", SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("http://example.com/acme/app/"), Branch: ptr("feat/x")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	parent := mustSession(t, s, "claude", "s1")
+	wantParent := []model.SessionRef{
+		{Actor: "claude", SessionID: "s1.kid"},
+		{Actor: "codex", SessionID: "s2"},
+		{Actor: "owner", SessionID: "s-wait"},
+	}
+	if !sameRefs(parent.LocationConflicts, wantParent) {
+		t.Errorf("parent conflicts = %+v, want %+v", parent.LocationConflicts, wantParent)
+	}
+	if parent.Children == nil || len(*parent.Children) != 1 {
+		t.Fatalf("parent children = %+v", parent.Children)
+	}
+	wantChild := []model.SessionRef{
+		{Actor: "claude", SessionID: "s1"},
+		{Actor: "codex", SessionID: "s2"},
+		{Actor: "owner", SessionID: "s-wait"},
+	}
+	if !sameRefs((*parent.Children)[0].LocationConflicts, wantChild) {
+		t.Errorf("child conflicts = %+v, want %+v", (*parent.Children)[0].LocationConflicts, wantChild)
+	}
+
+	// Non-conflicting sessions have non-nil empty slice; stale non-waiting has empty slice.
+	diffSess := mustSession(t, s, trDiffBranch.Actor, trDiffBranch.SessionID)
+	if diffSess.LocationConflicts == nil || len(diffSess.LocationConflicts) != 0 {
+		t.Errorf("diff branch conflicts = %#v, want empty non-nil", diffSess.LocationConflicts)
+	}
+	staleSess := mustSession(t, s, trStale.Actor, trStale.SessionID)
+	if staleSess.LocationConflicts == nil || len(staleSess.LocationConflicts) != 0 {
+		t.Errorf("stale non-waiting conflicts = %#v, want empty non-nil", staleSess.LocationConflicts)
+	}
+
+	// ListSessions filtered by actor=claude still finds conflicts with codex/owner across DB.
+	listed, _, err := s.ListSessions(ctx, SessionFilter{Actor: "claude", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundS1 := false
+	for _, it := range listed {
+		if it.SessionID == "s1" {
+			foundS1 = true
+			if !sameRefs(it.LocationConflicts, wantParent) {
+				t.Errorf("filtered list s1 conflicts = %+v, want %+v", it.LocationConflicts, wantParent)
+			}
+		}
+	}
+	if !foundS1 {
+		t.Fatal("s1 not returned in filtered ListSessions")
+	}
+
+	// Local fallback: no remote, same host + worktree (normalized) + branch conflicts; different host does not.
+	trLocal1 := model.Trace{Actor: "claude", SessionID: "loc1", ClientHost: "desk"}
+	trLocal2 := model.Trace{Actor: "codex", SessionID: "loc2", ClientHost: "desk"}
+	trLocalOtherHost := model.Trace{Actor: "owner", SessionID: "loc3", ClientHost: "laptop"}
+	for _, tr := range []model.Trace{trLocal1, trLocal2, trLocalOtherHost} {
+		mustTouch(t, s, tr, now.Add(-2*time.Minute))
+	}
+	if _, err := s.UpdateSession(ctx, trLocal1, trLocal1.Actor, trLocal1.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{Worktree: ptr(`C:\Work\LocalRepo`), Branch: ptr("dev")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trLocalOtherHost, trLocalOtherHost.Actor, trLocalOtherHost.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{Worktree: ptr("c:/Work/LocalRepo"), Branch: ptr("dev")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loc2, err := s.UpdateSession(ctx, trLocal2, trLocal2.Actor, trLocal2.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{Worktree: ptr("c:/Work/LocalRepo/"), Branch: ptr("dev")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameRefs(loc2.LocationConflicts, []model.SessionRef{{Actor: "claude", SessionID: "loc1"}}) {
+		t.Errorf("local fallback conflicts = %+v", loc2.LocationConflicts)
+	}
+	loc3 := mustSession(t, s, trLocalOtherHost.Actor, trLocalOtherHost.SessionID)
+	if loc3.LocationConflicts == nil || len(loc3.LocationConflicts) != 0 {
+		t.Errorf("other host local conflicts = %#v, want empty", loc3.LocationConflicts)
+	}
+}

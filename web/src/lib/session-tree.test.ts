@@ -173,6 +173,51 @@ describe('buildHostSessionTrees', () => {
     expect(groups.map((g) => g.host)).toEqual(['host-z', 'host-b', 'host-c', 'host-a'])
     expect(groups[0].waitingCount).toBe(1)
     expect(groups[0].activeCount).toBe(2)
+    expect(groups[0].conflictCount).toBe(0)
+  })
+
+  it('호스트 그룹의 conflictCount는 루트와 자식을 포함해 위치 충돌이 있는 세션 수를 집계한다', () => {
+    const cleanRoot = sessionFixture({ actor: 'agent-a', session_id: 'clean-root', last_host: 'host-a' })
+    const conflictRoot = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'conflict-root',
+      last_host: 'host-a',
+      location_conflicts: [
+        { actor: 'agent-b', session_id: 'other-1' },
+        { actor: 'agent-c', session_id: 'other-2' },
+      ],
+    })
+    const cleanChild = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'conflict-root.clean-sub',
+      last_host: 'host-a',
+      parent: { actor: 'agent-a', session_id: 'conflict-root' },
+    })
+    const conflictCrossHostChild = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'conflict-root.remote-sub',
+      last_host: 'host-b',
+      parent: { actor: 'agent-a', session_id: 'conflict-root' },
+      location_conflicts: [{ actor: 'agent-c', session_id: 'other-3' }],
+    })
+    const otherHostClean = sessionFixture({
+      actor: 'agent-d',
+      session_id: 'other-host-clean',
+      last_host: 'host-c',
+    })
+
+    const groups = buildHostSessionTrees([
+      cleanRoot,
+      conflictRoot,
+      cleanChild,
+      conflictCrossHostChild,
+      otherHostClean,
+    ])
+    const hostA = groups.find((g) => g.host === 'host-a')!
+    const hostC = groups.find((g) => g.host === 'host-c')!
+    expect(hostA.totalCount).toBe(4)
+    expect(hostA.conflictCount).toBe(2)
+    expect(hostC.conflictCount).toBe(0)
   })
 })
 

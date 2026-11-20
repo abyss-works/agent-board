@@ -1,13 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { isValidElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ApiClient, type SessionListParams } from '@/api/client'
 import { activityQueryKey, sessionQueryKey, sessionsQueryKey } from '@/api/queries'
 import { activityFixture, sessionFixture } from '@/api/test-fixtures'
-import type { Activity, Page, Session, SessionListResponse } from '@/api/types'
+import type { Activity, Page, Session, SessionListResponse, SessionRef } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
-import { SessionsPage } from './sessions-page'
+import { SessionDetailBody, SessionLocationDetails, SessionsPage } from './sessions-page'
 
 const defaultState: AppState = {
   token: 'token',
@@ -112,6 +113,25 @@ function summaryValueOf(html: string, label: string): string {
   const match = html.match(new RegExp(`>${label}</div><div[^>]*>([^<]+)</div>`))
   if (!match) throw new Error(`${label} 요약 카드가 없습니다.`)
   return match[1]
+}
+
+function findReactElements(
+  node: unknown,
+  predicate: (el: ReactElement<Record<string, unknown>>) => boolean,
+): Array<ReactElement<Record<string, unknown>>> {
+  const out: Array<ReactElement<Record<string, unknown>>> = []
+  const visit = (n: unknown) => {
+    if (Array.isArray(n)) {
+      for (const item of n) visit(item)
+      return
+    }
+    if (!isValidElement(n)) return
+    const el = n as ReactElement<Record<string, unknown>>
+    if (predicate(el)) out.push(el)
+    if (el.props.children !== undefined) visit(el.props.children)
+  }
+  visit(node)
+  return out
 }
 
 describe('세션 관제 화면', () => {
@@ -334,5 +354,153 @@ describe('세션 관제 화면', () => {
     expect(summaryValueOf(html, '대기 중')).toBe('215')
     expect(summaryValueOf(html, '멈춤')).toBe('110')
     expect(html).toContain('총 215개 중 최근 1개 표시')
+  })
+
+  it('충돌 세션이 있을 때 트리 노드 배지와 호스트 헤더 배지, 경고 행 강조를 표시한다', () => {
+    const conflicting = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-conflict',
+      last_host: 'host-a',
+      location: {
+        repo_remote: 'https://example.com/org/app.git',
+        branch: 'feat/cache',
+        worktree: '/work/a',
+        head: 'abc1234',
+        dirty_count: 1,
+        reported_at: '2026-10-17T07:00:00.000Z',
+      },
+      location_conflicts: [{ actor: 'agent-b', session_id: 'sess-other' }],
+    })
+    const waitingConflict = sessionFixture({
+      actor: 'agent-c',
+      session_id: 'sess-waiting-conflict',
+      last_host: 'host-b',
+      state: 'waiting_approval',
+      state_reason: '승인 대기',
+      location_conflicts: [
+        { actor: 'agent-d', session_id: 'sess-d' },
+        { actor: 'agent-e', session_id: 'sess-e' },
+      ],
+    })
+
+    const html = renderSessions({ sessions: [conflicting, waitingConflict] })
+    expect(html).toContain('위치 충돌 1')
+    expect(html).toContain('title="agent-b/sess-other"')
+    expect(html).toContain('충돌 1')
+    expect(html).toContain('border-rose-500/35 bg-rose-500/[0.04] hover:bg-rose-500/[0.08]')
+    expect(html).toContain('위치 충돌 2')
+    expect(html).toContain('title="agent-d/sess-d, agent-e/sess-e"')
+    expect(html).toContain('대기 1')
+    expect(html).toContain('border-amber-500/30')
+
+    const selectedHtml = renderSessions({
+      sessions: [conflicting],
+      initialEntry: '/sessions?actor=agent-a&session=sess-conflict',
+    })
+    expect(selectedHtml).toContain('border-ring/60')
+    expect(selectedHtml).not.toContain('border-rose-500/35')
+    expect(selectedHtml).toContain('위치 충돌 1')
+  })
+
+  it('상세 패널에서 충돌 세션 버튼 목록이 보이고 클릭 시 해당 세션 선택으로 이동한다', () => {
+    const conflictTarget = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'sess-conflict-1',
+      last_host: 'host-a',
+      location: {
+        repo_remote: 'https://example.com/org/app.git',
+        branch: 'feat/conflict',
+        worktree: '/work/b',
+        head: '1112223',
+        dirty_count: 0,
+        reported_at: '2026-10-17T07:05:00.000Z',
+      },
+      location_conflicts: [{ actor: 'agent-a', session_id: 'sess-main' }],
+    })
+    const selected = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-main',
+      last_host: 'host-a',
+      location: {
+        repo_remote: 'https://example.com/org/app.git',
+        branch: 'feat/conflict',
+        worktree: '/work/a',
+        head: 'deadbeef',
+        dirty_count: 2,
+        reported_at: '2026-10-17T07:10:00.000Z',
+      },
+      location_conflicts: [
+        { actor: 'agent-b', session_id: 'sess-conflict-1' },
+        { actor: 'agent-c', session_id: 'sess-conflict-2' },
+      ],
+    })
+
+    const html = renderSessions({
+      sessions: [selected, conflictTarget],
+      detailSession: selected,
+      activities: [],
+      initialEntry: '/sessions?actor=agent-a&session=sess-main',
+    })
+    const detailHtml = html.slice(html.indexOf('aria-label="세션 상세"'))
+    expect(detailHtml).toContain('role="alert"')
+    expect(detailHtml).toContain('agent-b')
+    expect(detailHtml).toContain('sess-conflict-1')
+    expect(detailHtml).toContain('agent-c')
+    expect(detailHtml).toContain('sess-conflict-2')
+
+    const onSelect = vi.fn<(ref: SessionRef) => void>()
+    const detailTree = SessionDetailBody({ session: selected, onSelect })
+    const locEls = findReactElements(detailTree, (el) => el.type === SessionLocationDetails)
+    expect(locEls).toHaveLength(1)
+    const locTree = SessionLocationDetails(locEls[0].props as Parameters<typeof SessionLocationDetails>[0])
+    const alerts = findReactElements(locTree, (el) => el.props.role === 'alert')
+    expect(alerts).toHaveLength(1)
+    const buttons = findReactElements(alerts[0], (el) => el.type === 'button')
+    expect(buttons).toHaveLength(2)
+    for (const btn of buttons) {
+      expect(btn.props.type).toBe('button')
+    }
+    ;(buttons[0].props.onClick as () => void)()
+    ;(buttons[1].props.onClick as () => void)()
+    expect(onSelect).toHaveBeenNthCalledWith(1, { actor: 'agent-b', session_id: 'sess-conflict-1' })
+    expect(onSelect).toHaveBeenNthCalledWith(2, { actor: 'agent-c', session_id: 'sess-conflict-2' })
+
+    const switchedHtml = renderSessions({
+      sessions: [selected, conflictTarget],
+      detailSession: conflictTarget,
+      activities: [],
+      initialEntry: '/sessions?actor=agent-b&session=sess-conflict-1',
+    })
+    const switchedDetail = switchedHtml.slice(switchedHtml.indexOf('aria-label="세션 상세"'))
+    expect(switchedDetail).toContain('sess-conflict-1')
+    expect(switchedDetail).toContain('/work/b')
+  })
+
+  it('충돌이 없으면 경고 배지와 경고 박스를 렌더링하지 않는다', () => {
+    const clean = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-clean',
+      last_host: 'host-a',
+      location: {
+        repo_remote: 'https://example.com/org/app.git',
+        branch: 'feat/clean',
+        worktree: '/work/clean',
+        head: 'abc1234',
+        dirty_count: 0,
+        reported_at: '2026-10-17T07:00:00.000Z',
+      },
+      location_conflicts: [],
+    })
+
+    const html = renderSessions({
+      sessions: [clean],
+      detailSession: clean,
+      activities: [],
+      initialEntry: '/sessions?actor=agent-a&session=sess-clean',
+    })
+    expect(html).not.toContain('위치 충돌')
+    expect(html).not.toContain('충돌 ')
+    expect(html).not.toContain('border-rose-500/35')
+    expect(html).not.toContain('role="alert"')
   })
 })

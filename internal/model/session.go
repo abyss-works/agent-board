@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -107,30 +108,126 @@ type SessionLocation struct {
 }
 
 // Session is an agent session: an actor and a session ID the server has seen
-// in the trace headers. LastProject and Stale are computed when it is read.
-// Children is set only when one session is read.
+// in the trace headers. LastProject, Stale, and LocationConflicts are computed
+// when it is read. Children is set only when one session is read.
 type Session struct {
-	Actor       string           `json:"actor"`
-	SessionID   string           `json:"session_id"`
-	Named       bool             `json:"named"`
-	FirstSeenAt Time             `json:"first_seen_at"`
-	LastSeenAt  Time             `json:"last_seen_at"`
-	LastHost    string           `json:"last_host"`
-	LastProject *string          `json:"last_project"`
-	Parent      *SessionRef      `json:"parent"`
-	Role        *string          `json:"role"`
-	Issue       *string          `json:"issue"`
-	Location    *SessionLocation `json:"location"`
-	State       *string          `json:"state"`
-	StateReason *string          `json:"state_reason"`
-	StateAt     *Time            `json:"state_at"`
-	Stale       bool             `json:"stale"`
-	UpdatedAt   Time             `json:"updated_at"`
-	Children    *[]Session       `json:"children,omitempty"`
+	Actor             string           `json:"actor"`
+	SessionID         string           `json:"session_id"`
+	Named             bool             `json:"named"`
+	FirstSeenAt       Time             `json:"first_seen_at"`
+	LastSeenAt        Time             `json:"last_seen_at"`
+	LastHost          string           `json:"last_host"`
+	LastProject       *string          `json:"last_project"`
+	Parent            *SessionRef      `json:"parent"`
+	Role              *string          `json:"role"`
+	Issue             *string          `json:"issue"`
+	Location          *SessionLocation `json:"location"`
+	LocationConflicts []SessionRef     `json:"location_conflicts"`
+	State             *string          `json:"state"`
+	StateReason       *string          `json:"state_reason"`
+	StateAt           *Time            `json:"state_at"`
+	Stale             bool             `json:"stale"`
+	UpdatedAt         Time             `json:"updated_at"`
+	Children          *[]Session       `json:"children,omitempty"`
 }
 
 // WaitingValid reports whether the session is waiting and its state_at is
 // within SessionWaitingHold of now.
 func (s Session) WaitingValid(now time.Time) bool {
 	return s.State != nil && s.StateAt != nil && now.Sub(s.StateAt.Time()) <= SessionWaitingHold
+}
+
+func cleanRemotePath(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	p = strings.Trim(p, "/")
+	p = strings.TrimSuffix(p, ".git")
+	return strings.TrimRight(p, "/")
+}
+
+func normalizeLocalPath(raw string) string {
+	s := strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
+	if s == "" {
+		return ""
+	}
+	if s != "/" {
+		s = strings.TrimRight(s, "/")
+	}
+	return s
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func parseSCPRemote(s string) (host, path string, ok bool) {
+	slashIdx := strings.IndexAny(s, "/\\")
+	cand := s
+	if atIdx := strings.IndexByte(s, '@'); atIdx >= 0 && (slashIdx < 0 || atIdx < slashIdx) {
+		cand = s[atIdx+1:]
+	}
+	slashInCand := strings.IndexAny(cand, "/\\")
+	colonIdx := strings.IndexByte(cand, ':')
+	if colonIdx <= 0 || (slashInCand >= 0 && colonIdx > slashInCand) {
+		return "", "", false
+	}
+	host = cand[:colonIdx]
+	if len(host) == 1 && isASCIILetter(host[0]) {
+		return "", "", false
+	}
+	return host, cand[colonIdx+1:], true
+}
+
+// NormalizeRepoRemote normalizes SCP and URL repository remotes to
+// "<lowercase host>/<path without trailing .git or />" with userinfo removed.
+// Non-URL local paths or strings have slashes normalized and trailing '/'
+// removed.
+func NormalizeRepoRemote(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil && u.Hostname() != "" {
+			host := strings.ToLower(u.Hostname())
+			p := cleanRemotePath(u.Path)
+			if p == "" {
+				return host
+			}
+			return host + "/" + p
+		}
+		return normalizeLocalPath(s)
+	}
+	if host, p, ok := parseSCPRemote(s); ok {
+		host = strings.ToLower(host)
+		p = cleanRemotePath(p)
+		if p == "" {
+			return host
+		}
+		return host + "/" + p
+	}
+	return normalizeLocalPath(s)
+}
+
+// SessionLocationKey returns the normalized conflict-detection key for a
+// session's host and reported location. Detached HEAD or incomplete locations
+// return ("", false).
+func SessionLocationKey(host string, loc *SessionLocation) (string, bool) {
+	if loc == nil || loc.Branch == nil {
+		return "", false
+	}
+	branch := strings.TrimSpace(*loc.Branch)
+	if branch == "" || branch == "HEAD" {
+		return "", false
+	}
+	if loc.RepoRemote != nil && strings.TrimSpace(*loc.RepoRemote) != "" {
+		return "remote:" + NormalizeRepoRemote(*loc.RepoRemote) + "#" + branch, true
+	}
+	if loc.Worktree != nil && strings.TrimSpace(*loc.Worktree) != "" {
+		wt := normalizeLocalPath(*loc.Worktree)
+		if len(wt) >= 2 && wt[1] == ':' && wt[0] >= 'A' && wt[0] <= 'Z' {
+			wt = strings.ToLower(wt[:1]) + wt[1:]
+		}
+		return "local:" + host + ":" + wt + "#" + branch, true
+	}
+	return "", false
 }

@@ -47,6 +47,7 @@ export interface HostSessionGroup {
   activeCount: number
   waitingCount: number
   staleCount: number
+  conflictCount: number
 }
 
 export interface SessionSummaryCounts {
@@ -192,11 +193,15 @@ export function buildHostSessionTrees(sessions: readonly Session[]): HostSession
     }
   }
 
-  const countSubtree = (node: SessionTreeNode, acc: { total: number; active: number; waiting: number; stale: number }) => {
+  const countSubtree = (
+    node: SessionTreeNode,
+    acc: { total: number; active: number; waiting: number; stale: number; conflict: number },
+  ) => {
     acc.total += 1
     if (node.session.state !== null) acc.waiting += 1
     if (node.session.stale) acc.stale += 1
     else acc.active += 1
+    if (node.session.location_conflicts.length > 0) acc.conflict += 1
     for (const c of node.children) countSubtree(c, acc)
   }
 
@@ -211,7 +216,7 @@ export function buildHostSessionTrees(sessions: readonly Session[]): HostSession
   const groups: HostSessionGroup[] = []
   for (const [host, hostRoots] of byHost) {
     hostRoots.sort((a, b) => compareSessions(a.session, b.session))
-    const acc = { total: 0, active: 0, waiting: 0, stale: 0 }
+    const acc = { total: 0, active: 0, waiting: 0, stale: 0, conflict: 0 }
     for (const r of hostRoots) countSubtree(r, acc)
     groups.push({
       host,
@@ -220,6 +225,7 @@ export function buildHostSessionTrees(sessions: readonly Session[]): HostSession
       activeCount: acc.active,
       waitingCount: acc.waiting,
       staleCount: acc.stale,
+      conflictCount: acc.conflict,
     })
   }
 

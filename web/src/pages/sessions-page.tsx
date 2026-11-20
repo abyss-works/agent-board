@@ -1,4 +1,4 @@
-import { CornerDownRightIcon, GitBranchIcon, ServerIcon, XIcon } from 'lucide-react'
+import { AlertTriangleIcon, CornerDownRightIcon, GitBranchIcon, ServerIcon, XIcon } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
 import { useActivity, useSession, useSessions } from '@/api/queries'
@@ -103,6 +103,8 @@ function SessionNodeItem({
   const key = sessionKey(s)
   const selected = key === selectedKey
   const isWaiting = s.state !== null
+  const hasConflict = s.location_conflicts.length > 0
+  const conflictTitle = hasConflict ? s.location_conflicts.map(sessionRefLabel).join(', ') : undefined
 
   return (
     <li className="list-none">
@@ -113,7 +115,9 @@ function SessionNodeItem({
             ? 'border-ring/60 bg-accent/60'
             : isWaiting
               ? 'border-amber-500/30 bg-amber-500/[0.04] hover:bg-amber-500/[0.08]'
-              : 'border-transparent hover:bg-accent/40',
+              : hasConflict
+                ? 'border-rose-500/35 bg-rose-500/[0.04] hover:bg-rose-500/[0.08]'
+                : 'border-transparent hover:bg-accent/40',
         )}
       >
         {depth > 0 ? <CornerDownRightIcon className="mt-1 size-3.5 shrink-0 text-muted-foreground/60" aria-hidden="true" /> : null}
@@ -129,6 +133,12 @@ function SessionNodeItem({
             {!s.named ? <Badge variant="outline">기본 ID</Badge> : null}
             {s.role ? <SessionRoleBadge role={s.role} /> : null}
             <SessionStatusBadge session={s} />
+            {hasConflict ? (
+              <Badge variant="destructive" title={conflictTitle}>
+                <AlertTriangleIcon className="size-3" />
+                위치 충돌 {s.location_conflicts.length}
+              </Badge>
+            ) : null}
             {node.crossHost ? (
               <Badge variant="info" title={`부모와 다른 호스트: ${s.last_host}`}>
                 <ServerIcon className="size-3" />
@@ -197,10 +207,19 @@ function HostGroupCard({
         <h3 className={cn('font-mono text-xs font-semibold', hasWaiting && 'text-amber-200')}>{group.host || '알 수 없음'}</h3>
         <span className="text-[0.6875rem] tabular-nums text-muted-foreground">전체 {group.totalCount}</span>
         <span className="text-[0.6875rem] tabular-nums text-emerald-400">활성 {group.activeCount}</span>
-        {group.waitingCount > 0 ? (
-          <Badge variant="warning" className="ml-auto tabular-nums">
-            대기 {group.waitingCount}
-          </Badge>
+        {group.waitingCount > 0 || group.conflictCount > 0 ? (
+          <div className="ml-auto flex items-center gap-1.5">
+            {group.conflictCount > 0 ? (
+              <Badge variant="destructive" className="tabular-nums">
+                충돌 {group.conflictCount}
+              </Badge>
+            ) : null}
+            {group.waitingCount > 0 ? (
+              <Badge variant="warning" className="tabular-nums">
+                대기 {group.waitingCount}
+              </Badge>
+            ) : null}
+          </div>
         ) : null}
       </header>
       <ul className="space-y-1 p-2">
@@ -221,7 +240,15 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
   )
 }
 
-function SessionLocationDetails({ location }: { location: SessionLocation }) {
+export function SessionLocationDetails({
+  location,
+  conflicts,
+  onSelect,
+}: {
+  location: SessionLocation
+  conflicts: SessionRef[]
+  onSelect: (ref: SessionRef) => void
+}) {
   return (
     <div className="rounded-md border border-border/70 bg-background/40 px-3 py-2">
       <div className="mb-1 text-[0.6875rem] font-medium text-muted-foreground">작업 위치</div>
@@ -257,6 +284,28 @@ function SessionLocationDetails({ location }: { location: SessionLocation }) {
           )}
         </DetailField>
       </dl>
+      {conflicts.length > 0 ? (
+        <div role="alert" className="mt-2.5 space-y-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 p-2.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-rose-300">
+            <AlertTriangleIcon className="size-3.5 shrink-0" />
+            <span>같은 작업 위치를 쓰는 활성 세션 {conflicts.length}개</span>
+          </div>
+          <ul className="space-y-1">
+            {conflicts.map((ref) => (
+              <li key={sessionKey(ref)}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(ref)}
+                  className="flex w-full cursor-pointer items-center gap-1.5 rounded border border-rose-500/25 bg-background/50 px-2 py-1 text-left text-xs transition-colors hover:border-rose-500/50 hover:bg-rose-500/15"
+                >
+                  <ActorChip actor={ref.actor} />
+                  <span className="font-mono text-[0.75rem] text-foreground/90 break-all">{ref.session_id}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -298,7 +347,7 @@ function SessionActivityTimeline({ selected }: { selected: SessionRef }) {
   )
 }
 
-function SessionDetailBody({ session, onSelect }: { session: Session; onSelect: (ref: SessionRef) => void }) {
+export function SessionDetailBody({ session, onSelect }: { session: Session; onSelect: (ref: SessionRef) => void }) {
   const children = session.children ?? []
   return (
     <div className="space-y-4">
@@ -359,7 +408,9 @@ function SessionDetailBody({ session, onSelect }: { session: Session; onSelect: 
         </dl>
       </div>
 
-      {session.location ? <SessionLocationDetails location={session.location} /> : null}
+      {session.location ? (
+        <SessionLocationDetails location={session.location} conflicts={session.location_conflicts} onSelect={onSelect} />
+      ) : null}
 
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">

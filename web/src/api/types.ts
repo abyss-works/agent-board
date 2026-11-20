@@ -199,7 +199,7 @@ export interface SessionLocation {
   reported_at: string | null
 }
 
-/** 에이전트 세션. last_project와 stale은 서버가 조회할 때 계산하고, children은 단건 조회에만 붙는다. */
+/** 에이전트 세션. last_project, stale, location_conflicts는 서버가 조회할 때 계산하고, children은 단건 조회에만 붙는다. */
 export interface Session {
   actor: string
   session_id: string
@@ -212,6 +212,7 @@ export interface Session {
   role: SessionRole | null
   issue: string | null
   location: SessionLocation | null
+  location_conflicts: SessionRef[]
   state: SessionState | null
   state_reason: string | null
   state_at: string | null

@@ -152,7 +152,8 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 4. 이번 작업 대상을 다른 세션이 진행 중인지 확인한다. 3의 진행 중 항목의 `holder`를 본다.
    - `holder`는 그 이슈를 점유한 세션이다. `actor`, `session_id`, `last_active_at`, `stale`, `source`(`claim` 또는 활동 기록 대체값 `activity`)가 있다.
    - 점유는 점유 세션의 마지막 호출에서 30분 이내이거나, 대기 상태(`waiting_*`)를 남긴 뒤 24시간 이내인 동안 유효하다. 유효한 점유가 있는 이슈에 다른 에이전트 세션이 점유하거나 상태를 바꾸려 하면 서버가 409(`claimed`)로 거절한다. 다른 세션이 점유했고 `stale`이 `false`이면 그 이슈를 맡지 않는다. 다른 이슈를 고르고, 그 이슈가 꼭 필요하면 사용자에게 알린다.
-   - 이어받거나 이어 갈 진행 중 이슈는 `agb issue get <ISSUE>`로 연다. 표 출력 끝의 "마지막 작업 위치"에 그 이슈를 어느 호스트의 어느 브랜치·워크트리에서 어디까지 했는지가 나온다. 다른 호스트에서 남긴 기록이면 커밋하지 않은 변경은 그 호스트에만 있으므로, 원격에 푸시된 작업 브랜치만 이어받고 나머지는 사용자에게 알린다.
+   - 이어받거나 이어 갈 진행 중 이슈는 `agb issue get <ISSUE>`로 연다. 표 출력 끝의 "마지막 작업 위치"에 그 이슈를 어느 호스트의 어느 브랜치·워크트리에서 어디까지 했는지가 나온다. 댓글에 작업 위치가 없으면 미해제 점유 세션의 구조화 작업 위치(`location`)와 위치 충돌 경고(`location_conflicts`)를 대신 보여 준다. 다른 호스트에서 남긴 기록이면 커밋하지 않은 변경은 그 호스트에만 있으므로, 원격에 푸시된 작업 브랜치만 이어받고 나머지는 사용자에게 알린다.
+   - 같은 저장소·브랜치를 다른 활성(또는 대기 유효) 세션이 동시에 쓰고 있는지 보려면 `agb session list`(또는 `agb session get`)의 `location_conflicts`를 확인한다.
    - 다른 세션의 점유가 만료되어 `stale`이 `true`이면 `agb issue claim <ISSUE>`나 `agb issue update <ISSUE> --status doing`으로 바로 이어받을 수 있다. 이전 점유는 서버가 `expired`로 기록하며, 점유가 만료되어도 이슈 상태는 자동으로 바뀌지 않는다. 점유를 직접 해제할 때는 `agb issue unclaim <ISSUE> [--outcome done|abandoned] [--reason "<사유>"]`, 점유 이력은 `agb issue claims <ISSUE>`로 본다.
 
 ## 2. 등록할 때
@@ -243,7 +244,7 @@ agb milestone list -p <KEY>
    agb issue update <ISSUE> --status doing
    ```
    - Expected: 응답의 `status`가 `doing`. 상태 변경에 행위자와 세션 ID가 함께 남는다.
-   - 저장소에서 작업 브랜치를 만들어 일하면, 브랜치와 워크트리를 만든 뒤 상태를 바꾸면서 작업 위치를 남긴다. 마칠 때 CLI가 이 기록의 저장소와 브랜치로 병합 커밋을 찾는다(5절 1).
+   - 저장소에서 작업 브랜치를 만들어 일하면, 브랜치와 워크트리를 만든 뒤 상태를 바꾸면서 작업 위치를 남긴다. `--location`이나 `--repo`를 주면 첫 번째 저장소의 위치로 현재 세션의 작업 위치(`location`)도 함께 갱신하며, 같은 저장소·브랜치를 쓰는 다른 활성(또는 대기 유효) 세션이 있으면 표준 오류에 경고를 출력한다. 마칠 때 CLI가 이 기록의 저장소와 브랜치로 병합 커밋을 찾는다(5절 1).
      ```
      agb issue comment <ISSUE> --status doing --summary "착수" --repo <작업 워크트리> --body "<할 일 한 줄>"
      ```
@@ -322,7 +323,7 @@ agb milestone list -p <KEY>
   <끝난 것, 남은 것, 마지막 검증 결과, 띄워 둔 프로세스>
   EOF
   ```
-  - 기본은 현재 폴더의 저장소 하나다. 작업한 저장소가 더 있으면 저장소마다 `--repo <폴더>`를 주거나 `.agb.json`의 `location.repos`에 적어 둔다(`agb issue comment --help`, `agb help repo-config`). `location` 키는 모든 기기의 CLI를 이 키가 있는 판 이상으로 갱신한 뒤에 넣는다. 옛 CLI는 `.agb.json`의 알 수 없는 키를 거절한다.
+  - 기본은 현재 폴더의 저장소 하나다. 작업한 저장소가 더 있으면 저장소마다 `--repo <폴더>`를 주거나 `.agb.json`의 `location.repos`에 적어 둔다(`agb issue comment --help`, `agb help repo-config`). `location` 키는 모든 기기의 CLI를 이 키가 있는 판 이상으로 갱신한 뒤에 넣는다. 옛 CLI는 `.agb.json`의 알 수 없는 키를 거절한다. 댓글 없이 현재 세션의 작업 위치만 갱신하고 충돌(`location_conflicts`)을 확인하려면 `agb session set --location [--repo <폴더>]`를 쓴다.
 - 여러 이슈를 볼 때는 키를 함께 준다(`agb issue get <KEY> <KEY>...`). 필드 몇 개만 필요하면 `--fields key,status,title --text`처럼 고른다. JSON을 스크립트로 가공하지 않는다("출력과 종료 코드").
 - 명령 이름을 틀리면 CLI가 "가까운 명령"을 알려 준다. 그대로 다시 부른다.
 - 라벨, 선행 이슈, 참조를 하나씩 더하거나 뺄 때는 `--add-*`, `--remove-*`를 쓴다. 현재 값을 읽고 `If-Match`로 보내므로 다른 세션의 변경을 덮어쓰지 않는다. 412로 실패하면 `agb issue get <ISSUE>`로 다시 읽고 고친다.

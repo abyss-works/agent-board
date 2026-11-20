@@ -60,6 +60,22 @@ func staleText(stale bool) string {
 	return "-"
 }
 
+func formatSessionRefs(refs []model.SessionRef) string {
+	parts := make([]string, len(refs))
+	for i, r := range refs {
+		parts[i] = r.Actor + "/" + r.SessionID
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (a *App) warnLocationConflicts(resp *client.Response) {
+	var sess model.Session
+	if err := resp.Decode(&sess); err != nil || len(sess.LocationConflicts) == 0 {
+		return
+	}
+	fmt.Fprintf(a.Stderr, "agb: 경고: 같은 저장소·브랜치를 쓰는 활성 세션이 있습니다: %s\n", formatSessionRefs(sess.LocationConflicts))
+}
+
 func (a *App) renderSessionList(w io.Writer, resp *client.Response) error {
 	l, err := decode[sessionList](resp)
 	if err != nil {
@@ -69,10 +85,14 @@ func (a *App) renderSessionList(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "세션이 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"ACTOR", "SESSION", "ROLE", "STATE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE"}}
+	tb := &table{header: []string{"ACTOR", "SESSION", "ROLE", "STATE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE", "CONFLICTS"}}
 	for _, s := range l.Items {
+		conflicts := "-"
+		if len(s.LocationConflicts) > 0 {
+			conflicts = strconv.Itoa(len(s.LocationConflicts))
+		}
 		tb.add(s.Actor, s.SessionID, deref(s.Role, "-"), deref(s.State, "-"), sessionRefText(s.Parent), deref(s.Issue, "-"), s.LastHost,
-			deref(s.LastProject, "-"), formatTime(s.LastSeenAt, a.Location), staleText(s.Stale))
+			deref(s.LastProject, "-"), formatTime(s.LastSeenAt, a.Location), staleText(s.Stale), conflicts)
 	}
 	tb.write(w, a.TermWidth)
 	footer(w, len(l.Items), l.Total, l.Offset)
@@ -111,6 +131,9 @@ func (a *App) renderSession(w io.Writer, resp *client.Response) error {
 			[2]string{"worktree", deref(l.Worktree, "-")},
 			[2]string{"dirty", dirty},
 			[2]string{"reported", formatTime(l.ReportedAt, a.Location)})
+	}
+	if len(s.LocationConflicts) > 0 {
+		pairs = append(pairs, [2]string{"location_conflicts", formatSessionRefs(s.LocationConflicts)})
 	}
 	pairs = append(pairs, [2]string{"updated", formatTime(s.UpdatedAt, a.Location)})
 	fields(w, pairs)
@@ -355,6 +378,9 @@ var sessionSetCmd = &command{
 		resp, err := c.UpdateSession(ctx, ref.Actor, ref.SessionID, patch)
 		if err != nil {
 			return err
+		}
+		if location {
+			a.warnLocationConflicts(resp)
 		}
 		return a.emit(g, resp, a.renderSession)
 	},

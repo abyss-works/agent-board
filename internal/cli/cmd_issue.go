@@ -841,6 +841,9 @@ var issueCommentCmd = &command{
 		if err := a.emit(g, resp, a.renderActivity); err != nil {
 			return err
 		}
+		if location || len(repos) > 0 {
+			a.syncCommentSessionLocation(ctx, c, s.Actor, s.SessionID, dirs[0])
+		}
 		if status == string(model.StatusDone) {
 			a.autoSyncRecords(ctx, c)
 		}
