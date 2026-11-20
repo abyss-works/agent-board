@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -417,5 +418,182 @@ func TestSessionLookupPropagatesContextAndDBErrors(t *testing.T) {
 	}
 	if _, err := s.GetSession(ctx, "claude", "claude-abc.c"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("child session exists after canceled create: %v", err)
+	}
+}
+
+func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
+	s, ctx := seeded(t)
+	t0 := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
+	mustTouch(t, s, trSess, t0)
+
+	// Setting state_reason when state is NULL fails with requires_state.
+	r1 := "배포 승인 대기"
+	_, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		StateReason: Optional[string]{Set: true, Value: &r1},
+	})
+	validationField(t, err, "state_reason", "requires_state")
+
+	// Setting state: null with non-null state_reason fails with requires_state.
+	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State:       Optional[string]{Set: true, Value: nil},
+		StateReason: Optional[string]{Set: true, Value: &r1},
+	})
+	validationField(t, err, "state_reason", "requires_state")
+
+	// Invalid state fails with field state.
+	paused := "paused"
+	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State: Optional[string]{Set: true, Value: &paused},
+	})
+	validationField(t, err, "state", "")
+
+	// Invalid state_reason values fail with field state_reason.
+	stApp := model.SessionStateWaitingApproval
+	for _, bad := range []string{"", "   ", strings.Repeat("가", 201), "a\nb", "a\x00b"} {
+		b := bad
+		_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+			State:       Optional[string]{Set: true, Value: &stApp},
+			StateReason: Optional[string]{Set: true, Value: &b},
+		})
+		validationField(t, err, "state_reason", "")
+	}
+
+	// Set waiting_approval + reason (with surrounding spaces trimmed).
+	t1 := t0.Add(time.Minute)
+	fixClock(s, t1)
+	fpBefore, err := s.FingerprintNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := "  배포 승인 대기  "
+	got, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State:       Optional[string]{Set: true, Value: &stApp},
+		StateReason: Optional[string]{Set: true, Value: &padded},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deref(got.State) != stApp || deref(got.StateReason) != "배포 승인 대기" || got.StateAt == nil || *got.StateAt != model.NewTime(t1) || got.UpdatedAt != model.NewTime(t1) {
+		t.Errorf("set waiting = %+v", got)
+	}
+	fpSet, err := s.FingerprintNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fpSet == fpBefore {
+		t.Errorf("setting waiting state did not change fingerprint: %q", fpBefore)
+	}
+
+	// Updating only state_reason keeps state_at and bumps updated_at.
+	t2 := t0.Add(2 * time.Minute)
+	fixClock(s, t2)
+	r2 := "수정된 사유"
+	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		StateReason: Optional[string]{Set: true, Value: &r2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deref(got.State) != stApp || deref(got.StateReason) != r2 || got.StateAt == nil || *got.StateAt != model.NewTime(t1) || got.UpdatedAt != model.NewTime(t2) {
+		t.Errorf("reason only update = %+v", got)
+	}
+
+	// Clearing state_reason alone clears only state_reason and preserves state and state_at.
+	t3 := t0.Add(3 * time.Minute)
+	fixClock(s, t3)
+	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		StateReason: Optional[string]{Set: true, Value: nil},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deref(got.State) != stApp || got.StateReason != nil || got.StateAt == nil || *got.StateAt != model.NewTime(t1) || got.UpdatedAt != model.NewTime(t3) {
+		t.Errorf("clear reason only = %+v", got)
+	}
+
+	// Setting a new state without state_reason resets previous state_reason to null and stamps new state_at.
+	t4 := t0.Add(4 * time.Minute)
+	fixClock(s, t4)
+	stIn := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State:       Optional[string]{Set: true, Value: &stIn},
+		StateReason: Optional[string]{Set: true, Value: &r1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t5 := t0.Add(5 * time.Minute)
+	fixClock(s, t5)
+	stExt := model.SessionStateWaitingExternal
+	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State: Optional[string]{Set: true, Value: &stExt},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deref(got.State) != stExt || got.StateReason != nil || got.StateAt == nil || *got.StateAt != model.NewTime(t5) || got.UpdatedAt != model.NewTime(t5) {
+		t.Errorf("new state without reason = %+v", got)
+	}
+
+	// Filter waiting=true / waiting=false.
+	mustTouch(t, s, trOwner, t0)
+	tr, fa := true, false
+	waitingItems, waitingTotal, err := s.ListSessions(ctx, SessionFilter{Waiting: &tr, Limit: 50})
+	if err != nil || waitingTotal != 1 || len(waitingItems) != 1 || waitingItems[0].SessionID != "claude-abc" {
+		t.Errorf("waiting=true: items=%+v total=%d err=%v", waitingItems, waitingTotal, err)
+	}
+	notWaitingItems, notWaitingTotal, err := s.ListSessions(ctx, SessionFilter{Waiting: &fa, Limit: 50})
+	if err != nil || notWaitingTotal != 1 || len(notWaitingItems) != 1 || notWaitingItems[0].Actor != "owner" {
+		t.Errorf("waiting=false: items=%+v total=%d err=%v", notWaitingItems, notWaitingTotal, err)
+	}
+
+	// ClearSessionWaiting clears waiting state and bumps updated_at + fingerprint.
+	fpBeforeClear, err := s.FingerprintNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t6 := t0.Add(6 * time.Minute)
+	fixClock(s, t6)
+	at, cleared, err := s.ClearSessionWaiting(ctx, "claude", "claude-abc")
+	if err != nil || !cleared || at != model.NewTime(t6) {
+		t.Fatalf("ClearSessionWaiting = (%v, %v, %v)", at, cleared, err)
+	}
+	got = mustSession(t, s, "claude", "claude-abc")
+	if got.State != nil || got.StateReason != nil || got.StateAt != nil || got.UpdatedAt != model.NewTime(t6) {
+		t.Errorf("after auto clear = %+v", got)
+	}
+	fpAfterClear, err := s.FingerprintNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fpAfterClear == fpBeforeClear {
+		t.Errorf("auto clear did not change fingerprint: %q", fpBeforeClear)
+	}
+
+	// Calling ClearSessionWaiting again when already clear is a no-op.
+	t7 := t0.Add(7 * time.Minute)
+	fixClock(s, t7)
+	_, cleared, err = s.ClearSessionWaiting(ctx, "claude", "claude-abc")
+	if err != nil || cleared {
+		t.Errorf("second ClearSessionWaiting = (%v, %v)", cleared, err)
+	}
+	if got := mustSession(t, s, "claude", "claude-abc"); got.UpdatedAt != model.NewTime(t6) {
+		t.Errorf("no-op clear bumped updated_at: %v", got.UpdatedAt)
+	}
+
+	// Explicit state: null clears waiting state.
+	if _, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State:       Optional[string]{Set: true, Value: &stIn},
+		StateReason: Optional[string]{Set: true, Value: &r1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t8 := t0.Add(8 * time.Minute)
+	fixClock(s, t8)
+	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		State: Optional[string]{Set: true, Value: nil},
+	})
+	if err != nil || got.State != nil || got.StateReason != nil || got.StateAt != nil || got.UpdatedAt != model.NewTime(t8) {
+		t.Errorf("explicit null clear = %+v err=%v", got, err)
 	}
 }

@@ -30,7 +30,7 @@ func (s *Store) Snapshot(ctx context.Context, dst string) error {
 // deleting one the number of deleted messages, acknowledging one the number of message reads, a write to a project, topic or
 // milestone appends a resource activity record, and migrations
 // bump user_version. A new session raises the number of sessions and a change
-// of its parent, role, issue or location bumps its updated_at. A write of embeddings or similar documents changes a
+// of its parent, role, issue, location, state or state_reason bumps its updated_at. A write of embeddings or similar documents changes a
 // digest over the keys, hashes and scores of their rows. Recording the last use of a token or the last call of a
 // session changes none of these.
 func (s *Store) FingerprintNow(ctx context.Context) (string, error) {

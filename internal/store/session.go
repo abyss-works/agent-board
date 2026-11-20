@@ -19,10 +19,12 @@ var ErrSessionExists = errors.New("session exists")
 // SessionPatch is a merge patch of a session. A set field with a nil value
 // clears it.
 type SessionPatch struct {
-	Parent   Optional[model.SessionRef]
-	Role     Optional[string]
-	Issue    Optional[string]
-	Location Optional[model.SessionLocation]
+	Parent      Optional[model.SessionRef]
+	Role        Optional[string]
+	Issue       Optional[string]
+	Location    Optional[model.SessionLocation]
+	State       Optional[string]
+	StateReason Optional[string]
 }
 
 // ChildSessionInput is a child session to register under the session of the
@@ -35,13 +37,15 @@ type ChildSessionInput struct {
 
 // SessionFilter selects sessions. Project matches the last project of a
 // session; Active true keeps the sessions that are not stale and false the
-// stale ones; Named true keeps the sessions whose ID is not the CLI default.
+// stale ones; Named true keeps the sessions whose ID is not the CLI default;
+// Waiting true keeps sessions with a waiting state and false those without.
 type SessionFilter struct {
 	Project string
 	Actor   string
 	Parent  *model.SessionRef
 	Active  *bool
 	Named   *bool
+	Waiting *bool
 	Limit   int
 	Offset  int
 }
@@ -60,15 +64,15 @@ const sessionLastProject = `(select lp.key from (
 	) lp order by lp.at desc limit 1)`
 
 const sessionSelect = `select s.actor_id, s.session_id, s.first_seen_at, s.last_seen_at, s.last_host, s.parent_actor_id, s.parent_session_id,
-	s.role, i.key as issue_key, s.location, s.updated_at, ` + sessionLastProject + ` as last_project
+	s.role, i.key as issue_key, s.location, s.state, s.state_reason, s.state_at, s.updated_at, ` + sessionLastProject + ` as last_project
 	from session s left join issue i on i.id = s.issue_id`
 
 func scanSession(sc rowScanner, now model.Time) (*model.Session, error) {
 	var x model.Session
 	var first, last, updated string
-	var parentActor, parentSession, role, issue, location, project sql.NullString
+	var parentActor, parentSession, role, issue, location, state, stateReason, stateAt, project sql.NullString
 	if err := sc.Scan(&x.Actor, &x.SessionID, &first, &last, &x.LastHost, &parentActor, &parentSession,
-		&role, &issue, &location, &updated, &project); err != nil {
+		&role, &issue, &location, &state, &stateReason, &stateAt, &updated, &project); err != nil {
 		return nil, err
 	}
 	var err error
@@ -99,6 +103,19 @@ func scanSession(sc rowScanner, now model.Time) (*model.Session, error) {
 			return nil, err
 		}
 		x.Location = &loc
+	}
+	if state.Valid {
+		x.State = &state.String
+	}
+	if stateReason.Valid {
+		x.StateReason = &stateReason.String
+	}
+	if stateAt.Valid {
+		t, err := model.ParseTime(stateAt.String)
+		if err != nil {
+			return nil, err
+		}
+		x.StateAt = &t
 	}
 	x.Named = model.SessionNamed(x.SessionID)
 	x.Stale = model.SessionStale(x.LastSeenAt, now)
@@ -196,6 +213,13 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]model.Sess
 			where = append(where, cli)
 		}
 	}
+	if f.Waiting != nil {
+		if *f.Waiting {
+			where = append(where, "x.state is not null")
+		} else {
+			where = append(where, "x.state is null")
+		}
+	}
 	from := ` from (` + sessionSelect + `) x`
 	if len(where) > 0 {
 		from += ` where ` + strings.Join(where, " and ")
@@ -223,14 +247,14 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]model.Sess
 
 // sessionRow is the part of a stored session a patch compares against.
 type sessionRow struct {
-	parentActor, parentSession, role, location sql.NullString
-	issueID                                    sql.NullInt64
+	parentActor, parentSession, role, location, state, stateReason, stateAt sql.NullString
+	issueID                                                                 sql.NullInt64
 }
 
 func getSessionRow(ctx context.Context, q querier, actor, id string) (*sessionRow, error) {
 	var r sessionRow
-	err := q.QueryRowContext(ctx, `select parent_actor_id, parent_session_id, role, issue_id, location from session where actor_id = ? and session_id = ?`,
-		actor, id).Scan(&r.parentActor, &r.parentSession, &r.role, &r.issueID, &r.location)
+	err := q.QueryRowContext(ctx, `select parent_actor_id, parent_session_id, role, issue_id, location, state, state_reason, state_at from session where actor_id = ? and session_id = ?`,
+		actor, id).Scan(&r.parentActor, &r.parentSession, &r.role, &r.issueID, &r.location, &r.state, &r.stateReason, &r.stateAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -383,6 +407,63 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 				set("location", string(raw))
 			}
 		}
+		if p.State.Set {
+			if p.State.Value == nil {
+				if p.StateReason.Set && p.StateReason.Value != nil {
+					verr.Fields = append(verr.Fields, model.FieldError{
+						Field: "state_reason", Reason: "requires_state",
+						Message: "대기 상태가 없을 때는 대기 사유를 설정할 수 없습니다.",
+					})
+				} else if cur.state.Valid || cur.stateReason.Valid || cur.stateAt.Valid {
+					set("state", nil)
+					set("state_reason", nil)
+					set("state_at", nil)
+				}
+			} else {
+				st := *p.State.Value
+				stateOK := model.ValidSessionState(st)
+				if !stateOK {
+					verr.Fields = append(verr.Fields, model.FieldError{
+						Field: "state", Reason: "invalid",
+						Message: "waiting_approval, waiting_input, waiting_external 중 하나여야 합니다.",
+					})
+				}
+				var reason any
+				reasonOK := true
+				if p.StateReason.Set && p.StateReason.Value != nil {
+					cleaned, msg, ok := model.CleanSessionStateReason(*p.StateReason.Value)
+					if !ok {
+						reasonOK = false
+						verr.Fields = append(verr.Fields, model.FieldError{Field: "state_reason", Reason: "invalid", Message: msg})
+					} else {
+						reason = cleaned
+					}
+				}
+				if stateOK && reasonOK {
+					set("state", st)
+					set("state_reason", reason)
+					set("state_at", now.String())
+				}
+			}
+		} else if p.StateReason.Set {
+			if p.StateReason.Value == nil {
+				if cur.stateReason.Valid {
+					set("state_reason", nil)
+				}
+			} else if !cur.state.Valid {
+				verr.Fields = append(verr.Fields, model.FieldError{
+					Field: "state_reason", Reason: "requires_state",
+					Message: "대기 상태가 없을 때는 대기 사유를 설정할 수 없습니다.",
+				})
+			} else {
+				cleaned, msg, ok := model.CleanSessionStateReason(*p.StateReason.Value)
+				if !ok {
+					verr.Fields = append(verr.Fields, model.FieldError{Field: "state_reason", Reason: "invalid", Message: msg})
+				} else if !cur.stateReason.Valid || cur.stateReason.String != cleaned {
+					set("state_reason", cleaned)
+				}
+			}
+		}
 		if len(verr.Fields) > 0 {
 			return verr
 		}
@@ -399,6 +480,40 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 	}
 	x, _, err := s.readSession(ctx, actor, id)
 	return x, err
+}
+
+// ClearSessionWaiting clears a waiting session's state, state_reason, and
+// state_at and bumps updated_at. Sessions not currently waiting are untouched
+// without acquiring the write lock. Returns the new updated_at and whether a
+// waiting state was cleared.
+func (s *Store) ClearSessionWaiting(ctx context.Context, actor, id string) (model.Time, bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `select 1 from session where actor_id = ? and session_id = ? and state is not null`, actor, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Time{}, false, nil
+	}
+	if err != nil {
+		return model.Time{}, false, err
+	}
+	now := s.stamp()
+	var cleared bool
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `update session set state = null, state_reason = null, state_at = null, updated_at = ?
+			where actor_id = ? and session_id = ? and state is not null`, now.String(), actor, id)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		cleared = n > 0
+		return nil
+	})
+	if err != nil {
+		return model.Time{}, false, err
+	}
+	return now, cleared, nil
 }
 
 // CreateChildSession registers a child of the session of the trace, for the

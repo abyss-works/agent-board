@@ -498,3 +498,93 @@ func TestUserTasksAreTheUsersTurn(t *testing.T) {
 		t.Errorf("tasks = %+v, next = %+v", p.UserTurn.Tasks, p.Agent.Next)
 	}
 }
+
+func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
+	s, ctx := seeded(t)
+	t0 := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
+	mustProject(t, s, ctx, "AAA")
+	mustProject(t, s, ctx, "BBB")
+	issueA := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "a"})
+	issueB := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "BBB", Title: "b"})
+
+	// Session 1: issue in AAA, last_project in BBB -> attributed to AAA only.
+	tr1 := model.Trace{Actor: "claude", SessionID: "s-issue-a", ClientHost: "desk"}
+	mustTouch(t, s, tr1, t0)
+	if _, err := s.AddComment(ctx, tr1, issueB.Key, "BBB 활동", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fixClock(s, t0.Add(2*time.Minute))
+	stIn := model.SessionStateWaitingInput
+	reason1 := "승인 필요"
+	if _, err := s.UpdateSession(ctx, tr1.Actor, tr1.SessionID, SessionPatch{
+		Issue:       Optional[string]{Set: true, Value: &issueA.Key},
+		State:       Optional[string]{Set: true, Value: &stIn},
+		StateReason: Optional[string]{Set: true, Value: &reason1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 2: no issue, last_project in AAA -> attributed to AAA, earlier state_at so comes first.
+	tr2 := model.Trace{Actor: "claude", SessionID: "s-last-a", ClientHost: "desk"}
+	mustTouch(t, s, tr2, t0)
+	if _, err := s.AddComment(ctx, tr2, issueA.Key, "AAA 활동", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fixClock(s, t0.Add(time.Minute))
+	stApp := model.SessionStateWaitingApproval
+	if _, err := s.UpdateSession(ctx, tr2.Actor, tr2.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: &stApp},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 3: neither issue nor last_project -> excluded from project agendas.
+	tr3 := model.Trace{Actor: "claude", SessionID: "s-orphan", ClientHost: "desk"}
+	mustTouch(t, s, tr3, t0)
+	fixClock(s, t0.Add(30*time.Second))
+	stExt := model.SessionStateWaitingExternal
+	if _, err := s.UpdateSession(ctx, tr3.Actor, tr3.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: &stExt},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 4: in AAA (via issue) but NOT waiting -> excluded.
+	tr4 := model.Trace{Actor: "claude", SessionID: "s-not-waiting", ClientHost: "desk"}
+	mustTouch(t, s, tr4, t0)
+	if _, err := s.UpdateSession(ctx, tr4.Actor, tr4.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &issueA.Key},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := s.Agenda(ctx, []string{"AAA", "BBB"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aaa := a.Projects[0].UserTurn.WaitingSessions
+	bbb := a.Projects[1].UserTurn.WaitingSessions
+	if aaa.Total != 2 || len(aaa.Items) != 2 {
+		t.Fatalf("AAA waiting_sessions = %+v", aaa)
+	}
+	if aaa.Items[0].SessionID != "s-last-a" || aaa.Items[1].SessionID != "s-issue-a" {
+		t.Errorf("AAA order = [%s, %s], want [s-last-a, s-issue-a]", aaa.Items[0].SessionID, aaa.Items[1].SessionID)
+	}
+	if aaa.Items[0].Children != nil || aaa.Items[1].Children != nil {
+		t.Errorf("agenda waiting sessions must not carry children")
+	}
+	if bbb.Total != 0 || bbb.Items == nil || len(bbb.Items) != 0 {
+		t.Errorf("BBB waiting_sessions = %+v, want empty non-nil slice", bbb)
+	}
+
+	// Limit caps items while keeping total.
+	aLimited, err := s.Agenda(ctx, []string{"AAA"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := aLimited.Projects[0].UserTurn.WaitingSessions
+	if ws.Total != 2 || len(ws.Items) != 1 || ws.Items[0].SessionID != "s-last-a" {
+		t.Errorf("limited waiting_sessions = %+v", ws)
+	}
+}

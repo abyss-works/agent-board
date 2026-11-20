@@ -399,10 +399,10 @@ func (c *Client) DeleteMessage(ctx context.Context, id int64) (*Response, error)
 }
 
 // SessionFilter selects sessions. Parent is "<actor>/<session ID>". A nil
-// Active or Named leaves that filter out.
+// Active, Named or Waiting leaves that filter out.
 type SessionFilter struct {
 	Project, Actor, Parent string
-	Active, Named          *bool
+	Active, Named, Waiting *bool
 	Page                   Page
 }
 
@@ -417,6 +417,9 @@ func (f SessionFilter) Values() url.Values {
 	}
 	if f.Named != nil {
 		v.Set("named", strconv.FormatBool(*f.Named))
+	}
+	if f.Waiting != nil {
+		v.Set("waiting", strconv.FormatBool(*f.Waiting))
 	}
 	f.Page.addTo(v)
 	return v
@@ -436,7 +439,7 @@ func (c *Client) GetSession(ctx context.Context, actor, id string) (*Response, e
 	return c.Request(ctx, http.MethodGet, sessionPath(actor, id), nil, nil)
 }
 
-// UpdateSession sends a merge patch of parent, role, issue and location.
+// UpdateSession sends a merge patch of parent, role, issue, location, state and state_reason.
 func (c *Client) UpdateSession(ctx context.Context, actor, id string, patch map[string]any) (*Response, error) {
 	return c.Request(ctx, http.MethodPatch, sessionPath(actor, id), patch, nil)
 }

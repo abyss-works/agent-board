@@ -364,10 +364,11 @@ type AgendaProject struct {
 	// Dormant counts the open issues without activity for model.IssueDormantAfter.
 	Dormant  int `json:"dormant"`
 	UserTurn struct {
-		Review         Section[model.IssueSummary] `json:"review"`
-		Decisions      Section[model.IssueSummary] `json:"decisions"`
-		Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
-		Tasks          Section[model.IssueSummary] `json:"tasks"`
+		Review          Section[model.IssueSummary] `json:"review"`
+		Decisions       Section[model.IssueSummary] `json:"decisions"`
+		Unacknowledged  Section[model.IssueSummary] `json:"unacknowledged"`
+		Tasks           Section[model.IssueSummary] `json:"tasks"`
+		WaitingSessions Section[model.Session]      `json:"waiting_sessions"`
 	} `json:"user_turn"`
 	Agent struct {
 		Doing Section[model.DoingItem] `json:"doing"`
@@ -413,17 +414,58 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		if err != nil {
 			return nil, err
 		}
+		waitingSessions, err := s.waitingSessionsSection(ctx, key, limit)
+		if err != nil {
+			return nil, err
+		}
 		var p AgendaProject
 		p.Project = o.Project
 		p.Dormant = dormantTotal
 		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unacknowledged = o.Review, o.Decisions, o.Unacknowledged
 		p.UserTurn.Tasks = Section[model.IssueSummary]{Total: taskTotal, Items: tasks}
+		p.UserTurn.WaitingSessions = waitingSessions
 		p.Agent.Doing, p.Agent.Next = o.Doing, o.Next
 		p.Waiting.Blocked = o.Blocked
 		p.Waiting.External = Section[model.IssueSummary]{Total: total, Items: external}
 		a.Projects = append(a.Projects, p)
 	}
 	return a, nil
+}
+
+// waitingSessionsSection lists waiting sessions belonging to project, oldest
+// state_at first (tie-breaking by actor, session_id). A session belongs to the
+// project of its linked issue, or to its last_project when it has no issue.
+func (s *Store) waitingSessionsSection(ctx context.Context, project string, limit int) (Section[model.Session], error) {
+	now := s.stamp()
+	const from = ` from (
+		select s.actor_id, s.session_id, s.first_seen_at, s.last_seen_at, s.last_host, s.parent_actor_id, s.parent_session_id,
+			s.role, i.key as issue_key, s.location, s.state, s.state_reason, s.state_at, s.updated_at,
+			` + sessionLastProject + ` as last_project, ip.key as issue_project
+		from session s
+		left join issue i on i.id = s.issue_id
+		left join project ip on ip.id = i.project_id
+		where s.state is not null
+	) x where coalesce(x.issue_project, x.last_project) = ?`
+	var total int
+	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, project).Scan(&total); err != nil {
+		return Section[model.Session]{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `select x.actor_id, x.session_id, x.first_seen_at, x.last_seen_at, x.last_host, x.parent_actor_id, x.parent_session_id,
+		x.role, x.issue_key, x.location, x.state, x.state_reason, x.state_at, x.updated_at, x.last_project`+from+
+		` order by x.state_at asc, x.actor_id asc, x.session_id asc limit ?`, project, limit)
+	if err != nil {
+		return Section[model.Session]{}, err
+	}
+	defer rows.Close()
+	items := []model.Session{}
+	for rows.Next() {
+		item, err := scanSession(rows, now)
+		if err != nil {
+			return Section[model.Session]{}, err
+		}
+		items = append(items, *item)
+	}
+	return Section[model.Session]{Total: total, Items: items}, rows.Err()
 }
 
 // doingSection lists the doing issues with the session holding each: the one

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
@@ -197,6 +199,51 @@ func TestAgendaEndpoint(t *testing.T) {
 		if rec = e.do(t, "GET", "/v1/agenda?"+q, "", nil); rec.Code != 400 {
 			t.Errorf("%s: %d", q, rec.Code)
 		}
+	}
+}
+
+func TestAgendaWaitingSessionsEndpoint(t *testing.T) {
+	e, clock := newSessionEnv(t)
+	owner := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"}
+	e.do(t, "POST", "/v1/projects", `{"key":"AAA","name":"A"}`, owner)
+	e.do(t, "POST", "/v1/projects", `{"key":"BBB","name":"B"}`, owner)
+	e.do(t, "POST", "/v1/issues", `{"project":"AAA","title":"a","body":"b"}`, owner)
+	e.do(t, "POST", "/v1/issues", `{"project":"BBB","title":"b","body":"b"}`, owner)
+
+	// s1: last_project is BBB (comment on BBB-1), issue is AAA-1 -> belongs to AAA only.
+	s1 := map[string]string{"X-Session-Id": "s1"}
+	wantStatus(t, e.do(t, "POST", "/v1/issues/BBB-1/comments", `{"body":"note"}`, s1), 201, "s1 comment")
+	clock.add(2 * time.Minute)
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s1", `{"issue":"AAA-1","state":"waiting_approval","state_reason":"승인 대기"}`, s1), 200, "s1 wait")
+
+	// s2: no issue, last_project is AAA -> belongs to AAA, earlier state_at.
+	s2 := map[string]string{"X-Session-Id": "s2"}
+	wantStatus(t, e.do(t, "POST", "/v1/issues/AAA-1/comments", `{"body":"note"}`, s2), 201, "s2 comment")
+	clock.add(-time.Minute)
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s2", `{"state":"waiting_input","state_reason":"입력 대기"}`, s2), 200, "s2 wait")
+
+	// s3: no issue and no last_project -> excluded from both projects.
+	s3 := map[string]string{"X-Session-Id": "s3"}
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", s3), 200, "s3 register")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/s3", `{"state":"waiting_external"}`, s3), 200, "s3 wait")
+
+	rec := e.do(t, "GET", "/v1/agenda?project=AAA,BBB", "", owner)
+	wantStatus(t, rec, 200, "agenda")
+	if strings.Contains(rec.Body.String(), `"children"`) {
+		t.Errorf("agenda waiting_sessions must not carry children: %s", rec.Body)
+	}
+	var a store.Agenda
+	decodeJSON(t, rec, &a)
+	if len(a.Projects) != 2 {
+		t.Fatalf("projects = %d", len(a.Projects))
+	}
+	wsA := a.Projects[0].UserTurn.WaitingSessions
+	wsB := a.Projects[1].UserTurn.WaitingSessions
+	if wsA.Total != 2 || len(wsA.Items) != 2 || wsA.Items[0].SessionID != "s2" || wsA.Items[1].SessionID != "s1" {
+		t.Errorf("AAA waiting_sessions = %+v", wsA)
+	}
+	if wsB.Total != 0 || wsB.Items == nil || len(wsB.Items) != 0 {
+		t.Errorf("BBB waiting_sessions = %+v", wsB)
 	}
 }
 

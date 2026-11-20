@@ -69,9 +69,9 @@ func (a *App) renderSessionList(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "세션이 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"ACTOR", "SESSION", "ROLE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE"}}
+	tb := &table{header: []string{"ACTOR", "SESSION", "ROLE", "STATE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE"}}
 	for _, s := range l.Items {
-		tb.add(s.Actor, s.SessionID, deref(s.Role, "-"), sessionRefText(s.Parent), deref(s.Issue, "-"), s.LastHost,
+		tb.add(s.Actor, s.SessionID, deref(s.Role, "-"), deref(s.State, "-"), sessionRefText(s.Parent), deref(s.Issue, "-"), s.LastHost,
 			deref(s.LastProject, "-"), formatTime(s.LastSeenAt, a.Location), staleText(s.Stale))
 	}
 	tb.write(w, a.TermWidth)
@@ -91,6 +91,9 @@ func (a *App) renderSession(w io.Writer, resp *client.Response) error {
 		{"role", deref(s.Role, "-")},
 		{"parent", sessionRefText(s.Parent)},
 		{"issue", deref(s.Issue, "-")},
+		{"state", deref(s.State, "-")},
+		{"state_reason", deref(s.StateReason, "-")},
+		{"state_at", formatTimePtr(s.StateAt, a.Location)},
 		{"host", s.LastHost},
 		{"project", deref(s.LastProject, "-")},
 		{"first_seen", formatTime(s.FirstSeenAt, a.Location)},
@@ -129,10 +132,11 @@ func (a *App) renderSession(w io.Writer, resp *client.Response) error {
 
 var sessionListCmd = &command{
 	name: "list", summary: "세션 목록 (마지막 호출이 최근인 순)",
-	usage: `사용법: agb session list [--project <KEY>] [--actor <ID>] [--parent <행위자/세션>] [--active | --stale] [--named true|false]
+	usage: `사용법: agb session list [--project <KEY>] [--actor <ID>] [--parent <행위자/세션>] [--active | --stale] [--named true|false] [--waiting]
 
 서버가 본 에이전트 세션을 마지막 호출이 최근인 순으로 보입니다. LAST_SEEN 은 마지막 호출 시각(1분 단위)이고,
-STALE 은 마지막 호출에서 30분이 지났는지입니다. PROJECT 는 그 세션이 마지막으로 기록을 남긴 프로젝트입니다.
+STALE 은 마지막 호출에서 30분이 지났는지입니다. STATE 는 대기 상태(waiting_approval, waiting_input, waiting_external)입니다.
+PROJECT 는 그 세션이 마지막으로 기록을 남긴 프로젝트입니다.
 예: agb session list --active --fields actor,session_id,role,issue --text
 
 옵션:
@@ -142,6 +146,7 @@ STALE 은 마지막 호출에서 30분이 지났는지입니다. PROJECT 는 그
   --active                멈추지 않은 세션만 (마지막 호출에서 30분 이내)
   --stale                 멈춘 세션만. --active 와 함께 쓸 수 없음
   --named true|false      false 면 CLI 기본 세션 ID(cli-YYYYMMDD)인 세션만, true 면 그 밖의 세션만
+  --waiting               대기 상태인 세션만
   --limit <N>             최대 200. 기본 50
   --offset <N>
 
@@ -160,7 +165,7 @@ STALE 은 마지막 호출에서 30분이 지났는지입니다. PROJECT 는 그
 		fs.StringVar(&g.fields, "fields", g.fields, "")
 		fs.BoolVar(&g.text, "text", g.text, "")
 		var f client.SessionFilter
-		var active, stale bool
+		var active, stale, waiting bool
 		var named string
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
@@ -169,6 +174,7 @@ STALE 은 마지막 호출에서 30분이 지났는지입니다. PROJECT 는 그
 		fs.BoolVar(&active, "active", false, "")
 		fs.BoolVar(&stale, "stale", false, "")
 		fs.StringVar(&named, "named", "", "")
+		fs.BoolVar(&waiting, "waiting", false, "")
 		fs.IntVar(&f.Page.Limit, "limit", 0, "")
 		fs.IntVar(&f.Page.Offset, "offset", 0, "")
 		pos, err := parseArgs(fs, args)
@@ -183,6 +189,9 @@ STALE 은 마지막 호출에서 30분이 지났는지입니다. PROJECT 는 그
 		}
 		if active || stale {
 			f.Active = &active
+		}
+		if waiting {
+			f.Waiting = &waiting
 		}
 		switch named {
 		case "":
@@ -247,16 +256,18 @@ var sessionGetCmd = &command{
 }
 
 var sessionSetCmd = &command{
-	name: "set", summary: "세션의 부모·역할·이슈·작업 위치 수정",
-	usage: `사용법: agb session set [<행위자/세션>] [--parent <행위자/세션>|none] [--role <역할>|none] [--issue <KEY>|none] [--location [--repo <폴더>] | --clear-location]
+	name: "set", summary: "세션의 부모·역할·이슈·대기 상태·작업 위치 수정",
+	usage: `사용법: agb session set [<행위자/세션>] [--parent <행위자/세션>|none] [--role <역할>|none] [--issue <KEY>|none] [--state <상태>|none] [--reason <사유>] [--location [--repo <폴더>] | --clear-location]
 
-세션의 부모 세션, 역할, 맡은 이슈, 작업 위치를 고칩니다. 준 옵션만 바꾸고 none 은 그 값을 지웁니다.
+세션의 부모 세션, 역할, 맡은 이슈, 대기 상태, 작업 위치를 고칩니다. 준 옵션만 바꾸고 none 은 그 값을 지웁니다.
 인자를 생략하면 이 명령의 행위자와 세션 ID로 정해진 세션입니다. 다른 행위자의 세션은 사용자 행위자만 고칩니다.
 
 옵션:
   --parent <행위자/세션>|none  부모 세션. 자기 자신이나 자기 자손은 안 됨
   --role <역할>|none           main, subagent, runner 중 하나
   --issue <KEY>|none           맡은 이슈 키
+  --state <상태>|none          대기 상태: waiting_approval, waiting_input, waiting_external, none(해제)
+  --reason <사유>              대기 사유 (1~200자, 제어 문자 불가)
   --location                   --repo 폴더의 git 정보(원격 주소, 브랜치, 저장소 최상위 경로, HEAD,
                                커밋하지 않은 파일 수)로 작업 위치를 통째로 바꿈. 파일 내용은 읽지 않음
   --repo <폴더>                --location 이 읽을 저장소. 생략하면 현재 폴더
@@ -264,11 +275,13 @@ var sessionSetCmd = &command{
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("session set", g)
-		var parent, role, issue, repo string
+		var parent, role, issue, state, reason, repo string
 		var location, clearLocation bool
 		fs.StringVar(&parent, "parent", "", "")
 		fs.StringVar(&role, "role", "", "")
 		fs.StringVar(&issue, "issue", "", "")
+		fs.StringVar(&state, "state", "", "")
+		fs.StringVar(&reason, "reason", "", "")
 		fs.BoolVar(&location, "location", false, "")
 		fs.StringVar(&repo, "repo", "", "")
 		fs.BoolVar(&clearLocation, "clear-location", false, "")
@@ -302,7 +315,7 @@ var sessionSetCmd = &command{
 				patch["parent"] = map[string]any{"actor": ref.Actor, "session_id": ref.SessionID}
 			}
 		}
-		for name, v := range map[string]string{"role": role, "issue": issue} {
+		for name, v := range map[string]string{"role": role, "issue": issue, "state": state} {
 			if !isSet(fs, name) {
 				continue
 			}
@@ -312,11 +325,14 @@ var sessionSetCmd = &command{
 				patch[name] = v
 			}
 		}
+		if isSet(fs, "reason") {
+			patch["state_reason"] = reason
+		}
 		if clearLocation {
 			patch["location"] = nil
 		}
 		if len(patch) == 0 && !location {
-			return usageErrorf("바꿀 옵션이 필요합니다: --parent, --role, --issue, --location, --clear-location")
+			return usageErrorf("바꿀 옵션이 필요합니다: --parent, --role, --issue, --state, --reason, --location, --clear-location")
 		}
 		c, err := a.client(g, true)
 		if err != nil {
