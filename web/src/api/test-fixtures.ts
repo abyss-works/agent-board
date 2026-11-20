@@ -50,6 +50,7 @@ export function sessionFixture(partial: Partial<Session> = {}): Session {
     role: 'main',
     issue: null,
     location: null,
+    location_conflicts: [],
     state: null,
     state_reason: null,
     state_at: null,
