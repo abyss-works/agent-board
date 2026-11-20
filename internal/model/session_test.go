@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,5 +40,68 @@ func TestParseSessionRole(t *testing.T) {
 	}
 	if _, ok := ParseSessionRole("boss"); ok {
 		t.Error("ParseSessionRole(boss) accepted")
+	}
+}
+
+func TestValidSessionState(t *testing.T) {
+	for _, s := range []string{SessionStateWaitingApproval, SessionStateWaitingInput, SessionStateWaitingExternal} {
+		if !ValidSessionState(s) {
+			t.Errorf("ValidSessionState(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "paused", "waiting", "WAITING_INPUT"} {
+		if ValidSessionState(s) {
+			t.Errorf("ValidSessionState(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestCleanSessionStateReason(t *testing.T) {
+	got, _, ok := CleanSessionStateReason("  배포 승인 대기  ")
+	if !ok || got != "배포 승인 대기" {
+		t.Errorf("trimmed = (%q, %v)", got, ok)
+	}
+	if _, _, ok := CleanSessionStateReason(strings.Repeat("가", MaxSessionStateReasonRunes)); !ok {
+		t.Error("200 runes rejected")
+	}
+	for _, bad := range []string{
+		"",
+		"   ",
+		strings.Repeat("가", MaxSessionStateReasonRunes+1),
+		"줄바꿈\n포함",
+		"끝줄바꿈\n",
+		"널\x00포함",
+		"탭\t포함",
+		"제어\x1f문자",
+		"삭제\x7f문자",
+	} {
+		if _, _, ok := CleanSessionStateReason(bad); ok {
+			t.Errorf("CleanSessionStateReason(%q) accepted", bad)
+		}
+	}
+}
+
+func TestSessionWaitingValid(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	st := SessionStateWaitingInput
+	at23 := NewTime(now.Add(-23 * time.Hour))
+	at24 := NewTime(now.Add(-24 * time.Hour))
+	at25 := NewTime(now.Add(-25 * time.Hour))
+
+	cases := []struct {
+		name string
+		s    Session
+		want bool
+	}{
+		{"23h ago", Session{State: &st, StateAt: &at23}, true},
+		{"24h exact", Session{State: &st, StateAt: &at24}, true},
+		{"25h ago", Session{State: &st, StateAt: &at25}, false},
+		{"nil state", Session{State: nil, StateAt: &at23}, false},
+		{"nil state_at", Session{State: &st, StateAt: nil}, false},
+	}
+	for _, c := range cases {
+		if got := c.s.WaitingValid(now); got != c.want {
+			t.Errorf("%s: WaitingValid = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

@@ -1,13 +1,58 @@
 package model
 
 import (
+	"fmt"
 	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // SessionStaleAfter is how long a session may stay without a call before it
 // shows as stopped.
 const SessionStaleAfter = 30 * time.Minute
+
+// SessionWaitingHold is how long a waiting session remains within its waiting
+// hold window.
+const SessionWaitingHold = 24 * time.Hour
+
+// Allowed session waiting states.
+const (
+	SessionStateWaitingApproval = "waiting_approval"
+	SessionStateWaitingInput    = "waiting_input"
+	SessionStateWaitingExternal = "waiting_external"
+)
+
+// MaxSessionStateReasonRunes is the maximum length of a session state_reason
+// after trimming surrounding whitespace.
+const MaxSessionStateReasonRunes = 200
+
+// ValidSessionState reports whether s is one of the allowed session waiting
+// states.
+func ValidSessionState(s string) bool {
+	switch s {
+	case SessionStateWaitingApproval, SessionStateWaitingInput, SessionStateWaitingExternal:
+		return true
+	}
+	return false
+}
+
+// CleanSessionStateReason checks a waiting state reason and returns it with
+// surrounding whitespace trimmed. Control characters (0x00..0x1f, 0x7f) are
+// rejected before trimming; the trimmed string must be 1..MaxSessionStateReasonRunes
+// runes.
+func CleanSessionStateReason(raw string) (string, string, bool) {
+	for _, r := range raw {
+		if r <= 0x1f || r == 0x7f {
+			return "", "제어 문자를 넣을 수 없습니다.", false
+		}
+	}
+	trimmed := strings.TrimSpace(raw)
+	if n := utf8.RuneCountInString(trimmed); n < 1 || n > MaxSessionStateReasonRunes {
+		return "", fmt.Sprintf("앞뒤 공백 제거 후 1~%d자여야 합니다.", MaxSessionStateReasonRunes), false
+	}
+	return trimmed, "", true
+}
 
 // SessionRole is what a session does among the sessions it belongs with.
 type SessionRole string
@@ -76,7 +121,16 @@ type Session struct {
 	Role        *string          `json:"role"`
 	Issue       *string          `json:"issue"`
 	Location    *SessionLocation `json:"location"`
+	State       *string          `json:"state"`
+	StateReason *string          `json:"state_reason"`
+	StateAt     *Time            `json:"state_at"`
 	Stale       bool             `json:"stale"`
 	UpdatedAt   Time             `json:"updated_at"`
 	Children    *[]Session       `json:"children,omitempty"`
+}
+
+// WaitingValid reports whether the session is waiting and its state_at is
+// within SessionWaitingHold of now.
+func (s Session) WaitingValid(now time.Time) bool {
+	return s.State != nil && s.StateAt != nil && now.Sub(s.StateAt.Time()) <= SessionWaitingHold
 }
