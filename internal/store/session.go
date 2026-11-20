@@ -239,13 +239,17 @@ func getSessionRow(ctx context.Context, q querier, actor, id string) (*sessionRo
 
 // sessionIssueID resolves the issue key a session names, whatever the status
 // of the issue. A key that names no issue is a violation.
-func sessionIssueID(ctx context.Context, q querier, key string, verr *model.ValidationError) int64 {
+func sessionIssueID(ctx context.Context, q querier, key string, verr *model.ValidationError) (int64, bool, error) {
 	var id int64
 	err := q.QueryRowContext(ctx, `select id from issue where key = ?`, key).Scan(&id)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		verr.Fields = append(verr.Fields, model.FieldError{Field: "issue", Reason: "unknown_issue", Message: "이슈 " + key + "가 없습니다."})
+		return 0, false, nil
 	}
-	return id
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }
 
 // sessionRole checks a role name and adds a violation when it is none.
@@ -257,10 +261,10 @@ func sessionRole(v string, verr *model.ValidationError) {
 
 // checkSessionParent reports whether ref may become the parent of self: it
 // must be a session that is neither self nor a descendant of self.
-func checkSessionParent(ctx context.Context, q querier, self, ref model.SessionRef, verr *model.ValidationError) bool {
-	cycle := func() bool {
+func checkSessionParent(ctx context.Context, q querier, self, ref model.SessionRef, verr *model.ValidationError) (bool, error) {
+	cycle := func() (bool, error) {
 		verr.Fields = append(verr.Fields, model.FieldError{Field: "parent", Reason: "cycle", Message: "자기 자신이나 자기 자손 세션을 상위 세션으로 둘 수 없습니다."})
-		return false
+		return false, nil
 	}
 	if ref == self {
 		return cycle()
@@ -268,13 +272,19 @@ func checkSessionParent(ctx context.Context, q querier, self, ref model.SessionR
 	cur, seen := ref, map[model.SessionRef]bool{}
 	for first := true; ; first = false {
 		r, err := getSessionRow(ctx, q, cur.Actor, cur.SessionID)
-		if errors.Is(err, ErrNotFound) && first {
-			verr.Fields = append(verr.Fields, model.FieldError{Field: "parent", Reason: "unknown_session",
-				Message: "세션 " + ref.Actor + "/" + ref.SessionID + "가 없습니다."})
-			return false
+		if errors.Is(err, ErrNotFound) {
+			if first {
+				verr.Fields = append(verr.Fields, model.FieldError{Field: "parent", Reason: "unknown_session",
+					Message: "세션 " + ref.Actor + "/" + ref.SessionID + "가 없습니다."})
+				return false, nil
+			}
+			return true, nil
 		}
-		if err != nil || !r.parentActor.Valid || seen[cur] {
-			return err == nil || errors.Is(err, ErrNotFound)
+		if err != nil {
+			return false, err
+		}
+		if !r.parentActor.Valid || seen[cur] {
+			return true, nil
 		}
 		seen[cur] = true
 		cur = model.SessionRef{Actor: r.parentActor.String, SessionID: r.parentSession.String}
@@ -318,10 +328,16 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 					set("parent_actor_id", nil)
 					set("parent_session_id", nil)
 				}
-			} else if ref := *p.Parent.Value; checkSessionParent(ctx, tx, self, ref, verr) &&
-				(cur.parentActor.String != ref.Actor || cur.parentSession.String != ref.SessionID) {
-				set("parent_actor_id", ref.Actor)
-				set("parent_session_id", ref.SessionID)
+			} else {
+				ref := *p.Parent.Value
+				ok, err := checkSessionParent(ctx, tx, self, ref, verr)
+				if err != nil {
+					return err
+				}
+				if ok && (cur.parentActor.String != ref.Actor || cur.parentSession.String != ref.SessionID) {
+					set("parent_actor_id", ref.Actor)
+					set("parent_session_id", ref.SessionID)
+				}
 			}
 		}
 		if p.Role.Set {
@@ -338,8 +354,14 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 				if cur.issueID.Valid {
 					set("issue_id", nil)
 				}
-			} else if issueID := sessionIssueID(ctx, tx, *p.Issue.Value, verr); !cur.issueID.Valid || cur.issueID.Int64 != issueID {
-				set("issue_id", issueID)
+			} else {
+				issueID, ok, err := sessionIssueID(ctx, tx, *p.Issue.Value, verr)
+				if err != nil {
+					return err
+				}
+				if ok && (!cur.issueID.Valid || cur.issueID.Int64 != issueID) {
+					set("issue_id", issueID)
+				}
 			}
 		}
 		if p.Location.Set {
@@ -397,7 +419,13 @@ func (s *Store) CreateChildSession(ctx context.Context, tr model.Trace, in Child
 		sessionRole(role, verr)
 		var issueID any
 		if in.Issue != nil {
-			issueID = sessionIssueID(ctx, tx, *in.Issue, verr)
+			id, ok, err := sessionIssueID(ctx, tx, *in.Issue, verr)
+			if err != nil {
+				return err
+			}
+			if ok {
+				issueID = id
+			}
 		}
 		if len(verr.Fields) > 0 {
 			return verr

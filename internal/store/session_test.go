@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
@@ -368,5 +369,53 @@ func TestSessionTableKeepsParentPairs(t *testing.T) {
 	s.db.QueryRow(`select count(*) from session`).Scan(&n)
 	if n.Int64 != 0 {
 		t.Errorf("sessions = %d", n.Int64)
+	}
+}
+
+func TestSessionLookupPropagatesContextAndDBErrors(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "APP", Title: "a"})
+	at := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	mustTouch(t, s, trSess, at)
+	mustTouch(t, s, trOwner, at)
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+
+	verr := &model.ValidationError{}
+	if _, err := checkSessionParent(canceled, s.db, model.SessionRef{Actor: "claude", SessionID: "claude-abc"},
+		model.SessionRef{Actor: "owner", SessionID: "s-owner"}, verr); !errors.Is(err, context.Canceled) || len(verr.Fields) != 0 {
+		t.Errorf("checkSessionParent(canceled) = %v, fields=%+v", err, verr.Fields)
+	}
+	if _, _, err := sessionIssueID(canceled, s.db, i.Key, verr); !errors.Is(err, context.Canceled) || len(verr.Fields) != 0 {
+		t.Errorf("sessionIssueID(canceled) = %v, fields=%+v", err, verr.Fields)
+	}
+
+	role := "runner"
+	key := i.Key
+	for name, patch := range map[string]SessionPatch{
+		"parent": {
+			Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "owner", SessionID: "s-owner"}},
+			Role:   Optional[string]{Set: true, Value: &role},
+		},
+		"issue": {
+			Issue: Optional[string]{Set: true, Value: &key},
+			Role:  Optional[string]{Set: true, Value: &role},
+		},
+	} {
+		var ve *model.ValidationError
+		if _, err := s.UpdateSession(canceled, "claude", "claude-abc", patch); !errors.Is(err, context.Canceled) || errors.As(err, &ve) {
+			t.Errorf("UpdateSession(%s, canceled) = %v, want context.Canceled", name, err)
+		}
+	}
+	if got := mustSession(t, s, "claude", "claude-abc"); got.Parent != nil || got.Issue != nil || got.Role != nil {
+		t.Errorf("session changed after canceled updates: %+v", got)
+	}
+	if _, err := s.CreateChildSession(canceled, trSess, ChildSessionInput{SessionID: "claude-abc.c", Issue: &key}); !errors.Is(err, context.Canceled) {
+		t.Errorf("CreateChildSession(canceled) = %v, want context.Canceled", err)
+	}
+	if _, err := s.GetSession(ctx, "claude", "claude-abc.c"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("child session exists after canceled create: %v", err)
 	}
 }
