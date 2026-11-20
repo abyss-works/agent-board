@@ -249,6 +249,8 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 		return notFound("대상이 없습니다.")
 	case errors.Is(err, store.ErrDuplicateKey):
 		return conflict("duplicate_key", "같은 키가 이미 있습니다.")
+	case errors.Is(err, store.ErrSessionExists):
+		return conflict("exists", "같은 행위자의 같은 세션 ID가 이미 있습니다.")
 	case errors.Is(err, store.ErrProjectNotActive):
 		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈, 주제, 마일스톤, 기록 문서, 메시지는 쓸 수 없습니다.")
 	case errors.As(err, &ierr):
