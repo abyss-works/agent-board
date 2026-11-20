@@ -127,10 +127,13 @@ func TestRejectedAndUnauthenticatedRequestsRegisterNoSession(t *testing.T) {
 		{"health", "GET", "/v1/health", nil, 200},
 		{"shared actor list", "GET", "/v1/actors", map[string]string{"X-Actor": "-", "Authorization": "Bearer " + testToken}, 200},
 		{"device authorization", "POST", "/v1/device-authorizations", map[string]string{"Authorization": "-"}, 0},
+		{"token exchange", "POST", "/v1/tokens", map[string]string{"Authorization": "-"}, 0},
 	} {
 		body := ""
-		if c.method == "POST" {
+		if c.path == "/v1/device-authorizations" {
 			body = `{"actor":"claude","client_host":"desk"}`
+		} else if c.path == "/v1/tokens" {
+			body = `{"device_code":"missing"}`
 		}
 		rec := e.do(t, c.method, c.path, body, c.headers)
 		if c.status != 0 && rec.Code != c.status {
@@ -244,6 +247,14 @@ func TestPatchSession(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"branch":null`) {
 		t.Errorf("location keys not reported are not null: %s", rec.Body)
 	}
+	if strings.Contains(rec.Body.String(), `"children"`) {
+		t.Errorf("a patched session carries children: %s", rec.Body)
+	}
+	rec = e.do(t, "POST", "/v1/sessions", `{"session_id":"sess-1.child"}`, nil)
+	wantStatus(t, rec, 201, "child for cycle")
+	rec = e.do(t, "PATCH", path, `{"parent":{"actor":"claude","session_id":"sess-1.child"}}`, nil)
+	wantStatus(t, rec, 422, "descendant cycle")
+	wantDetail(t, decodeErr(t, rec), "parent", "cycle")
 	rec = e.do(t, "PATCH", path, `{"issue":null}`, nil)
 	decodeJSON(t, rec, &got)
 	if rec.Code != 200 || got.Issue != nil {

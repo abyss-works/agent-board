@@ -86,12 +86,15 @@ func TestSessionNamedAndStale(t *testing.T) {
 
 func TestSessionLastProjectIsTheLatestRecord(t *testing.T) {
 	s, ctx := seeded(t)
+	t0 := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
 	mustProject(t, s, ctx, "AAA")
 	mustProject(t, s, ctx, "BBB")
-	mustTouch(t, s, trSess, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC))
+	mustTouch(t, s, trSess, t0)
 	if got := mustSession(t, s, "claude", "claude-abc"); got.LastProject != nil {
 		t.Errorf("last_project without records = %v", *got.LastProject)
 	}
+	fixClock(s, t0.Add(time.Minute))
 	i := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "a"})
 	if _, err := s.AddComment(ctx, trSess, i.Key, "댓글", nil, nil); err != nil {
 		t.Fatal(err)
@@ -99,6 +102,7 @@ func TestSessionLastProjectIsTheLatestRecord(t *testing.T) {
 	if got := mustSession(t, s, "claude", "claude-abc"); got.LastProject == nil || *got.LastProject != "AAA" {
 		t.Errorf("last_project after a comment = %v", got.LastProject)
 	}
+	fixClock(s, t0.Add(2*time.Minute))
 	m := mustMilestone(t, s, "BBB", "m1")
 	name := "m2"
 	if _, err := s.UpdateMilestone(ctx, trSess, m.ID, MilestonePatch{Name: &name}); err != nil {
@@ -157,8 +161,8 @@ func TestUpdateSession(t *testing.T) {
 		got.Location.ReportedAt != model.NewTime(at.Add(time.Minute)) || got.Location.Branch != nil {
 		t.Errorf("location = %+v", got.Location)
 	}
-	if got.UpdatedAt != model.NewTime(at.Add(time.Minute)) {
-		t.Errorf("updated_at = %s", got.UpdatedAt)
+	if got.UpdatedAt != model.NewTime(at.Add(time.Minute)) || got.Children != nil {
+		t.Errorf("updated_at = %s children = %v", got.UpdatedAt, got.Children)
 	}
 
 	// The same values again change nothing; null clears.

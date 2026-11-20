@@ -119,14 +119,22 @@ func (s *Store) TouchSession(ctx context.Context, tr model.Trace, at time.Time) 
 	})
 }
 
-// GetSession returns a session with its children, oldest first. The
-// children carry no children of their own.
-func (s *Store) GetSession(ctx context.Context, actor, id string) (*model.Session, error) {
+func (s *Store) readSession(ctx context.Context, actor, id string) (*model.Session, model.Time, error) {
 	now := s.stamp()
 	x, err := scanSession(s.db.QueryRowContext(ctx, sessionSelect+` where s.actor_id = ? and s.session_id = ?`, actor, id), now)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, model.Time{}, ErrNotFound
 	}
+	if err != nil {
+		return nil, model.Time{}, err
+	}
+	return x, now, nil
+}
+
+// GetSession returns a session with its children, oldest first. The
+// children carry no children of their own.
+func (s *Store) GetSession(ctx context.Context, actor, id string) (*model.Session, error) {
+	x, now, err := s.readSession(ctx, actor, id)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +375,8 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 	if err != nil {
 		return nil, err
 	}
-	return s.GetSession(ctx, actor, id)
+	x, _, err := s.readSession(ctx, actor, id)
+	return x, err
 }
 
 // CreateChildSession registers a child of the session of the trace, for the
@@ -414,10 +423,6 @@ func (s *Store) CreateChildSession(ctx context.Context, tr model.Trace, in Child
 	if err != nil {
 		return nil, err
 	}
-	x, err := s.GetSession(ctx, tr.Actor, in.SessionID)
-	if err != nil {
-		return nil, err
-	}
-	x.Children = nil
-	return x, nil
+	x, _, err := s.readSession(ctx, tr.Actor, in.SessionID)
+	return x, err
 }
