@@ -683,20 +683,41 @@ func (a *App) renderStats(w io.Writer, resp *client.Response) error {
 			TotalMS  float64 `json:"total_ms"`
 			MaxMS    float64 `json:"max_ms"`
 		} `json:"routes"`
+		Streams []struct {
+			Method   string  `json:"method"`
+			Route    string  `json:"route"`
+			Requests int64   `json:"requests"`
+			Errors   int64   `json:"errors"`
+			Active   int64   `json:"active"`
+			TotalMS  float64 `json:"total_ms"`
+			MaxMS    float64 `json:"max_ms"`
+		} `json:"streams"`
 	}](resp)
 	if err != nil {
 		return err
 	}
 	fields(w, [][2]string{{"started_at", s.StartedAt}, {"db_bytes", strconv.FormatInt(s.DBBytes, 10)}})
-	if len(s.Routes) == 0 {
-		return nil
+	if len(s.Routes) > 0 {
+		fmt.Fprintln(w)
+		tb := &table{header: []string{"METHOD", "ROUTE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
+		for _, r := range s.Routes {
+			tb.add(r.Method, r.Route, strconv.FormatInt(r.Requests, 10), strconv.FormatInt(r.Errors, 10),
+				strconv.FormatFloat(r.TotalMS/float64(r.Requests), 'f', 1, 64), strconv.FormatFloat(r.MaxMS, 'f', -1, 64))
+		}
+		tb.write(w, a.TermWidth)
 	}
-	fmt.Fprintln(w)
-	tb := &table{header: []string{"METHOD", "ROUTE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
-	for _, r := range s.Routes {
-		tb.add(r.Method, r.Route, strconv.FormatInt(r.Requests, 10), strconv.FormatInt(r.Errors, 10),
-			strconv.FormatFloat(r.TotalMS/float64(r.Requests), 'f', 1, 64), strconv.FormatFloat(r.MaxMS, 'f', -1, 64))
+	if len(s.Streams) > 0 {
+		fmt.Fprintln(w)
+		stb := &table{header: []string{"METHOD", "STREAM", "ACTIVE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
+		for _, st := range s.Streams {
+			avg := "0.0"
+			if st.Requests > 0 {
+				avg = strconv.FormatFloat(st.TotalMS/float64(st.Requests), 'f', 1, 64)
+			}
+			stb.add(st.Method, st.Route, strconv.FormatInt(st.Active, 10), strconv.FormatInt(st.Requests, 10),
+				strconv.FormatInt(st.Errors, 10), avg, strconv.FormatFloat(st.MaxMS, 'f', -1, 64))
+		}
+		stb.write(w, a.TermWidth)
 	}
-	tb.write(w, a.TermWidth)
 	return nil
 }

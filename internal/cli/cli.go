@@ -219,6 +219,7 @@ const Usage = `사용법: agb <명령> [옵션]
   agenda            프로젝트별 사용자 차례, 에이전트 할 일, 대기 (별칭 next)
   digest            시점 이후 프로젝트별 변경 요약 (--since 3d)
   activity          전체 활동 기록
+  watch             이벤트 스트림 구독 (첫 일치 이벤트에서 종료)
   board             상태별 보드
   queue             우선순위 큐
   labels            라벨과 사용 개수
@@ -277,7 +278,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb hel
 
 var root = &command{name: "agb", subs: []*command{
 	configCmd, loginCmd, logoutCmd, skillCmd, setupCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, sessionCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
-	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
+	agendaCmd, digestCmd, activityCmd, watchCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
 // Run executes args and returns the exit code: 0 success, 1 API or
