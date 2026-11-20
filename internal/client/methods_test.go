@@ -115,6 +115,37 @@ func TestIssueFilterQuery(t *testing.T) {
 	}
 }
 
+func TestMessageFilterQuery(t *testing.T) {
+	f := MessageFilter{
+		To:        "reviewer",
+		ToSession: "claude/sess-1",
+		ToRole:    "subagent",
+		Issue:     "AGB-1",
+		ReplyTo:   7,
+		UnreadBy:  "AGB",
+		All:       true,
+		Page:      Page{Limit: 20, Offset: 40},
+	}
+	want := url.Values{
+		"to": {"reviewer"}, "to_session": {"claude/sess-1"}, "to_role": {"subagent"},
+		"issue": {"AGB-1"}, "reply_to": {"7"}, "unread_by": {"AGB"}, "all": {"true"},
+		"limit": {"20"}, "offset": {"40"},
+	}
+	if got := f.Values(); got.Encode() != want.Encode() {
+		t.Errorf("values = %v, want %v", got, want)
+	}
+	if (MessageFilter{}).Values().Encode() != "" {
+		t.Errorf("empty filter must produce no parameters: %q", (MessageFilter{}).Values().Encode())
+	}
+	rec := newRecorder(t)
+	if _, err := rec.client().ListMessages(context.Background(), "CLI", f); err != nil {
+		t.Fatal(err)
+	}
+	if rec.method != "GET" || rec.path != "/v1/projects/CLI/messages" || rec.query.Encode() != want.Encode() {
+		t.Errorf("request = %s %s?%s", rec.method, rec.path, rec.query.Encode())
+	}
+}
+
 func TestTypedMethodsBuildPaths(t *testing.T) {
 	rec := newRecorder(t)
 	c := rec.client()

@@ -207,7 +207,7 @@ func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hook
 	}
 	ctx, cancel := context.WithTimeout(ctx, hookQueryTimeout)
 	defer cancel()
-	resp, err := c.ListMessages(ctx, cfg.Project, "", cfg.Project, false, client.Page{Limit: hookListMax})
+	resp, err := c.ListMessages(ctx, cfg.Project, client.MessageFilter{UnreadBy: cfg.Project, Page: client.Page{Limit: hookListMax}})
 	var apiErr *client.Error
 	if errors.As(err, &apiErr) {
 		return "", fmt.Sprintf("서버가 오류를 돌려주었습니다 (%d %s)", apiErr.Status, apiErr.Code)

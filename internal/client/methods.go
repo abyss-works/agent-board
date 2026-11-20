@@ -362,25 +362,45 @@ func (c *Client) DeleteMilestone(ctx context.Context, id int64) (*Response, erro
 	return c.Request(ctx, http.MethodDelete, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
-// PutMessage posts a message to the message space of a project. in holds
-// title and optionally to, body and ttl.
+// PutMessage posts a message to the message space of a project.
 func (c *Client) PutMessage(ctx context.Context, project string, in map[string]any) (*Response, error) {
 	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/messages", in, nil)
 }
 
-// ListMessages lists the messages of a project, newest first. An empty to
-// matches every addressee; a unreadBy leaves out the messages that reader
-// acknowledged; all adds the expired and deleted messages. A zero page field
-// is left to the server default.
-func (c *Client) ListMessages(ctx context.Context, project, to, unreadBy string, all bool, page Page) (*Response, error) {
+// MessageFilter selects messages of a project. ToSession is "<actor>/<session ID>".
+// A zero ReplyTo or zero Page field is left out.
+type MessageFilter struct {
+	To        string
+	ToSession string
+	ToRole    string
+	Issue     string
+	ReplyTo   int64
+	UnreadBy  string
+	All       bool
+	Page
+}
+
+// Values encodes the filter as query parameters.
+func (f MessageFilter) Values() url.Values {
 	v := url.Values{}
-	set(v, "to", to)
-	set(v, "unread_by", unreadBy)
-	page.addTo(v)
-	if all {
+	set(v, "to", f.To)
+	set(v, "to_session", f.ToSession)
+	set(v, "to_role", f.ToRole)
+	set(v, "issue", f.Issue)
+	if f.ReplyTo > 0 {
+		v.Set("reply_to", strconv.FormatInt(f.ReplyTo, 10))
+	}
+	set(v, "unread_by", f.UnreadBy)
+	if f.All {
 		v.Set("all", "true")
 	}
-	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/messages", v), nil, nil)
+	f.Page.addTo(v)
+	return v
+}
+
+// ListMessages lists the messages of a project, newest first.
+func (c *Client) ListMessages(ctx context.Context, project string, f MessageFilter) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/messages", f.Values()), nil, nil)
 }
 
 // GetMessage fetches one message with its body, whatever its state.

@@ -16,7 +16,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 사용자가 답할 것(검토 대기, 결정이 필요한 질문, 아직 확인하지 않은 이슈, 사용자가 직접 할 일, 대기 세션)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`).
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
 - 이슈, 댓글, 기록 문서를 키워드(SQLite FTS5)로 찾고, 임베딩 API를 설정하면 의미 검색을 섞어 찾습니다. 이슈와 문서의 연결을 따라가 선례를 모아 봅니다(`agb recall`, `agb graph`).
-- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
+- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). `--to` 라벨, 특정 세션(`--to-session`), 역할(`--to-role`), 이슈(`--issue`), 답장(`--reply-to`)을 지정할 수 있고, 세션 지정 메시지는 해당 세션의 기본·미확인 목록과 세션 시작 훅에만 나타납니다. 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
 - 모든 도메인 쓰기를 단조 증가하는 통합 이벤트 스트림으로 저장하고, 조회(`GET /v1/events`)와 SSE 구독(`GET /v1/events/stream`, `agb watch`)을 제공합니다.
 
 ## 설계 원칙
@@ -49,7 +49,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 이슈 점유 (issue_claim) | `issue`, `actor`, `session_id`, `claimed_at`, `released_at`, `outcome`, `reason`, `active` | 활성·만료(계산값), 해제(`done`/`abandoned`/`expired`/`taken_over`) | 이슈 하나당 미해제 점유는 최대 하나. 점유 세션의 마지막 호출(30분)·대기 상태(24시간)로 유효성을 판정 |
 | 활동 (activity) | `kind`(`created`/`updated`/`commented`), `changes`, `summary`, `comment_kind`, `body` | 추가만 함 | 이슈 하나에 속함. 댓글도 활동 행 |
 | 기록 문서 (document) | `name`, `kind`, `date`, `title`, `tags`, `archived`, `imported`, `sha256`, 원문 | `current`, `superseded`, `archived`(계산값) | `supersedes`, `related`(문서), `about`(이슈) |
-| 메시지 (message) | `to`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함 |
+| 메시지 (message) | `to`, `to_session`, `to_role`, `issue`, `reply_to`, `reply_count`, `replies`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함. 세션·이슈·상위 메시지를 가리킬 수 있음 |
 | 토큰 (token) | `actor`, `client_host`, `last_used_at`, `revoked_at` | 활성, 폐기 | 에이전트 행위자 하나 |
 | 세션 (session) | `actor`, `session_id`, `named`, `first_seen_at`, `last_seen_at`, `last_host`, `last_project`, `parent`, `role`, `issue`, `location`, `state`, `state_reason`, `state_at`, `stale` | 활성, 멈춤(계산값), 대기(`waiting_approval`/`waiting_input`/`waiting_external`) | 행위자 하나에 속함. 부모 세션과 이슈를 가리킴 |
 | 이벤트 (event) | `id`, `at`, `project`, `kind`, `subject`, `actor`, `session_id`, `data` | 추가만 함 | 프로젝트에 속하거나(`project`), 프로젝트 무관(`null`, 세션 이벤트) |
@@ -77,6 +77,13 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 같은 이름에 다른 원문을 올리면 409(`immutable`)로 거절합니다. 1MiB를 넘는 문서와 `_`로 시작하거나 `.example.md`로 끝나는 서식 파일은 받지 않습니다.
 - 상태는 저장하지 않고 계산합니다. 아카이브 표시가 있으면 `archived`, 다른 문서의 `supersedes`가 가리키면 `superseded`, 아니면 `current`입니다.
 - 어떤 저장소의 어떤 파일을 올릴지는 그 저장소 최상위의 `.agb.json`이 정합니다. 이 파일은 CLI만 읽고 서버는 모릅니다. 형식은 `agb help repo-config`에 있습니다.
+
+### 메시지
+
+- `--to`는 받는 쪽을 가리키는 자유 라벨 관례로, 에이전트 이름(`codex`), 역할·자리(`reviewer`, `desk`)처럼 공백 없는 1~64자 문자열을 씁니다.
+- 특정 세션(`--to-session <행위자/세션>`), 대상 역할(`--to-role`: `main`, `subagent`, `runner`), 같은 프로젝트 이슈(`--issue <KEY>`), 같은 프로젝트 메시지에 대한 답장(`--reply-to <ID>`)을 지정할 수 있습니다. 대상 세션이 아직 서버에 등록되지 않았더라도 선언된 행위자이면 보낼 수 있고, 만료·삭제된 같은 프로젝트 메시지에도 답장할 수 있습니다.
+- `to_session`이 지정된 메시지는 해당 세션(`X-Actor`와 `X-Session-Id`)의 기본 목록과 `--unread` 목록(및 세션 시작 훅)에만 나오고 다른 세션에서는 가려집니다. `to_session`이 없는 브로드캐스트 메시지는 모든 세션에 나오며, `--all`이나 `--to-session` 필터로는 모든 대상을 조회할 수 있습니다.
+- `GET /v1/messages/{id}`와 `agb msg get <ID>`는 직계 답장을 시간 오름차순(`replies`)으로 함께 반환하고, 목록과 단건 응답 모두 `reply_count`를 포함합니다.
 
 ### 인증
 
@@ -344,8 +351,10 @@ agb graph APP-12 --depth 2
 기타:
 
 ```bash
-agb msg put -p APP --to codex -t "배포 끝" --ttl 3d
-agb msg list -p APP --unread          # 내가 확인하지 않은 메시지
+agb msg put -p APP --to codex --to-session codex/s1 --to-role runner --issue APP-12 -t "배포 끝" --ttl 3d
+agb msg put -p APP --reply-to 12 -t "확인 완료"
+agb msg list -p APP --unread          # 내 세션의 브로드캐스트 + 내 세션 지정 미확인 메시지
+agb msg list -p APP --issue APP-12    # --to, --to-session, --to-role, --issue, --reply-to 지원
 agb msg ack 12 13                     # 처리한 뒤 확인 표시
 agb watch -p APP --kind issue.,message. --timeout 5m   # 조건에 맞는 첫 이벤트까지 대기
 agb digest --since 3d
