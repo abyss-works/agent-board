@@ -200,3 +200,74 @@ func TestUsageListsSession(t *testing.T) {
 		t.Error("agb --help does not list session")
 	}
 }
+
+func TestSessionWaitingFlagsAndAgendaTable(t *testing.T) {
+	const (
+		waitingSessionJSON = `{"actor":"claude","session_id":"sess-1","named":true,"first_seen_at":"2026-11-20T00:00:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":null,"role":"main","issue":"APP-12","location":null,"state":"waiting_input","state_reason":"확인 필요","state_at":"2026-11-20T01:30:00.000Z","stale":false,"updated_at":"2026-11-20T01:30:00.000Z","children":[]}`
+		waitingListJSON    = `{"items":[` + waitingSessionJSON + `],"total":1,"limit":50,"offset":0}`
+		agendaWaitingJSON  = `{"generated_at":"2026-11-20T02:00:00.000Z","projects":[{"project":{"key":"APP","name":"예제 앱"},"dormant":0,"user_turn":{"review":{"total":0,"items":[]},"decisions":{"total":0,"items":[]},"unacknowledged":{"total":0,"items":[]},"tasks":{"total":0,"items":[]},"waiting_sessions":{"total":1,"items":[{"actor":"claude","session_id":"sess-1","named":true,"first_seen_at":"2026-11-20T00:00:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":null,"role":"main","issue":"APP-12","location":null,"state":"waiting_input","state_reason":"확인 필요","state_at":"2026-11-20T01:30:00.000Z","stale":false,"updated_at":"2026-11-20T01:30:00.000Z"}]}},"agent":{"doing":{"total":0,"items":[]},"next":{"total":0,"items":[]}},"waiting":{"blocked":{"total":0,"items":[]},"external":{"total":0,"items":[]}}}]}`
+	)
+	h, srv := newSessionHarness(t, false)
+	srv.on("GET", "/v1/sessions", canned{body: waitingListJSON})
+	srv.on("GET", "/v1/sessions/claude/sess-1", canned{body: waitingSessionJSON})
+	srv.on("PATCH", "/v1/sessions/claude/sess-1", canned{body: waitingSessionJSON})
+	srv.on("GET", "/v1/agenda", canned{body: agendaWaitingJSON})
+
+	// session set --state waiting_input --reason "확인 필요"
+	if code := h.run("session", "set", "--state", "waiting_input", "--reason", "확인 필요"); code != 0 {
+		t.Fatalf("set waiting: code=%d stderr=%s", code, h.stderr)
+	}
+	if got := strings.TrimSpace(srv.last().Body); got != `{"state":"waiting_input","state_reason":"확인 필요"}` {
+		t.Errorf("set waiting body = %s", got)
+	}
+
+	// session set --state none
+	if code := h.run("session", "set", "--state", "none"); code != 0 {
+		t.Fatalf("clear waiting: code=%d stderr=%s", code, h.stderr)
+	}
+	if got := strings.TrimSpace(srv.last().Body); got != `{"state":null}` {
+		t.Errorf("clear waiting body = %s", got)
+	}
+
+	// session set --reason alone is valid
+	if code := h.run("session", "set", "--reason", "사유 갱신"); code != 0 {
+		t.Fatalf("reason only: code=%d stderr=%s", code, h.stderr)
+	}
+	if got := strings.TrimSpace(srv.last().Body); got != `{"state_reason":"사유 갱신"}` {
+		t.Errorf("reason only body = %s", got)
+	}
+
+	// session list --waiting --table
+	if code := h.run("session", "list", "--waiting", "--table"); code != 0 {
+		t.Fatalf("list --waiting: code=%d stderr=%s", code, h.stderr)
+	}
+	if got := srv.last().Query.Get("waiting"); got != "true" {
+		t.Errorf("waiting query = %q, want true", got)
+	}
+	for _, want := range []string{"STATE", "waiting_input"} {
+		if !strings.Contains(h.stdout.String(), want) {
+			t.Errorf("list table lacks %q:\n%s", want, h.stdout.String())
+		}
+	}
+
+	// session get --table shows state, state_reason, state_at (KST = UTC+9: 10:30)
+	if code := h.run("session", "get", "--table"); code != 0 {
+		t.Fatalf("get --table: code=%d stderr=%s", code, h.stderr)
+	}
+	for _, want := range []string{"state:", "waiting_input", "state_reason:", "확인 필요", "state_at:", "2026-11-20 10:30"} {
+		if !strings.Contains(h.stdout.String(), want) {
+			t.Errorf("get table lacks %q:\n%s", want, h.stdout.String())
+		}
+	}
+
+	// agenda --table prints waiting session count and table
+	if code := h.run("agenda", "--table"); code != 0 {
+		t.Fatalf("agenda --table: code=%d stderr=%s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	for _, want := range []string{"대기 세션 1", "ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "REASON", "claude", "sess-1", "waiting_input", "APP-12", "2026-11-20 10:30", "확인 필요"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("agenda table lacks %q:\n%s", want, out)
+		}
+	}
+}

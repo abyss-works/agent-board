@@ -556,10 +556,11 @@ type agenda struct {
 		Project  model.Project `json:"project"`
 		Dormant  int           `json:"dormant"`
 		UserTurn struct {
-			Review         section[model.IssueSummary] `json:"review"`
-			Decisions      section[model.IssueSummary] `json:"decisions"`
-			Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
-			Tasks          section[model.IssueSummary] `json:"tasks"`
+			Review          section[model.IssueSummary] `json:"review"`
+			Decisions       section[model.IssueSummary] `json:"decisions"`
+			Unacknowledged  section[model.IssueSummary] `json:"unacknowledged"`
+			Tasks           section[model.IssueSummary] `json:"tasks"`
+			WaitingSessions section[model.Session]      `json:"waiting_sessions"`
 		} `json:"user_turn"`
 		Agent struct {
 			Doing section[model.DoingItem] `json:"doing"`
@@ -583,11 +584,14 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 	for _, p := range ag.Projects {
 		u, g, wt := p.UserTurn, p.Agent, p.Waiting
 		fmt.Fprintf(w, "\n### %s (%s)\n", p.Project.Key, p.Project.Name)
-		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d, 사용자 할 일 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total, u.Tasks.Total)
+		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d, 사용자 할 일 %d, 대기 세션 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total, u.Tasks.Total, u.WaitingSessions.Total)
 		for _, s := range []section[model.IssueSummary]{u.Review, u.Decisions, u.Unacknowledged, u.Tasks} {
 			if len(s.Items) > 0 {
 				a.issueTable(s.Items).write(w, a.TermWidth)
 			}
+		}
+		if len(u.WaitingSessions.Items) > 0 {
+			a.waitingSessionsTable(u.WaitingSessions.Items).write(w, a.TermWidth)
 		}
 		fmt.Fprintf(w, "\n== 에이전트: 진행 중 %d, 다음 할 일 %d ==\n", g.Doing.Total, g.Next.Total)
 		if len(g.Doing.Items) > 0 {
@@ -608,6 +612,14 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) waitingSessionsTable(items []model.Session) *table {
+	tb := &table{header: []string{"ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "REASON"}}
+	for _, s := range items {
+		tb.add(s.Actor, s.SessionID, deref(s.State, "-"), deref(s.Issue, "-"), formatTimePtr(s.StateAt, a.Location), deref(s.StateReason, "-"))
+	}
+	return tb
 }
 
 func (a *App) renderStats(w io.Writer, resp *client.Response) error {
