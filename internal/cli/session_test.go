@@ -59,6 +59,7 @@ func TestSessionUsageErrors(t *testing.T) {
 
 func TestSessionListSendsFiltersAndPrintsATable(t *testing.T) {
 	h, srv := newSessionHarness(t, true)
+	h.app.TermWidth = 0
 	if code := h.run("session", "list", "-p", "APP", "--actor", "claude", "--parent", "claude/sess-1", "--active", "--named", "true", "--limit", "5", "--offset", "1"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
@@ -69,7 +70,7 @@ func TestSessionListSendsFiltersAndPrintsATable(t *testing.T) {
 		}
 	}
 	out := h.stdout.String()
-	for _, want := range []string{"ACTOR", "SESSION", "ROLE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE",
+	for _, want := range []string{"ACTOR", "SESSION", "ROLE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE", "CONFLICTS",
 		"sess-1.ab12cd", "claude/sess-1", "APP-12", "2026-11-20 10:00", "cli-20261119", "yes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table lacks %q:\n%s", want, out)
@@ -269,5 +270,60 @@ func TestSessionWaitingFlagsAndAgendaTable(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("agenda table lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestSessionLocationConflictsCLI(t *testing.T) {
+	const (
+		conflictSessJSON = `{"actor":"claude","session_id":"sess-1","named":true,"first_seen_at":"2026-11-20T00:00:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":null,"role":"main","issue":"APP-12","location":{"repo_remote":"https://example.com/acme/app.git","branch":"dev","worktree":"/work/app","head":"abc1234","dirty_count":1,"reported_at":"2026-11-20T01:00:00.000Z"},"location_conflicts":[{"actor":"codex","session_id":"s2"}],"stale":false,"updated_at":"2026-11-20T01:00:00.000Z","children":[]}`
+		conflictListJSON = `{"items":[` +
+			`{"actor":"claude","session_id":"sess-1","named":true,"first_seen_at":"2026-11-20T00:00:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":null,"role":"main","issue":"APP-12","location":null,"location_conflicts":[{"actor":"codex","session_id":"s2"},{"actor":"owner","session_id":"s3"}],"stale":false,"updated_at":"2026-11-20T01:00:00.000Z"},` +
+			`{"actor":"codex","session_id":"s-clean","named":true,"first_seen_at":"2026-11-20T00:00:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"laptop","last_project":"APP","parent":null,"role":null,"issue":null,"location":null,"location_conflicts":[],"stale":false,"updated_at":"2026-11-20T01:00:00.000Z"}` +
+			`],"total":2,"limit":50,"offset":0}`
+	)
+	repo := gitRepo(t)
+	h, srv := newSessionHarness(t, true)
+	h.app.TermWidth = 0
+	srv.on("PATCH", "/v1/sessions/claude/sess-1", canned{body: conflictSessJSON})
+	srv.on("GET", "/v1/sessions/claude/sess-1", canned{body: conflictSessJSON})
+	srv.on("GET", "/v1/sessions", canned{body: conflictListJSON})
+
+	// session set --location warns on stderr when conflicts exist, and renders location_conflicts in table output.
+	if code := h.run("session", "set", "--location", "--repo", repo); code != 0 {
+		t.Fatalf("session set --location: code=%d stderr=%s", code, h.stderr)
+	}
+	wantWarn := "agb: 경고: 같은 저장소·브랜치를 쓰는 활성 세션이 있습니다: codex/s2"
+	if !strings.Contains(h.stderr.String(), wantWarn) {
+		t.Errorf("stderr = %q, want %q", h.stderr.String(), wantWarn)
+	}
+	if !strings.Contains(h.stdout.String(), "location_conflicts:") || !strings.Contains(h.stdout.String(), "codex/s2") {
+		t.Errorf("session set stdout lacks location_conflicts:\n%s", h.stdout.String())
+	}
+
+	// session get renders location_conflicts when non-empty.
+	if code := h.run("session", "get"); code != 0 {
+		t.Fatalf("session get: code=%d stderr=%s", code, h.stderr)
+	}
+	if !strings.Contains(h.stdout.String(), "location_conflicts:") || !strings.Contains(h.stdout.String(), "codex/s2") {
+		t.Errorf("session get stdout lacks location_conflicts:\n%s", h.stdout.String())
+	}
+
+	// session list prints CONFLICTS column: count when > 0, "-" when 0.
+	if code := h.run("session", "list"); code != 0 {
+		t.Fatalf("session list: code=%d stderr=%s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("unexpected list table:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(lines[0]), "CONFLICTS") {
+		t.Errorf("header = %q, want CONFLICTS column", lines[0])
+	}
+	if !strings.Contains(lines[1], "sess-1") || !strings.HasSuffix(strings.TrimSpace(lines[1]), "2") {
+		t.Errorf("row 1 = %q, want conflict count 2", lines[1])
+	}
+	if !strings.Contains(lines[2], "s-clean") || !strings.HasSuffix(strings.TrimSpace(lines[2]), "-") {
+		t.Errorf("row 2 = %q, want '-'", lines[2])
 	}
 }

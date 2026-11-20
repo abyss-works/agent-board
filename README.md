@@ -12,7 +12,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 
 - 프로젝트별로 이슈를 만들고 상태(백로그, 진행, 검토, 완료, 취소, 삭제)를 옮기며, 댓글과 변경 이력을 남깁니다.
 - 모든 쓰기에 행위자(사용자 또는 에이전트), 세션 ID, 기기 이름을 남깁니다. 이슈 점유(`issue_claim`)를 저장해 어느 세션이 어떤 이슈를 맡고 있는지(`holder`)와 만료 여부(`stale`)를 관리합니다. 점유는 점유 세션의 마지막 호출에서 30분(대기 상태에서는 24시간) 동안 유효하고, 유효한 점유가 있는 이슈는 다른 에이전트 세션의 점유·상태 변경을 409로 막으며 만료된 점유는 바로 이어받을 수 있습니다(점유가 없는 진행 이슈는 활동 기록으로 대체 계산).
-- 인증된 요청의 행위자와 세션 ID를 세션으로 자동 등록하고 마지막 호출 시각(1분 단위)을 갱신합니다. 마지막 호출에서 30분이 지나면 멈춤(`stale`)으로 표시하며, 부모·자식 세션 관계와 역할·이슈·작업 위치·대기 상태(`waiting_approval`, `waiting_input`, `waiting_external`)를 남깁니다(`agb session`). 대기 중인 세션이 다음 쓰기 요청을 성공시키면 대기 상태는 자동으로 풀립니다. 맥락의 단위는 여전히 이슈입니다.
+- 인증된 요청의 행위자와 세션 ID를 세션으로 자동 등록하고 마지막 호출 시각(1분 단위)을 갱신합니다. 마지막 호출에서 30분이 지나면 멈춤(`stale`)으로 표시하며, 부모·자식 세션 관계와 역할·이슈·작업 위치(`location`)·대기 상태(`waiting_approval`, `waiting_input`, `waiting_external`)를 남깁니다(`agb session`). 같은 저장소·브랜치(원격 URL 정규화 기준, 원격이 없으면 호스트·워크트리·브랜치 기준)를 쓰는 활성 또는 대기 유효 세션은 읽을 때 `location_conflicts`로 계산해 알립니다(`agb issue comment --location`도 현재 세션의 작업 위치를 함께 갱신하고 충돌 시 경고합니다). 대기 중인 세션이 다음 쓰기 요청을 성공시키면 대기 상태는 자동으로 풀립니다. 맥락의 단위는 여전히 이슈입니다.
 - 사용자가 답할 것(검토 대기, 결정이 필요한 질문, 아직 확인하지 않은 이슈, 사용자가 직접 할 일, 대기 세션)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`).
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
 - 이슈, 댓글, 기록 문서를 키워드(SQLite FTS5)로 찾고, 임베딩 API를 설정하면 의미 검색을 섞어 찾습니다. 이슈와 문서의 연결을 따라가 선례를 모아 봅니다(`agb recall`, `agb graph`).
@@ -51,7 +51,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 기록 문서 (document) | `name`, `kind`, `date`, `title`, `tags`, `archived`, `imported`, `sha256`, 원문 | `current`, `superseded`, `archived`(계산값) | `supersedes`, `related`(문서), `about`(이슈) |
 | 메시지 (message) | `to`, `to_session`, `to_role`, `issue`, `reply_to`, `reply_count`, `replies`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함. 세션·이슈·상위 메시지를 가리킬 수 있음 |
 | 토큰 (token) | `actor`, `client_host`, `last_used_at`, `revoked_at` | 활성, 폐기 | 에이전트 행위자 하나 |
-| 세션 (session) | `actor`, `session_id`, `named`, `first_seen_at`, `last_seen_at`, `last_host`, `last_project`, `parent`, `role`, `issue`, `location`, `state`, `state_reason`, `state_at`, `stale` | 활성, 멈춤(계산값), 대기(`waiting_approval`/`waiting_input`/`waiting_external`) | 행위자 하나에 속함. 부모 세션과 이슈를 가리킴 |
+| 세션 (session) | `actor`, `session_id`, `named`, `first_seen_at`, `last_seen_at`, `last_host`, `last_project`, `parent`, `role`, `issue`, `location`, `location_conflicts`(계산값), `state`, `state_reason`, `state_at`, `stale` | 활성, 멈춤(계산값), 대기(`waiting_approval`/`waiting_input`/`waiting_external`) | 행위자 하나에 속함. 부모 세션과 이슈를 가리킴 |
 | 이벤트 (event) | `id`, `at`, `project`, `kind`, `subject`, `actor`, `session_id`, `data` | 추가만 함 | 프로젝트에 속하거나(`project`), 프로젝트 무관(`null`, 세션 이벤트) |
 | 임베딩, 유사 문서 | 청크별 벡터, 문서 쌍과 점수 | 파생 데이터 | 의미 검색과 `similar` 그래프 간선 |
 
@@ -325,6 +325,7 @@ agb recall "목록 정렬"                # 시작 전에 관련 결정과 사�
 agb template show bug > body.md      # 본문 템플릿을 파일로 받아 각 제목 아래를 채움
 agb issue create -p APP --type bug -t "목록 화면에서 정렬이 풀리는 문제 수정" --body-file body.md
 agb issue update APP-12 --status doing
+agb session set --location                          # 현재 저장소 작업 위치 기록 및 충돌 확인
 agb session start --role subagent --issue APP-12   # 서브에이전트용 자식 세션 ID 발급
 agb session set --state waiting_input --reason "정렬 기준 확인 필요"   # 사용자 입력 대기 표시
 agb issue comment APP-12 --kind decision --summary "정렬 기준 결정" --body "..."
