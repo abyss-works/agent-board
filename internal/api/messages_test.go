@@ -201,3 +201,155 @@ func TestMessageWritesNeedActiveProject(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageRoutingCreateListGetAndSessionIsolation(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createProject(t, "OTH", "other")
+	if rec := e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"이슈 1"}`, map[string]string{"X-Actor": "owner"}); rec.Code != 201 {
+		t.Fatalf("create issue AGB-1: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Create message routed to claude/sess-a with role and issue.
+	rec := e.do(t, "POST", "/v1/projects/AGB/messages",
+		`{"to":"reviewer","to_session":{"actor":"claude","session_id":"sess-a"},"to_role":"subagent","issue":"AGB-1","title":"세션 A 메시지","body":"본문 A"}`,
+		nil)
+	if rec.Code != 201 {
+		t.Fatalf("create m1: %d %s", rec.Code, rec.Body.String())
+	}
+	var m1 model.Message
+	decodeJSON(t, rec, &m1)
+	if m1.ToSession == nil || *m1.ToSession != (model.SessionRef{Actor: "claude", SessionID: "sess-a"}) ||
+		m1.ToRole == nil || *m1.ToRole != "subagent" ||
+		m1.Issue == nil || *m1.Issue != "AGB-1" ||
+		m1.ReplyTo != nil || m1.ReplyCount != 0 ||
+		m1.Replies == nil || len(*m1.Replies) != 0 {
+		t.Fatalf("m1 = %+v (%s)", m1, rec.Body.String())
+	}
+	for _, want := range []string{`"to_session":{"actor":"claude","session_id":"sess-a"}`, `"to_role":"subagent"`, `"issue":"AGB-1"`, `"reply_to":null`, `"reply_count":0`, `"replies":[]`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("m1 JSON lacks %s: %s", want, rec.Body.String())
+		}
+	}
+
+	// Broadcast message and message for owner/sess-b.
+	m2 := e.putMessage(t, "AGB", `{"to_role":"runner","title":"공지"}`)
+	m3 := e.putMessage(t, "AGB", `{"to_session":{"actor":"owner","session_id":"sess-b"},"title":"세션 B 메시지"}`)
+	r1 := e.putMessage(t, "AGB", fmt.Sprintf(`{"reply_to":%d,"title":"답장 1","body":"첫 답장"}`, m1.ID))
+	r2 := e.putMessage(t, "AGB", fmt.Sprintf(`{"reply_to":%d,"title":"답장 2","body":"둘째 답장"}`, m1.ID))
+
+	// GetMessage returns replies ascending and matching reply_count, with no nested replies field in child items.
+	rec = e.do(t, "GET", fmt.Sprintf("/v1/messages/%d", m1.ID), "", nil)
+	if rec.Code != 200 {
+		t.Fatalf("get m1: %d %s", rec.Code, rec.Body.String())
+	}
+	var gotM1 model.Message
+	decodeJSON(t, rec, &gotM1)
+	if gotM1.ReplyCount != 2 || gotM1.Replies == nil || len(*gotM1.Replies) != 2 {
+		t.Fatalf("gotM1 replies = %+v (count=%d)", gotM1.Replies, gotM1.ReplyCount)
+	}
+	rs := *gotM1.Replies
+	if rs[0].ID != r1.ID || rs[1].ID != r2.ID || rs[0].Body == nil || *rs[0].Body != "첫 답장" || rs[0].Replies != nil || rs[1].Replies != nil {
+		t.Errorf("replies = %+v", rs)
+	}
+
+	// Session isolation checks.
+	listAs := func(actor, sessID, query string) messageList {
+		t.Helper()
+		rec := e.do(t, "GET", "/v1/projects/AGB/messages"+query, "", map[string]string{
+			"X-Actor":      actor,
+			"X-Session-Id": sessID,
+		})
+		if rec.Code != 200 {
+			t.Fatalf("list (%s/%s %s): %d %s", actor, sessID, query, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), `"replies"`) {
+			t.Errorf("list must omit replies: %s", rec.Body.String())
+		}
+		var l messageList
+		decodeJSON(t, rec, &l)
+		return l
+	}
+
+	if l := listAs("claude", "sess-a", "?unread_by=AGB"); messageTitles(l.Items) != "답장 2,답장 1,공지,세션 A 메시지" {
+		t.Errorf("claude/sess-a unread = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-b", "?unread_by=AGB"); messageTitles(l.Items) != "답장 2,답장 1,세션 B 메시지,공지" {
+		t.Errorf("owner/sess-b unread = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-c", ""); messageTitles(l.Items) != "답장 2,답장 1,공지" {
+		t.Errorf("owner/sess-c default = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-c", "?all=true"); messageTitles(l.Items) != "답장 2,답장 1,세션 B 메시지,공지,세션 A 메시지" {
+		t.Errorf("owner/sess-c all = %s", messageTitles(l.Items))
+	}
+
+	// Explicit query filters.
+	if l := listAs("owner", "sess-c", "?to_session=claude/sess-a"); messageTitles(l.Items) != "세션 A 메시지" || l.Items[0].ReplyCount != 2 {
+		t.Errorf("to_session filter = %+v", l.Items)
+	}
+	if l := listAs("owner", "sess-c", "?to_role=runner"); messageTitles(l.Items) != "공지" || l.Items[0].ID != m2.ID {
+		t.Errorf("to_role filter = %+v", l.Items)
+	}
+	if l := listAs("claude", "sess-a", "?issue=AGB-1"); messageTitles(l.Items) != "세션 A 메시지" {
+		t.Errorf("issue filter = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-c", fmt.Sprintf("?reply_to=%d", m1.ID)); messageTitles(l.Items) != "답장 2,답장 1" {
+		t.Errorf("reply_to filter = %s", messageTitles(l.Items))
+	}
+	_ = m3
+}
+
+func TestMessageRoutingErrors(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createProject(t, "OTH", "other")
+	if rec := e.do(t, "POST", "/v1/issues", `{"project":"OTH","title":"타 프로젝트"}`, map[string]string{"X-Actor": "owner"}); rec.Code != 201 {
+		t.Fatalf("create OTH-1: %d %s", rec.Code, rec.Body.String())
+	}
+	otherMsg := e.putMessage(t, "OTH", `{"title":"other"}`)
+
+	postCases := []struct {
+		name, body, field, reason string
+	}{
+		{"to_session string", `{"title":"t","to_session":"claude/s1"}`, "to_session", "invalid"},
+		{"to_session bad actor", `{"title":"t","to_session":{"actor":"BAD","session_id":"s1"}}`, "to_session", "invalid"},
+		{"to_session bad id", `{"title":"t","to_session":{"actor":"claude","session_id":"bad id"}}`, "to_session", "invalid"},
+		{"to_session missing key", `{"title":"t","to_session":{"actor":"claude"}}`, "to_session", "invalid"},
+		{"to_session unknown actor", `{"title":"t","to_session":{"actor":"gemini","session_id":"s1"}}`, "to_session", "unknown_actor"},
+		{"to_role invalid", `{"title":"t","to_role":"boss"}`, "to_role", "invalid"},
+		{"issue unknown", `{"title":"t","issue":"AGB-999"}`, "issue", "unknown_issue"},
+		{"issue mismatch", `{"title":"t","issue":"OTH-1"}`, "issue", "project_mismatch"},
+		{"reply_to zero", `{"title":"t","reply_to":0}`, "reply_to", "invalid"},
+		{"reply_to negative", `{"title":"t","reply_to":-1}`, "reply_to", "invalid"},
+		{"reply_to string", `{"title":"t","reply_to":"1"}`, "reply_to", "invalid"},
+		{"reply_to float", `{"title":"t","reply_to":1.5}`, "reply_to", "invalid"},
+		{"reply_to unknown", `{"title":"t","reply_to":9999}`, "reply_to", "unknown_message"},
+		{"reply_to mismatch", fmt.Sprintf(`{"title":"t","reply_to":%d}`, otherMsg.ID), "reply_to", "project_mismatch"},
+	}
+	for _, c := range postCases {
+		rec := e.do(t, "POST", "/v1/projects/AGB/messages", c.body, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 422 || len(eb.Error.Details) == 0 || eb.Error.Details[0].Field != c.field || eb.Error.Details[0].Reason != c.reason {
+			t.Errorf("%s: code=%d body=%s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+
+	queryCases := []struct {
+		query, field string
+	}{
+		{"?to_session=claude", "to_session"},
+		{"?to_session=BAD/s1", "to_session"},
+		{"?to_role=boss", "to_role"},
+		{"?issue=bad-key", "issue"},
+		{"?reply_to=0", "reply_to"},
+		{"?reply_to=abc", "reply_to"},
+	}
+	for _, c := range queryCases {
+		rec := e.do(t, "GET", "/v1/projects/AGB/messages"+c.query, "", nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 400 || len(eb.Error.Details) == 0 || eb.Error.Details[0].Field != c.field {
+			t.Errorf("%s: code=%d body=%s", c.query, rec.Code, rec.Body.String())
+		}
+	}
+}
