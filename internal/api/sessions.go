@@ -37,13 +37,49 @@ func (h *handler) registerSessions(mux *http.ServeMux) {
 	route(mux, "/v1/sessions/{actor}/{session}", methods{"GET": h.getSession, "PATCH": h.patchSession})
 }
 
+func isWriteMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
 // touchSession records the call of the session of a request that passed
-// authentication and the trace headers, before the route handles it.
+// authentication and the trace headers, before the route handles it. After a
+// successful (2xx) write request, any waiting state on the calling session is
+// cleared unless the route opted to keep it.
 func (h *handler) touchSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.recordCall(r.Context(), TraceFrom(r.Context()))
+		tr := TraceFrom(r.Context())
+		h.recordCall(r.Context(), tr)
+		sw, ok := w.(*statusWriter)
+		if !ok {
+			sw = &statusWriter{ResponseWriter: w}
+			w = sw
+		}
+		wc := &waitingControl{}
+		r = r.WithContext(context.WithValue(r.Context(), ctxKeepWaiting, wc))
 		next.ServeHTTP(w, r)
+		status := sw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if isWriteMethod(r.Method) && status >= 200 && status < 300 && !wc.keep {
+			h.clearWaiting(r.Context(), tr)
+		}
 	})
+}
+
+// clearWaiting clears the waiting state of the session of tr. A failed write
+// is logged and does not affect the HTTP response.
+func (h *handler) clearWaiting(ctx context.Context, tr model.Trace) (model.Time, bool) {
+	at, cleared, err := h.store.ClearSessionWaiting(ctx, tr.Actor, tr.SessionID)
+	if err != nil {
+		h.opts.Logger.Warn("session waiting clear failed", "actor", tr.Actor, "session_id", truncate(tr.SessionID), "err", err.Error())
+		return model.Time{}, false
+	}
+	return at, cleared
 }
 
 // recordCall writes the call of a session unless this process completed a
@@ -111,7 +147,7 @@ func (h *handler) listSessions(w http.ResponseWriter, r *http.Request) {
 			q.add("parent", "<행위자>/<세션 ID> 형식이어야 합니다.")
 		}
 	}
-	f.Active, f.Named = parseBool(q, "active"), parseBool(q, "named")
+	f.Active, f.Named, f.Waiting = parseBool(q, "active"), parseBool(q, "named"), parseBool(q, "waiting")
 	f.Limit, f.Offset = q.limit(50, 200), q.offset()
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
@@ -145,8 +181,8 @@ func (h *handler) getSession(w http.ResponseWriter, r *http.Request) {
 var errNotSessionActor = forbidden("다른 행위자의 세션은 고칠 수 없습니다.",
 	Detail{Field: headerActor, Reason: "not_session_actor", Message: "세션의 행위자나 사용자 행위자만 세션을 고칠 수 있습니다."})
 
-// patchSession applies a JSON merge patch of parent, role, issue and location.
-// The last write wins; there is no If-Match.
+// patchSession applies a JSON merge patch of parent, role, issue, location,
+// state and state_reason. The last write wins; there is no If-Match.
 func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 	ref, aerr := sessionPath(r)
 	if aerr == nil {
@@ -156,11 +192,12 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	if actor := TraceFrom(r.Context()).Actor; actor != ref.Actor && h.actors[actor].Kind != model.ActorUser {
+	tr := TraceFrom(r.Context())
+	if tr.Actor != ref.Actor && h.actors[tr.Actor].Kind != model.ActorUser {
 		writeError(w, errNotSessionActor)
 		return
 	}
-	b, aerr := readBody(w, r, map[string]bool{"parent": true, "role": true, "issue": true, "location": true})
+	b, aerr := readBody(w, r, map[string]bool{"parent": true, "role": true, "issue": true, "location": true, "state": true, "state_reason": true})
 	if aerr != nil {
 		writeError(w, aerr)
 		return
@@ -214,6 +251,38 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		},
+		func() *apiError {
+			raw, ok := b["state"]
+			if !ok {
+				return nil
+			}
+			patch.State.Set = true
+			if !isNull(raw) {
+				var v string
+				if json.Unmarshal(raw, &v) != nil {
+					details = append(details, Detail{Field: "state", Reason: "invalid", Message: "문자열이어야 합니다."})
+					return nil
+				}
+				patch.State.Value = &v
+			}
+			return nil
+		},
+		func() *apiError {
+			raw, ok := b["state_reason"]
+			if !ok {
+				return nil
+			}
+			patch.StateReason.Set = true
+			if !isNull(raw) {
+				var v string
+				if json.Unmarshal(raw, &v) != nil {
+					details = append(details, Detail{Field: "state_reason", Reason: "invalid", Message: "문자열이어야 합니다."})
+					return nil
+				}
+				patch.StateReason.Value = &v
+			}
+			return nil
+		},
 	}
 	for _, step := range steps {
 		if aerr := step(); aerr != nil {
@@ -229,6 +298,17 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
+	}
+	if ref.Actor == tr.Actor && ref.SessionID == tr.SessionID {
+		keepWaiting(r)
+		if !patch.State.Set && !patch.StateReason.Set {
+			if at, cleared := h.clearWaiting(r.Context(), tr); cleared {
+				s.State = nil
+				s.StateReason = nil
+				s.StateAt = nil
+				s.UpdatedAt = at
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, s)
 }

@@ -26,7 +26,20 @@ const (
 	ctxTrace ctxKey = iota
 	ctxReqInfo
 	ctxCredential
+	ctxKeepWaiting
 )
+
+// waitingControl lets a route opt out of automatic waiting-state clearing on a
+// successful write request (used when a session sets or edits its own wait).
+type waitingControl struct {
+	keep bool
+}
+
+func keepWaiting(r *http.Request) {
+	if wc, ok := r.Context().Value(ctxKeepWaiting).(*waitingControl); ok {
+		wc.keep = true
+	}
+}
 
 // reqInfo is shared between the logging middleware and the checks that run
 // inside it, so a rejection reason and the actor token that authenticated the

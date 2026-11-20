@@ -211,7 +211,7 @@ func TestGetSession(t *testing.T) {
 	rec := e.do(t, "GET", "/v1/sessions/claude/cli-20261120", "", sess("cli-20261120"))
 	wantStatus(t, rec, 200, "get")
 	m := sessionJSON(t, rec, rec.Body.Bytes())
-	for _, k := range []string{"actor", "session_id", "named", "first_seen_at", "last_seen_at", "last_host", "last_project", "parent", "role", "issue", "location", "stale", "updated_at", "children"} {
+	for _, k := range []string{"actor", "session_id", "named", "first_seen_at", "last_seen_at", "last_host", "last_project", "parent", "role", "issue", "location", "state", "state_reason", "state_at", "stale", "updated_at", "children"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("field %s missing: %s", k, rec.Body)
 		}
@@ -391,8 +391,205 @@ func TestListSessionsAPI(t *testing.T) {
 		t.Errorf("page envelope = %s", rec.Body)
 	}
 
-	for _, q := range []string{"?active=yes", "?named=1", "?parent=claude", "?parent=claude/bad%20id", "?actor=BAD", "?project=bad", "?limit=201", "?foo=1"} {
+	for _, q := range []string{"?active=yes", "?named=1", "?waiting=maybe", "?parent=claude", "?parent=claude/bad%20id", "?actor=BAD", "?project=bad", "?limit=201", "?foo=1"} {
 		wantStatus(t, e.do(t, "GET", "/v1/sessions"+q, "", nil), 400, q)
 	}
 	wantStatus(t, e.do(t, "GET", "/v1/sessions?project=NOPE", "", nil), 404, "unknown project")
+}
+
+func TestPatchSessionWaitingStateRules(t *testing.T) {
+	e, clock := newSessionEnv(t)
+	path := "/v1/sessions/claude/sess-1"
+	e.do(t, "GET", "/v1/actors/me", "", nil) // registers claude/sess-1
+
+	// Edge 4: state is null, state_reason only -> 422 requires_state.
+	rec := e.do(t, "PATCH", path, `{"state_reason":"이유"}`, nil)
+	wantStatus(t, rec, 422, "reason without state")
+	wantDetail(t, decodeErr(t, rec), "state_reason", "requires_state")
+
+	// Edge 5: state: null with non-null state_reason -> 422 requires_state.
+	rec = e.do(t, "PATCH", path, `{"state":null,"state_reason":"이유"}`, nil)
+	wantStatus(t, rec, 422, "null state with reason")
+	wantDetail(t, decodeErr(t, rec), "state_reason", "requires_state")
+
+	// Edge 2: invalid state strings and non-string -> 422 field state.
+	for _, body := range []string{`{"state":"paused"}`, `{"state":""}`, `{"state":123}`, `{"state":true}`} {
+		rec = e.do(t, "PATCH", path, body, nil)
+		wantStatus(t, rec, 422, body)
+		wantDetail(t, decodeErr(t, rec), "state", "")
+	}
+
+	// Edge 6: invalid state_reason -> 422 field state_reason.
+	for _, body := range []string{
+		`{"state":"waiting_input","state_reason":""}`,
+		`{"state":"waiting_input","state_reason":"   "}`,
+		`{"state":"waiting_input","state_reason":"` + strings.Repeat("가", 201) + `"}`,
+		`{"state":"waiting_input","state_reason":"줄바꿈\n포함"}`,
+		`{"state":"waiting_input","state_reason":"널\u0000포함"}`,
+		`{"state":"waiting_input","state_reason":42}`,
+	} {
+		rec = e.do(t, "PATCH", path, body, nil)
+		wantStatus(t, rec, 422, body)
+		wantDetail(t, decodeErr(t, rec), "state_reason", "")
+	}
+
+	// Edge 1: set waiting_approval + reason -> 200, state_at and updated_at updated.
+	clock.add(time.Minute)
+	t1 := model.NewTime(clock.Now())
+	rec = e.do(t, "PATCH", path, `{"state":"waiting_approval","state_reason":"배포 승인 대기"}`, nil)
+	wantStatus(t, rec, 200, "set waiting_approval")
+	var got model.Session
+	decodeJSON(t, rec, &got)
+	if got.State == nil || *got.State != "waiting_approval" || got.StateReason == nil || *got.StateReason != "배포 승인 대기" ||
+		got.StateAt == nil || *got.StateAt != t1 || got.UpdatedAt != t1 {
+		t.Errorf("set waiting = %s", rec.Body)
+	}
+	// Verify waiting state stayed persisted (not auto-cleared by its own PATCH).
+	if persisted := e.session(t, "claude", "sess-1"); persisted.State == nil || *persisted.State != "waiting_approval" {
+		t.Fatalf("persisted state was cleared: %+v", persisted)
+	}
+
+	// Edge 7: update only state_reason -> 200, reason updated, state_at kept, waiting NOT auto-cleared.
+	clock.add(time.Minute)
+	t2 := model.NewTime(clock.Now())
+	rec = e.do(t, "PATCH", path, `{"state_reason":"사유만 변경"}`, nil)
+	wantStatus(t, rec, 200, "reason only")
+	decodeJSON(t, rec, &got)
+	if got.State == nil || *got.State != "waiting_approval" || got.StateReason == nil || *got.StateReason != "사유만 변경" ||
+		got.StateAt == nil || *got.StateAt != t1 || got.UpdatedAt != t2 {
+		t.Errorf("reason only = %s", rec.Body)
+	}
+	if persisted := e.session(t, "claude", "sess-1"); persisted.State == nil || *persisted.State != "waiting_approval" {
+		t.Fatalf("reason-only PATCH auto-cleared state: %+v", persisted)
+	}
+
+	// Clear only state_reason with null -> state and state_at kept.
+	clock.add(time.Minute)
+	t2b := model.NewTime(clock.Now())
+	rec = e.do(t, "PATCH", path, `{"state_reason":null}`, nil)
+	wantStatus(t, rec, 200, "clear reason only")
+	decodeJSON(t, rec, &got)
+	if got.State == nil || *got.State != "waiting_approval" || got.StateReason != nil || got.StateAt == nil || *got.StateAt != t1 || got.UpdatedAt != t2b {
+		t.Errorf("clear reason only = %s", rec.Body)
+	}
+
+	// Edge 3: set waiting_input with reason, then waiting_external without reason -> new state_at, reason reset to null.
+	clock.add(time.Minute)
+	rec = e.do(t, "PATCH", path, `{"state":"waiting_input","state_reason":"입력 필요"}`, nil)
+	wantStatus(t, rec, 200, "set waiting_input")
+	clock.add(time.Minute)
+	t3 := model.NewTime(clock.Now())
+	rec = e.do(t, "PATCH", path, `{"state":"waiting_external"}`, nil)
+	wantStatus(t, rec, 200, "switch to waiting_external")
+	decodeJSON(t, rec, &got)
+	if got.State == nil || *got.State != "waiting_external" || got.StateReason != nil || got.StateAt == nil || *got.StateAt != t3 {
+		t.Errorf("switch state without reason = %s", rec.Body)
+	}
+
+	// Edge 8: explicit state: null -> all three null.
+	clock.add(time.Minute)
+	t4 := model.NewTime(clock.Now())
+	rec = e.do(t, "PATCH", path, `{"state":null}`, nil)
+	wantStatus(t, rec, 200, "clear state")
+	decodeJSON(t, rec, &got)
+	if got.State != nil || got.StateReason != nil || got.StateAt != nil || got.UpdatedAt != t4 {
+		t.Errorf("clear state = %s", rec.Body)
+	}
+}
+
+func TestSessionWaitingAutoClearAndFilter(t *testing.T) {
+	e, clock := newSessionEnv(t)
+	e.do(t, "POST", "/v1/projects", `{"key":"APP","name":"app"}`, map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
+	rec := e.do(t, "POST", "/v1/issues", `{"project":"APP","title":"t","body":"b"}`, map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
+	wantStatus(t, rec, 201, "seed issue")
+
+	// Register claude/sess-1 and put it in waiting_input.
+	e.do(t, "GET", "/v1/actors/me", "", nil)
+	clock.add(time.Minute)
+	rec = e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"state":"waiting_input","state_reason":"확인 요청"}`, nil)
+	wantStatus(t, rec, 200, "set waiting")
+
+	// Edge 14: GET /v1/sessions?waiting=true and waiting=false.
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"?waiting=true", "claude/sess-1"},
+		{"?waiting=false", "owner/owner-1"},
+	} {
+		rec = e.do(t, "GET", "/v1/sessions"+tc.query, "", map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
+		wantStatus(t, rec, 200, tc.query)
+		var l struct {
+			Items []model.Session `json:"items"`
+			Total int             `json:"total"`
+		}
+		decodeJSON(t, rec, &l)
+		if l.Total != 1 || len(l.Items) != 1 || l.Items[0].Actor+"/"+l.Items[0].SessionID != tc.want {
+			t.Errorf("%s = %+v, want %s", tc.query, l.Items, tc.want)
+		}
+	}
+
+	// Edge 9: GET request by waiting session keeps waiting state.
+	rec = e.do(t, "GET", "/v1/issues", "", nil)
+	wantStatus(t, rec, 200, "get issues")
+	if s := e.session(t, "claude", "sess-1"); s.State == nil || *s.State != "waiting_input" {
+		t.Fatalf("GET cleared waiting state: %+v", s)
+	}
+
+	// Edge 10: failed write (422) by waiting session keeps waiting state.
+	rec = e.do(t, "POST", "/v1/issues", `{"project":"APP","title":""}`, nil)
+	wantStatus(t, rec, 422, "invalid issue create")
+	if s := e.session(t, "claude", "sess-1"); s.State == nil || *s.State != "waiting_input" {
+		t.Fatalf("422 write cleared waiting state: %+v", s)
+	}
+
+	// Edge 13: successful write by another session (owner) keeps claude's waiting state.
+	rec = e.do(t, "POST", "/v1/issues/APP-1/comments", `{"body":"owner note"}`, map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
+	wantStatus(t, rec, 201, "owner comment")
+	if s := e.session(t, "claude", "sess-1"); s.State == nil || *s.State != "waiting_input" {
+		t.Fatalf("other session write cleared claude waiting state: %+v", s)
+	}
+
+	// Edge 11: successful 2xx write (comment) by waiting session auto-clears waiting state.
+	clock.add(time.Minute)
+	fpBefore, _ := e.st.FingerprintNow(t.Context())
+	rec = e.do(t, "POST", "/v1/issues/APP-1/comments", `{"body":"재개합니다"}`, nil)
+	wantStatus(t, rec, 201, "claude comment")
+	s := e.session(t, "claude", "sess-1")
+	if s.State != nil || s.StateReason != nil || s.StateAt != nil || s.UpdatedAt != model.NewTime(clock.Now()) {
+		t.Errorf("after 2xx write: %+v", s)
+	}
+	if fpAfter, _ := e.st.FingerprintNow(t.Context()); fpAfter == fpBefore {
+		t.Errorf("auto-clear did not change fingerprint: %q", fpBefore)
+	}
+
+	// Edge 12: PATCH {"role":"main"} on self (without state/state_reason) auto-clears waiting state.
+	clock.add(time.Minute)
+	rec = e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"state":"waiting_approval","state_reason":"승인 대기"}`, nil)
+	wantStatus(t, rec, 200, "re-set waiting")
+	clock.add(time.Minute)
+	rec = e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"role":"main"}`, nil)
+	wantStatus(t, rec, 200, "patch role on self")
+	var patched model.Session
+	decodeJSON(t, rec, &patched)
+	if patched.Role == nil || *patched.Role != "main" || patched.State != nil || patched.StateReason != nil || patched.StateAt != nil {
+		t.Errorf("patch role response = %s", rec.Body)
+	}
+	if persisted := e.session(t, "claude", "sess-1"); persisted.State != nil || persisted.StateReason != nil || persisted.StateAt != nil {
+		t.Errorf("patch role persisted = %+v", persisted)
+	}
+}
+
+func TestAutoClearDBErrorDoesNotBreakWriteResponse(t *testing.T) {
+	e, _ := newSessionEnv(t)
+	e.do(t, "POST", "/v1/projects", `{"key":"APP","name":"app"}`, map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
+	e.do(t, "POST", "/v1/issues", `{"project":"APP","title":"t","body":"b"}`, map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"})
+	if _, err := e.st.DB().Exec(`drop table session`); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/issues/APP-1/comments", `{"body":"note"}`, nil)
+	wantStatus(t, rec, 201, "comment with broken session table")
+	if !strings.Contains(e.log.String(), "session waiting clear failed") {
+		t.Errorf("expected warning log for clear failure, got: %s", e.log.String())
+	}
 }
