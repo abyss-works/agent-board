@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -85,6 +86,26 @@ func msgIDArg(pos []string) (int64, error) {
 	return id, nil
 }
 
+func msgTargetText(m model.Message) string {
+	var parts []string
+	if m.To != nil && *m.To != "" {
+		parts = append(parts, *m.To)
+	}
+	if m.ToSession != nil {
+		parts = append(parts, sessionRefText(m.ToSession))
+	}
+	if m.ToRole != nil && *m.ToRole != "" {
+		parts = append(parts, "role:"+*m.ToRole)
+	}
+	if m.Issue != nil && *m.Issue != "" {
+		parts = append(parts, *m.Issue)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
+}
+
 func (a *App) renderMsgList(showState bool) func(w io.Writer, resp *client.Response) error {
 	return func(w io.Writer, resp *client.Response) error {
 		l, err := decode[msgList](resp)
@@ -105,7 +126,7 @@ func (a *App) renderMsgList(showState bool) func(w io.Writer, resp *client.Respo
 			if showState {
 				row = append(row, m.State)
 			}
-			tb.add(append(row, deref(m.To, "-"), m.Age, m.CreatedBy, m.Title)...)
+			tb.add(append(row, msgTargetText(m), m.Age, m.CreatedBy, m.Title)...)
 		}
 		tb.write(w, a.TermWidth)
 		footer(w, len(l.Items), l.Total, l.Offset)
@@ -123,11 +144,25 @@ func (a *App) renderMsg(w io.Writer, resp *client.Response) error {
 		{"project", m.Project},
 		{"title", m.Title},
 		{"to", deref(m.To, "-")},
+	}
+	if m.ToSession != nil {
+		pairs = append(pairs, [2]string{"to_session", sessionRefText(m.ToSession)})
+	}
+	if m.ToRole != nil {
+		pairs = append(pairs, [2]string{"to_role", *m.ToRole})
+	}
+	if m.Issue != nil {
+		pairs = append(pairs, [2]string{"issue", *m.Issue})
+	}
+	if m.ReplyTo != nil {
+		pairs = append(pairs, [2]string{"reply_to", strconv.FormatInt(*m.ReplyTo, 10)})
+	}
+	pairs = append(pairs, [][2]string{
 		{"state", m.State},
 		{"age", m.Age},
 		{"created", formatTime(m.CreatedAt, a.Location) + " (" + m.CreatedBy + ", " + m.CreatedHost + ")"},
 		{"expires", formatTime(m.ExpiresAt, a.Location)},
-	}
+	}...)
 	if m.DeletedAt != nil {
 		pairs = append(pairs, [2]string{"deleted", formatTime(*m.DeletedAt, a.Location) + " (" + deref(m.DeletedBy, "-") + ")"})
 	}
@@ -138,6 +173,15 @@ func (a *App) renderMsg(w io.Writer, resp *client.Response) error {
 	if m.Body != nil && strings.TrimSpace(*m.Body) != "" {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, strings.TrimRight(*m.Body, "\n"))
+	}
+	if m.Replies != nil && len(*m.Replies) > 0 {
+		fmt.Fprintf(w, "\n== 답장 (%d) ==\n", len(*m.Replies))
+		for _, r := range *m.Replies {
+			fmt.Fprintf(w, "\n#%d  %s  %s  %s\n", r.ID, formatTime(r.CreatedAt, a.Location), r.CreatedBy, r.Title)
+			if r.Body != nil && strings.TrimSpace(*r.Body) != "" {
+				fmt.Fprintln(w, strings.TrimRight(*r.Body, "\n"))
+			}
+		}
 	}
 	return nil
 }
@@ -160,6 +204,48 @@ func (a *App) renderMsgRead(w io.Writer, resp *client.Response) error {
 	return nil
 }
 
+type msgRoutingFlags struct {
+	toSession string
+	toRole    string
+	issue     string
+	replyTo   int64
+}
+
+func (r *msgRoutingFlags) addFlags(fs *flag.FlagSet) {
+	fs.StringVar(&r.toSession, "to-session", "", "")
+	fs.StringVar(&r.toRole, "to-role", "", "")
+	fs.StringVar(&r.issue, "issue", "", "")
+	fs.Int64Var(&r.replyTo, "reply-to", 0, "")
+}
+
+func (r msgRoutingFlags) validate(fs *flag.FlagSet) (*model.SessionRef, error) {
+	var ref *model.SessionRef
+	if isSet(fs, "to-session") {
+		parsed, err := parseSessionArg(r.toSession, "--to-session")
+		if err != nil {
+			return nil, err
+		}
+		if !model.ValidActorID(parsed.Actor) || !model.ValidSessionID(parsed.SessionID) {
+			return nil, usageErrorf("--to-session 의 행위자 또는 세션 ID 형식이 맞지 않습니다: %q", r.toSession)
+		}
+		ref = &parsed
+	}
+	if isSet(fs, "to-role") {
+		if _, ok := model.ParseSessionRole(r.toRole); !ok {
+			return nil, usageErrorf("--to-role 은 main, subagent, runner 중 하나여야 합니다: %q", r.toRole)
+		}
+	}
+	if isSet(fs, "issue") {
+		if !model.ValidIssueKey(r.issue) {
+			return nil, usageErrorf("--issue 는 이슈 키 형식(예: AGB-12)이어야 합니다: %q", r.issue)
+		}
+	}
+	if isSet(fs, "reply-to") && r.replyTo < 1 {
+		return nil, usageErrorf("--reply-to 는 1 이상의 정수여야 합니다: %d", r.replyTo)
+	}
+	return ref, nil
+}
+
 var msgPutCmd = &command{
 	name: "put", summary: "메시지 넣기",
 	usage: `사용법: agb msg put [--project <KEY>] --title <제목> [옵션]
@@ -168,16 +254,21 @@ var msgPutCmd = &command{
 보낸 행위자, 세션, 기기가 메시지에 함께 남습니다.
 
 옵션:
-  --project, -p <KEY>     프로젝트 키. 생략하면 저장소의 .agb.json 의 프로젝트
-  --title, -t <제목>      1~200자 (필수)
-  --to <라벨>             받는 쪽을 가리키는 자유 문자열. 예: reviewer, desk, codex. 공백 없이 1~64자. 생략하면 받는 쪽 없음
-  --ttl <기간>            살아 있는 기간. 24h, 30m, 3d 형식. 1분 이상 90일 이하, 생략하면 7일
+  --project, -p <KEY>         프로젝트 키. 생략하면 저장소의 .agb.json 의 프로젝트
+  --title, -t <제목>          1~200자 (필수)
+  --to <라벨>                 대상 라벨 관례(에이전트·역할·유형, 예: reviewer, desk, codex). 공백 없이 1~64자
+  --to-session <행위자/세션>  받는 세션 지정. 이 세션의 기본·--unread 목록에만 보임
+  --to-role <역할>            받는 역할 지정: main, subagent, runner 중 하나
+  --issue <KEY>               연결할 같은 프로젝트의 이슈 키
+  --reply-to <ID>             답장할 같은 프로젝트의 메시지 ID (만료·삭제된 메시지도 가능)
+  --ttl <기간>                살아 있는 기간. 24h, 30m, 3d 형식. 1분 이상 90일 이하, 생략하면 7일
 ` + bodyUsage + `
 본문은 마크다운이고 64KiB 이하입니다. 생략하면 제목만 남습니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("msg put", g)
 		var project, title, to, ttl, body, bodyFile string
+		var routing msgRoutingFlags
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
 		fs.StringVar(&title, "title", "", "")
@@ -186,6 +277,7 @@ var msgPutCmd = &command{
 		fs.StringVar(&ttl, "ttl", "", "")
 		fs.StringVar(&body, "body", "", "")
 		fs.StringVar(&bodyFile, "body-file", "", "")
+		routing.addFlags(fs)
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -199,11 +291,21 @@ var msgPutCmd = &command{
 		if title == "" {
 			return usageErrorf("--title 이 필요합니다.")
 		}
+		toSessionRef, err := routing.validate(fs)
+		if err != nil {
+			return err
+		}
 		in := map[string]any{"title": title}
-		for name, v := range map[string]string{"to": to, "ttl": ttl} {
+		for name, v := range map[string]string{"to": to, "ttl": ttl, "to_role": routing.toRole, "issue": routing.issue} {
 			if v != "" {
 				in[name] = v
 			}
+		}
+		if toSessionRef != nil {
+			in["to_session"] = map[string]any{"actor": toSessionRef.Actor, "session_id": toSessionRef.SessionID}
+		}
+		if isSet(fs, "reply-to") {
+			in["reply_to"] = routing.replyTo
 		}
 		text, present, err := a.readBody(fs, body, bodyFile)
 		if err != nil {
@@ -226,35 +328,42 @@ var msgPutCmd = &command{
 
 var msgListCmd = &command{
 	name: "list", summary: "메시지 목록 (최신 순, 만료·삭제 제외)",
-	usage: `사용법: agb msg list [--project <KEY>] [--to <라벨>] [--unread [--as <이름>]] [--all]
+	usage: `사용법: agb msg list [--project <KEY>] [--to <라벨>] [--to-session <행위자/세션>] [--to-role <역할>] [--issue <KEY>] [--reply-to <ID>] [--unread [--as <이름>]] [--all]
 
 기간이 지나지 않았고 지우지 않은 메시지를 최신 순으로 보입니다. 본문은 agb msg get <ID> 로 읽습니다.
 AGE 는 넣은 지 얼마나 지났는지입니다. 예: agb msg list -p AGB --fields id,to,title,created_by,age --text
+특정 세션(--to-session)을 지정한 메시지는 해당 세션의 기본·--unread 목록에만 나오고, 브로드캐스트 메시지는 모두에게 나옵니다.
 --unread 는 읽은 쪽이 agb msg ack 로 확인 표시를 하지 않은 메시지만 보입니다.
 
 옵션:
-  --project, -p <KEY>     프로젝트 키. 생략하면 저장소의 .agb.json 의 프로젝트
-  --to <라벨>             받는 쪽 라벨이 같은 메시지만
-  --unread                읽은 쪽이 확인 표시를 하지 않은 메시지만
-  --as <이름>             --unread 의 읽은 쪽 이름. 공백 없이 1~64자. 생략하면 명령을 실행한 저장소의
-                          .agb.json 의 프로젝트 키 (--project 로 다른 프로젝트를 가리켜도 같음)
-  --all                   기간이 지난 메시지와 지운 메시지도 보임 (STATE 열: active, expired, deleted)
-  --limit <N>             최대 200. 기본 50
+  --project, -p <KEY>         프로젝트 키. 생략하면 저장소의 .agb.json 의 프로젝트
+  --to <라벨>                 받는 쪽 라벨이 같은 메시지만
+  --to-session <행위자/세션>  받는 세션이 같은 메시지만
+  --to-role <역할>            받는 역할(main, subagent, runner)이 같은 메시지만
+  --issue <KEY>               이 이슈와 연결된 메시지만
+  --reply-to <ID>             이 메시지의 답장만
+  --unread                    읽은 쪽이 확인 표시를 하지 않은 메시지만
+  --as <이름>                 --unread 의 읽은 쪽 이름. 공백 없이 1~64자. 생략하면 명령을 실행한 저장소의
+                              .agb.json 의 프로젝트 키 (--project 로 다른 프로젝트를 가리켜도 같음)
+  --all                       기간이 지난 메시지·지운 메시지·다른 세션 지정 메시지도 모두 보임 (STATE 열: active, expired, deleted)
+  --limit <N>                 최대 200. 기본 50
   --offset <N>
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("msg list", g)
-		var project, to, as string
-		var all, unread bool
-		var limit, offset int
+		var project, as string
+		var unread bool
+		var f client.MessageFilter
+		var routing msgRoutingFlags
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
-		fs.StringVar(&to, "to", "", "")
+		fs.StringVar(&f.To, "to", "", "")
+		routing.addFlags(fs)
 		fs.BoolVar(&unread, "unread", false, "")
 		fs.StringVar(&as, "as", "", "")
-		fs.BoolVar(&all, "all", false, "")
-		fs.IntVar(&limit, "limit", 0, "")
-		fs.IntVar(&offset, "offset", 0, "")
+		fs.BoolVar(&f.All, "all", false, "")
+		fs.IntVar(&f.Limit, "limit", 0, "")
+		fs.IntVar(&f.Offset, "offset", 0, "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -265,9 +374,15 @@ AGE 는 넣은 지 얼마나 지났는지입니다. 예: agb msg list -p AGB --f
 		if project, err = msgProject(project); err != nil {
 			return err
 		}
-		var reader string
+		if _, err := routing.validate(fs); err != nil {
+			return err
+		}
+		f.ToSession = routing.toSession
+		f.ToRole = routing.toRole
+		f.Issue = routing.issue
+		f.ReplyTo = routing.replyTo
 		if unread {
-			if reader, err = msgReader(as); err != nil {
+			if f.UnreadBy, err = msgReader(as); err != nil {
 				return err
 			}
 		} else if isSet(fs, "as") {
@@ -277,11 +392,11 @@ AGE 는 넣은 지 얼마나 지났는지입니다. 예: agb msg list -p AGB --f
 		if err != nil {
 			return err
 		}
-		resp, err := c.ListMessages(ctx, project, to, reader, all, client.Page{Limit: limit, Offset: offset})
+		resp, err := c.ListMessages(ctx, project, f)
 		if err != nil {
 			return err
 		}
-		return a.emit(g, resp, a.renderMsgList(all))
+		return a.emit(g, resp, a.renderMsgList(f.All))
 	},
 }
 
@@ -289,7 +404,7 @@ var msgGetCmd = &command{
 	name: "get", summary: "메시지 단건 (기간이 지났거나 지운 것도)",
 	usage: `사용법: agb msg get <ID>
 
-본문까지 보입니다. 기간이 지났거나 지운 메시지도 읽을 수 있고 STATE 로 구분합니다.
+본문과 직계 답장까지 보입니다. 기간이 지났거나 지운 메시지도 읽을 수 있고 STATE 로 구분합니다.
 확인 표시가 있으면 읽은 쪽마다 read 줄에 이름, 시각, 확인한 행위자와 기기를 보입니다.
 본문만 그대로 받으려면 agb msg get <ID> --fields body --text.
 `,

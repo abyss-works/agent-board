@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -27,7 +28,42 @@ func messageID(r *http.Request) (int64, *apiError) {
 
 func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	f := store.MessageFilter{Project: r.PathValue("key"), To: q.one("to"), UnreadBy: q.one("unread_by")}
+	tr := TraceFrom(r.Context())
+	f := store.MessageFilter{
+		Project:  r.PathValue("key"),
+		To:       q.one("to"),
+		UnreadBy: q.one("unread_by"),
+		Viewer:   &model.SessionRef{Actor: tr.Actor, SessionID: tr.SessionID},
+	}
+	if v := q.one("to_session"); v != "" {
+		if ref, ok := parseSessionRef(v); ok {
+			f.ToSession = &ref
+		} else {
+			q.add("to_session", "<행위자>/<세션 ID> 형식이어야 합니다.")
+		}
+	}
+	if v := q.one("to_role"); v != "" {
+		if _, ok := model.ParseSessionRole(v); !ok {
+			q.add("to_role", "main, subagent, runner 중 하나여야 합니다.")
+		} else {
+			f.ToRole = v
+		}
+	}
+	if v := q.one("issue"); v != "" {
+		if !model.ValidIssueKey(v) {
+			q.add("issue", "이슈 키 형식(예: AGB-12)이어야 합니다.")
+		} else {
+			f.Issue = v
+		}
+	}
+	if v := q.one("reply_to"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			q.add("reply_to", "1 이상의 정수여야 합니다.")
+		} else {
+			f.ReplyTo = &id
+		}
+	}
 	if f.UnreadBy != "" && model.ValidateMessageReader(f.UnreadBy) != nil {
 		q.add("unread_by", fmt.Sprintf("공백과 제어 문자 없이 1~%d자여야 합니다.", model.MaxMessageToRunes))
 	}
@@ -48,7 +84,10 @@ func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) createMessage(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, map[string]bool{"to": true, "title": true, "body": true, "ttl": true})
+	b, aerr := readBody(w, r, map[string]bool{
+		"to": true, "to_session": true, "to_role": true, "issue": true, "reply_to": true,
+		"title": true, "body": true, "ttl": true,
+	})
 	if aerr != nil {
 		writeError(w, aerr)
 		return
@@ -56,10 +95,36 @@ func (h *handler) createMessage(w http.ResponseWriter, r *http.Request) {
 	// A null is left at the zero value: no addressee, and validation reports
 	// an empty title.
 	var in store.MessageInput
-	for name, dst := range map[string]*string{"to": &in.To, "title": &in.Title, "body": &in.Body, "ttl": &in.TTL} {
+	for name, dst := range map[string]*string{
+		"to": &in.To, "to_role": &in.ToRole, "issue": &in.Issue,
+		"title": &in.Title, "body": &in.Body, "ttl": &in.TTL,
+	} {
 		if _, _, aerr := field(b, name, dst); aerr != nil {
 			writeError(w, aerr)
 			return
+		}
+	}
+	if raw, ok := b["to_session"]; ok && !isNull(raw) {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(raw, &m) == nil && m != nil {
+			if ref, ok := sessionRefObject(m); ok {
+				in.ToSession = &ref
+			}
+		}
+		if in.ToSession == nil {
+			in.ExtraErrors = append(in.ExtraErrors, model.FieldError{
+				Field: "to_session", Reason: "invalid", Message: `{"actor","session_id"} 객체여야 합니다.`,
+			})
+		}
+	}
+	if raw, ok := b["reply_to"]; ok && !isNull(raw) {
+		var id int64
+		if json.Unmarshal(raw, &id) != nil {
+			in.ExtraErrors = append(in.ExtraErrors, model.FieldError{
+				Field: "reply_to", Reason: "invalid", Message: "1 이상의 정수여야 합니다.",
+			})
+		} else {
+			in.ReplyTo = &id
 		}
 	}
 	m, err := h.store.CreateMessage(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), in)
