@@ -1,18 +1,21 @@
-import { ArrowRightIcon, BellDotIcon, FolderIcon, LockIcon, ScaleIcon } from 'lucide-react'
+import { ArrowRightIcon, BellDotIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
-import { useOverview, useProjects } from '@/api/queries'
-import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DoingItem, type IssueSummary, type Overview, type QueueItem } from '@/api/types'
+import { useOverview, useProjects, useSessions } from '@/api/queries'
+import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DoingItem, type IssueSummary, type Overview, type QueueItem, type Session } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
+import { IssueLink } from '@/components/issue/issue-link'
 import { IssueRow } from '@/components/issue/issue-row'
-import { PriorityIcon, StatusIcon, TypeIcon } from '@/components/issue/meta'
+import { ActorChip, IssueKey, PriorityIcon, StatusIcon, TypeIcon } from '@/components/issue/meta'
 import { PageHeader } from '@/components/layout/page-header'
+import { WaitingStateBadge } from '@/components/session/session-meta'
 import { Badge } from '@/components/ui/badge'
 import { useFlash } from '@/hooks/use-flash'
 import { unacknowledgedListPath } from '@/lib/acknowledge'
 import { PRIORITY_LABEL, PROJECT_STATUS_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
+import { sessionDetailPath, sessionKey } from '@/lib/session-tree'
 import { formatKst, formatKstTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -209,9 +212,47 @@ function Counts({ overview }: { overview: Overview }) {
   )
 }
 
+function WaitingSessionList({ items }: { items: Session[] }) {
+  return (
+    <ul className="max-h-60 divide-y divide-border/60 overflow-y-auto">
+      {items.map((s) => (
+        <li key={sessionKey(s)} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-3 py-2 text-xs transition-colors hover:bg-accent/40">
+          <ActorChip actor={s.actor} className="shrink-0" />
+          <Link to={sessionDetailPath(s)} className="font-mono text-foreground/90 hover:underline">
+            {s.session_id}
+          </Link>
+          {s.state ? <WaitingStateBadge state={s.state} /> : null}
+          {s.state_reason ? (
+            <span className="min-w-0 flex-1 truncate text-muted-foreground" title={s.state_reason}>
+              {s.state_reason}
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
+          {s.issue ? (
+            <IssueLink issueKey={s.issue} className="shrink-0 hover:underline">
+              <IssueKey issueKey={s.issue} className="text-foreground/80" />
+            </IssueLink>
+          ) : null}
+          <time
+            dateTime={s.state_at ?? s.last_seen_at}
+            title={`${formatKst(s.state_at ?? s.last_seen_at)} KST`}
+            className="shrink-0 font-mono text-[0.6875rem] tabular-nums text-muted-foreground"
+          >
+            {formatKstTime(s.state_at ?? s.last_seen_at)}
+          </time>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function ProjectOverview({ projectKey }: { projectKey: string }) {
   const q = useOverview(projectKey)
+  const waitingQ = useSessions({ project: projectKey, waiting: true })
   const o = q.data
+  const waitingSessions = waitingQ.data?.items ?? []
+  const waitingTotal = waitingQ.data?.total ?? 0
   const issues = o
     ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unacknowledged.items]
     : undefined
@@ -253,6 +294,11 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           </div>
         </Group>
         <Group title="내 차례">
+          {waitingTotal > 0 ? (
+            <Section title="대기 세션" total={waitingTotal} to="/sessions" icon={<HourglassIcon className="size-3.5 text-amber-400" />} accent="decision">
+              <WaitingSessionList items={waitingSessions} />
+            </Section>
+          ) : null}
           <div className="grid gap-3 xl:grid-cols-3">
             <Section title="결정 필요" total={o.decisions.total} icon={<ScaleIcon className="size-3.5 text-amber-400" />} accent="decision">
               <IssueList items={o.decisions.items} flash={flash} />

@@ -16,6 +16,7 @@ import { IssuesPage } from '@/pages/issues-page'
 import { LoginPage } from '@/pages/login-page'
 import { MilestonesPage } from '@/pages/milestones-page'
 import { OverviewPage } from '@/pages/overview-page'
+import { SessionsPage } from '@/pages/sessions-page'
 import { TokensPage } from '@/pages/tokens-page'
 
 // sonner는 px로 고정한 크기를 레이어 밖 CSS로 넣는다. 루트 글꼴 크기를 따르도록 기본 px 값을 rem(÷16)으로 덮어쓴다.
@@ -53,6 +54,7 @@ function Root() {
           <Route path="/issues" element={<IssuesPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/milestones" element={<MilestonesPage />} />
+          <Route path="/sessions" element={<SessionsPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/documents/:project/:name" element={<DocumentPage />} />
           <Route path="/device" element={<DevicePage />} />
