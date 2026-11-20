@@ -260,10 +260,9 @@ func TestOverview(t *testing.T) {
 	}
 }
 
-// The decisions section lists the open issues that ask for a decision, whatever
-// their type and open status, in priority order.
-// A doing issue is held by the session that moved it to doing, and goes stale
-// two hours after that session's last activity on any issue.
+// A doing issue with an open claim uses the stored claim (30m stale, 24h while
+// waiting) with source "claim"; a doing issue without an open claim falls back
+// to activity history (2h stale) with source "activity".
 func TestOverviewDoingHolder(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
@@ -288,24 +287,66 @@ func TestOverviewDoingHolder(t *testing.T) {
 		}
 		return m
 	}
+
+	// Claimed issues report source="claim" and session last_seen_at.
 	start := model.NewTime(now)
-	now = now.Add(90 * time.Minute)
-	// Activity of the same session on another issue keeps it alive.
-	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈", nil, nil); err != nil {
+	now = now.Add(20 * time.Minute)
+	mustTouch(t, s, trClaude, now)
+	seen := model.NewTime(now)
+	now = now.Add(20 * time.Minute) // 20m after seen (active), 40m after start (owner stale)
+	h := holders()
+	if got := h[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != seen || got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("claimed active = %+v, want claude s-claude last active %s not stale claim", got, seen)
+	}
+	if got := h[born.Key]; got.Actor != "owner" || got.SessionID != "s-owner" || got.LastActiveAt != start || !got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("claimed stale = %+v, want owner s-owner last active %s stale claim", got, start)
+	}
+
+	// Waiting session keeps claimed issue non-stale within 24h, stale after 24h.
+	stWait := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, trClaude.Actor, trClaude.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: &stWait},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(23 * time.Hour)
+	if got := holders()[held.Key]; got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("waiting claimed at 23h = %+v, want not stale claim", got)
+	}
+	ag, err := s.Agenda(ctx, []string{"AGB"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agHeld model.Holder
+	for _, it := range ag.Projects[0].Agent.Doing.Items {
+		if it.Key == held.Key {
+			agHeld = it.Holder
+		}
+	}
+	if agHeld.Stale || agHeld.Source != model.HolderSourceClaim {
+		t.Errorf("agenda waiting claimed at 23h = %+v, want not stale claim", agHeld)
+	}
+	now = now.Add(2 * time.Hour)
+	if got := holders()[held.Key]; !got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("waiting claimed at 25h = %+v, want stale claim", got)
+	}
+
+	// Releasing the claim on a doing issue leaves it in doing without an open claim,
+	// so it falls back to activity history (2h stale window) with source="activity".
+	if _, err := s.ReleaseClaim(ctx, trClaude, held.Key, model.ClaimOutcomeAbandoned, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈 활동", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	alive := model.NewTime(now)
 	now = now.Add(time.Hour)
-	h := holders()
-	if got := h[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != alive || got.Stale {
-		t.Errorf("held after 1h of quiet = %+v, want claude s-claude last active %s not stale", got, alive)
-	}
-	if got := h[born.Key]; got.Actor != "owner" || got.SessionID != "s-owner" || got.LastActiveAt != start || !got.Stale {
-		t.Errorf("born doing after 2.5h = %+v, want owner s-owner last active %s stale", got, start)
+	if got := holders()[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != alive || got.Stale || got.Source != model.HolderSourceActivity {
+		t.Errorf("activity fallback after 1h = %+v, want claude s-claude %s not stale activity", got, alive)
 	}
 	now = now.Add(90 * time.Minute)
-	if got := holders()[held.Key]; !got.Stale {
-		t.Errorf("held after 2.5h of quiet = %+v, want stale", got)
+	if got := holders()[held.Key]; !got.Stale || got.Source != model.HolderSourceActivity {
+		t.Errorf("activity fallback after 2.5h = %+v, want stale activity", got)
 	}
 }
 

@@ -437,22 +437,26 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 // project of its linked issue, or to its last_project when it has no issue.
 func (s *Store) waitingSessionsSection(ctx context.Context, project string, limit int) (Section[model.Session], error) {
 	now := s.stamp()
+	staleCutoff, waitCutoff := sessionCutoffs(now)
 	const from = ` from (
 		select s.actor_id, s.session_id, s.first_seen_at, s.last_seen_at, s.last_host, s.parent_actor_id, s.parent_session_id,
 			s.role, i.key as issue_key, s.location, s.state, s.state_reason, s.state_at, s.updated_at,
 			` + sessionLastProject + ` as last_project, ip.key as issue_project
-		from session s
-		left join issue i on i.id = s.issue_id
+		from (
+			select s.*, ` + sessionEffectiveIssueExpr + ` as effective_issue_id
+			from session s
+			where s.state is not null
+		) s
+		left join issue i on i.id = s.effective_issue_id
 		left join project ip on ip.id = i.project_id
-		where s.state is not null
 	) x where coalesce(x.issue_project, x.last_project) = ?`
 	var total int
-	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, project).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, staleCutoff, waitCutoff, project).Scan(&total); err != nil {
 		return Section[model.Session]{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `select x.actor_id, x.session_id, x.first_seen_at, x.last_seen_at, x.last_host, x.parent_actor_id, x.parent_session_id,
 		x.role, x.issue_key, x.location, x.state, x.state_reason, x.state_at, x.updated_at, x.last_project`+from+
-		` order by x.state_at asc, x.actor_id asc, x.session_id asc limit ?`, project, limit)
+		` order by x.state_at asc, x.actor_id asc, x.session_id asc limit ?`, staleCutoff, waitCutoff, project, limit)
 	if err != nil {
 		return Section[model.Session]{}, err
 	}
@@ -468,8 +472,9 @@ func (s *Store) waitingSessionsSection(ctx context.Context, project string, limi
 	return Section[model.Session]{Total: total, Items: items}, rows.Err()
 }
 
-// doingSection lists the doing issues with the session holding each: the one
-// that last moved it to doing, and when that session was last active anywhere.
+// doingSection lists the doing issues with the session holding each. An open
+// stored claim takes precedence; doing issues without an open claim fall back
+// to the session that last moved them to doing.
 func (s *Store) doingSection(ctx context.Context, projects []string, limit int) (Section[model.DoingItem], error) {
 	items, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: []model.IssueStatus{model.StatusDoing}, Limit: limit})
 	if err != nil {
@@ -478,10 +483,35 @@ func (s *Store) doingSection(ctx context.Context, projects []string, limit int) 
 	now := s.now()
 	out := make([]model.DoingItem, len(items))
 	for n, it := range items {
+		var issueID int64
+		if err := s.db.QueryRowContext(ctx, `select id from issue where key = ?`, it.Key).Scan(&issueID); err != nil {
+			return Section[model.DoingItem]{}, fmt.Errorf("holder of %s: %w", it.Key, err)
+		}
+		open, err := getOpenClaim(ctx, s.db, issueID)
+		if err != nil {
+			return Section[model.DoingItem]{}, fmt.Errorf("holder of %s: %w", it.Key, err)
+		}
+		if open != nil {
+			lastActive := open.lastSeenAt
+			if !open.hasSession {
+				lastActive = open.claimedAt
+			}
+			out[n] = model.DoingItem{
+				IssueSummary: it,
+				Holder: model.Holder{
+					Actor:        open.actor,
+					SessionID:    open.sessionID,
+					LastActiveAt: lastActive,
+					Stale:        !open.validAt(now),
+					Source:       model.HolderSourceClaim,
+				},
+			}
+			continue
+		}
 		var h model.Holder
 		var last string
 		// ponytail: one query per doing issue; the section holds at most limit (50) items.
-		err := s.db.QueryRowContext(ctx, `select a.actor_id, a.session_id,
+		err = s.db.QueryRowContext(ctx, `select a.actor_id, a.session_id,
 			(select max(b.at) from activity b where b.session_id = a.session_id)
 			from activity a join issue i on i.id = a.issue_id
 			where i.key = ? and json_extract(a.changes, '$.status.to') = 'doing'
@@ -493,6 +523,7 @@ func (s *Store) doingSection(ctx context.Context, projects []string, limit int) 
 			return Section[model.DoingItem]{}, err
 		}
 		h.Stale = now.Sub(h.LastActiveAt.Time()) > model.StaleAfter
+		h.Source = model.HolderSourceActivity
 		out[n] = model.DoingItem{IssueSummary: it, Holder: h}
 	}
 	return Section[model.DoingItem]{Total: total, Items: out}, nil

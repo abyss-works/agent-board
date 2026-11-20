@@ -63,9 +63,27 @@ const sessionLastProject = `(select lp.key from (
 			where d.actor_id = s.actor_id and d.session_id = s.session_id
 	) lp order by lp.at desc limit 1)`
 
+func sessionCutoffs(now model.Time) (staleCutoff, waitCutoff string) {
+	t := now.Time()
+	return model.NewTime(t.Add(-model.SessionStaleAfter)).String(),
+		model.NewTime(t.Add(-model.SessionWaitingHold)).String()
+}
+
+// sessionEffectiveIssueExpr resolves a session's issue_id: the most recently
+// claimed issue among its valid open claims, falling back to session.issue_id.
+const sessionEffectiveIssueExpr = `coalesce(
+	case when s.last_seen_at >= ? or (s.state is not null and s.state_at is not null and s.state_at >= ?)
+		then (select ic.issue_id from issue_claim ic
+			where ic.actor_id = s.actor_id and ic.session_id = s.session_id and ic.released_at is null
+			order by ic.claimed_at desc, ic.id desc limit 1)
+	end,
+	s.issue_id
+)`
+
 const sessionSelect = `select s.actor_id, s.session_id, s.first_seen_at, s.last_seen_at, s.last_host, s.parent_actor_id, s.parent_session_id,
 	s.role, i.key as issue_key, s.location, s.state, s.state_reason, s.state_at, s.updated_at, ` + sessionLastProject + ` as last_project
-	from session s left join issue i on i.id = s.issue_id`
+	from (select s.*, ` + sessionEffectiveIssueExpr + ` as effective_issue_id from session s) s
+	left join issue i on i.id = s.effective_issue_id`
 
 func scanSession(sc rowScanner, now model.Time) (*model.Session, error) {
 	var x model.Session
@@ -122,23 +140,30 @@ func scanSession(sc rowScanner, now model.Time) (*model.Session, error) {
 	return &x, nil
 }
 
+// touchSessionTx records a call of the session of tr inside an existing write
+// transaction.
+func touchSessionTx(ctx context.Context, tx *sql.Tx, tr model.Trace, at time.Time) error {
+	now := model.NewTime(at).String()
+	_, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host, updated_at)
+		values (?, ?, ?, ?, ?, ?)
+		on conflict(actor_id, session_id) do update set last_seen_at = excluded.last_seen_at, last_host = excluded.last_host
+		where excluded.last_seen_at >= session.last_seen_at`, tr.Actor, tr.SessionID, now, now, tr.ClientHost, now)
+	return err
+}
+
 // TouchSession records a call of the session of the trace at the given time:
 // it writes the session when it is new and otherwise moves last_seen_at and
 // last_host, unless the stored call is later. updated_at does not move.
 func (s *Store) TouchSession(ctx context.Context, tr model.Trace, at time.Time) error {
-	now := model.NewTime(at).String()
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host, updated_at)
-			values (?, ?, ?, ?, ?, ?)
-			on conflict(actor_id, session_id) do update set last_seen_at = excluded.last_seen_at, last_host = excluded.last_host
-			where excluded.last_seen_at >= session.last_seen_at`, tr.Actor, tr.SessionID, now, now, tr.ClientHost, now)
-		return err
+		return touchSessionTx(ctx, tx, tr, at)
 	})
 }
 
 func (s *Store) readSession(ctx context.Context, actor, id string) (*model.Session, model.Time, error) {
 	now := s.stamp()
-	x, err := scanSession(s.db.QueryRowContext(ctx, sessionSelect+` where s.actor_id = ? and s.session_id = ?`, actor, id), now)
+	staleCutoff, waitCutoff := sessionCutoffs(now)
+	x, err := scanSession(s.db.QueryRowContext(ctx, sessionSelect+` where s.actor_id = ? and s.session_id = ?`, staleCutoff, waitCutoff, actor, id), now)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, model.Time{}, ErrNotFound
 	}
@@ -155,8 +180,9 @@ func (s *Store) GetSession(ctx context.Context, actor, id string) (*model.Sessio
 	if err != nil {
 		return nil, err
 	}
+	staleCutoff, waitCutoff := sessionCutoffs(now)
 	rows, err := s.db.QueryContext(ctx, sessionSelect+` where s.parent_actor_id = ? and s.parent_session_id = ?
-		order by s.first_seen_at, s.actor_id, s.session_id`, actor, id)
+		order by s.first_seen_at, s.actor_id, s.session_id`, staleCutoff, waitCutoff, actor, id)
 	if err != nil {
 		return nil, err
 	}
@@ -182,8 +208,9 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]model.Sess
 		}
 	}
 	now := s.stamp()
+	staleCutoff, waitCutoff := sessionCutoffs(now)
 	var where []string
-	var args []any
+	args := []any{staleCutoff, waitCutoff}
 	if f.Project != "" {
 		where = append(where, "x.last_project = ?")
 		args = append(args, f.Project)

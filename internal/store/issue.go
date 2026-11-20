@@ -388,8 +388,18 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 			b, _ := json.Marshal(v)
 			changes[f] = model.Change{To: b}
 		}
-		_, err = insertActivity(ctx, tx, id, model.ActivityCreated, tr, now, changes, nil, nil, nil)
-		return err
+		if _, err := insertActivity(ctx, tx, id, model.ActivityCreated, tr, now, changes, nil, nil, nil); err != nil {
+			return err
+		}
+		if issue.Status == model.StatusDoing {
+			if err := touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
+				return err
+			}
+			if _, err := insertClaimTx(ctx, tx, id, tr, now); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -515,6 +525,11 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			return err
 		}
 		now := s.stamp()
+		if statusChanged {
+			if err := syncClaimOnStatusChangeTx(ctx, tx, cur.id, tr, kind, next.Status, next.StatusReason, now); err != nil {
+				return err
+			}
+		}
 		next.Version = cur.Version + 1
 		next.UpdatedAt = now
 		next.UpdatedBy = tr.Actor
