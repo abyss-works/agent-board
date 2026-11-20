@@ -1,4 +1,4 @@
-import { ActivityIcon, BookOpenIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
+import { ActivityIcon, BookOpenIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, TerminalIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
 import { useActors, useProjects } from '@/api/queries'
@@ -227,6 +227,10 @@ export function Sidebar() {
           )
         })}
         {/* 단축키 없이 메뉴만 둔다. MENU_SHORTCUTS에는 넣지 않는다. */}
+        <NavLink to="/sessions" className={menuLinkClass}>
+          <TerminalIcon className="size-4" />
+          <span className="flex-1">세션</span>
+        </NavLink>
         <NavLink to="/documents" className={menuLinkClass}>
           <BookOpenIcon className="size-4" />
           <span className="flex-1">기록</span>

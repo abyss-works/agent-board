@@ -1,5 +1,5 @@
 import { userActorIds } from '@/lib/actors'
-import type { Actor, ErrorDetail } from './types'
+import type { Actor, Agenda, ErrorDetail, Session, SessionListResponse } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
@@ -158,6 +158,22 @@ export function headersFor(config: ClientConfig): Record<string, string> {
   return headers
 }
 
+export interface SessionListParams {
+  project?: string
+  actor?: string
+  parent?: string
+  active?: boolean
+  named?: boolean
+  waiting?: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface AgendaParams {
+  project?: string
+  limit?: number
+}
+
 export interface RequestOptions {
   query?: QueryParams
   body?: unknown
@@ -191,6 +207,18 @@ export class ApiClient {
 
   delete<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('DELETE', path, opts)
+  }
+
+  listSessions(params?: SessionListParams, signal?: AbortSignal): Promise<SessionListResponse> {
+    return this.get<SessionListResponse>('/sessions', params ? { ...params } : undefined, signal)
+  }
+
+  getSession(actor: string, sessionId: string, signal?: AbortSignal): Promise<Session> {
+    return this.get<Session>(`/sessions/${encodeURIComponent(actor)}/${encodeURIComponent(sessionId)}`, undefined, signal)
+  }
+
+  getAgenda(params?: AgendaParams, signal?: AbortSignal): Promise<Agenda> {
+    return this.get<Agenda>('/agenda', params ? { ...params } : undefined, signal)
   }
 
   async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
