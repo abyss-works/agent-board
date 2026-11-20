@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -52,11 +53,16 @@ type handler struct {
 	devices *deviceStore
 	stats   *statsCollector
 	started time.Time
+
+	// seen holds, per actor and session ID, when this process last wrote the
+	// call of that session.
+	seenMu sync.Mutex
+	seen   map[string]time.Time
 }
 
 // New builds the complete HTTP handler.
 func New(o Options) http.Handler {
-	h := &handler{opts: o, actors: map[string]model.Actor{}, store: o.Store, stats: newStatsCollector()}
+	h := &handler{opts: o, actors: map[string]model.Actor{}, store: o.Store, stats: newStatsCollector(), seen: map[string]time.Time{}}
 	for _, a := range o.Actors {
 		h.actors[a.ID] = a
 	}
@@ -82,6 +88,7 @@ func New(o Options) http.Handler {
 	h.registerTopics(protected)
 	h.registerMilestones(protected)
 	h.registerMessages(protected)
+	h.registerSessions(protected)
 	h.registerDocuments(protected)
 	h.registerSearch(protected)
 	h.registerGraph(protected)
@@ -95,7 +102,9 @@ func New(o Options) http.Handler {
 
 	root := http.NewServeMux()
 	route(root, "/v1/health", methods{"GET": h.health})
-	authenticated := h.auth(h.listActorsUnnamed(trace(h.actors, h.bind(protected))))
+	// A request that passed authentication and the trace headers records the
+	// call of its session before the route handles it.
+	authenticated := h.auth(h.listActorsUnnamed(trace(h.actors, h.bind(h.touchSession(protected)))))
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if startsLogin(r) {
 			protected.ServeHTTP(w, r)

@@ -72,7 +72,9 @@ func TestMigration18KeepsRowsAndAddsTheTable(t *testing.T) {
 	if r := queryStrings(t, s, `select revoked_by || '|' || ifnull(revoked_session, 'null') || '|' || ifnull(revoked_host, 'null') from token where id = 1`); r[0] != "claude|null|null" {
 		t.Errorf("revoked token = %v", r)
 	}
-	idx := queryStrings(t, s, `select group_concat(name, ',') from (select name from sqlite_master where type = 'index' and tbl_name = 'resource_activity' and sql is not null order by name)`)
+	// Migration 20 adds resource_activity_session for the sessions.
+	idx := queryStrings(t, s, `select group_concat(name, ',') from (select name from sqlite_master where type = 'index' and tbl_name = 'resource_activity' and sql is not null
+		and name != 'resource_activity_session' order by name)`)
 	if idx[0] != "resource_activity_project,resource_activity_resource" {
 		t.Errorf("indexes = %s", idx[0])
 	}

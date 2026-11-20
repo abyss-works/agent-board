@@ -22,6 +22,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 | 검색 | `agb search "<핵심어>" -p <KEY>`, 과거 기록 `agb recall "<질문>"` ("기록 문서" 끝의 "작업 전에 과거 기록을 찾을 때") |
 | 값 뽑기 | `--fields a,b --text`. JSON은 스크립트로 가공하지 않는다 ("출력과 종료 코드") |
 | 메시지 | `agb msg put -p <KEY> --title "<제목>" --body "<내용>"`, `agb msg list -p <KEY> --unread`, `agb msg ack <ID>` ("메시지 공간") |
+| 서브에이전트 세션 | `agb session start --role subagent --issue <KEY>` ("서브에이전트 세션") |
 
 `agb`가 설치되어 있지 않거나, 서버 주소가 설정되어 있지 않거나, CLI·스킬을 새 릴리즈로 바꿀 때는 `references/setup.md`를 따른다.
 
@@ -345,6 +346,13 @@ agb milestone list -p <KEY>
    ```
    - 기다리는 이슈는 현황의 막힘 칸에 보인다. `external` 이슈는 우선순위 큐와 다음 할 일에 나오지 않는다.
 3. 세션을 시작하거나 막힌 이슈를 다시 볼 때 대상의 상태를 확인한다. 끝났으면 `external` 이슈를 `done`으로 옮긴다. 막혔던 이슈가 다음 할 일로 돌아온다.
+
+### 서브에이전트 세션
+
+세션은 `agb`를 부르기만 하면 서버에 자동 등록되고, 마지막 호출에서 30분이 지나면 멈춤으로 보인다.
+
+- 서브에이전트에 작업을 맡길 때는 `agb session start --role subagent --issue <KEY>`로 자식 세션을 만들고, 출력된 세션 ID를 맡기는 지시에 넣는다.
+- 서브에이전트는 모든 `agb` 명령에 `--session-id <그 ID>`를 붙인다. 그러지 않으면 부모 세션으로 기록된다.
 
 ## 5. 마칠 때
 

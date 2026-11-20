@@ -398,6 +398,55 @@ func (c *Client) DeleteMessage(ctx context.Context, id int64) (*Response, error)
 	return c.Request(ctx, http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
+// SessionFilter selects sessions. Parent is "<actor>/<session ID>". A nil
+// Active or Named leaves that filter out.
+type SessionFilter struct {
+	Project, Actor, Parent string
+	Active, Named          *bool
+	Page                   Page
+}
+
+// Values encodes the filter as query parameters.
+func (f SessionFilter) Values() url.Values {
+	v := url.Values{}
+	set(v, "project", f.Project)
+	set(v, "actor", f.Actor)
+	set(v, "parent", f.Parent)
+	if f.Active != nil {
+		v.Set("active", strconv.FormatBool(*f.Active))
+	}
+	if f.Named != nil {
+		v.Set("named", strconv.FormatBool(*f.Named))
+	}
+	f.Page.addTo(v)
+	return v
+}
+
+func sessionPath(actor, id string) string {
+	return "/v1/sessions/" + url.PathEscape(actor) + "/" + url.PathEscape(id)
+}
+
+// ListSessions lists sessions, the most recently seen first.
+func (c *Client) ListSessions(ctx context.Context, f SessionFilter) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/sessions", f.Values()), nil, nil)
+}
+
+// GetSession fetches one session with its children.
+func (c *Client) GetSession(ctx context.Context, actor, id string) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, sessionPath(actor, id), nil, nil)
+}
+
+// UpdateSession sends a merge patch of parent, role, issue and location.
+func (c *Client) UpdateSession(ctx context.Context, actor, id string, patch map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPatch, sessionPath(actor, id), patch, nil)
+}
+
+// StartSession registers a child of the session of the client. in holds
+// optionally session_id, role and issue.
+func (c *Client) StartSession(ctx context.Context, in map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/sessions", in, nil)
+}
+
 // CreateDeviceAuthorization asks the server to let an agent actor in on a
 // device. It is the first step of a login, made without a token, so it sends
 // neither the token nor the trace headers. The response holds the device code
