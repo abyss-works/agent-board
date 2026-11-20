@@ -12,7 +12,8 @@ import (
 )
 
 var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*command{
-	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueAckCmd, issueUnackCmd, issueCommentCmd, issueActivityCmd,
+	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueAckCmd, issueUnackCmd,
+	issueClaimCmd, issueUnclaimCmd, issueClaimsCmd, issueCommentCmd, issueActivityCmd,
 }, hints: map[string][]string{"comments": {"comment", "activity"}}}
 
 // issueFilterFlags registers the shared list filters.
@@ -626,6 +627,109 @@ var issueUnackCmd = &command{
 			return err
 		}
 		return a.emit(g, resp, a.renderIssue)
+	},
+}
+
+var issueClaimCmd = &command{
+	name: "claim", summary: "이슈 점유",
+	usage: `사용법: agb issue claim <KEY>
+
+현재 세션으로 이슈를 점유합니다. 이미 같은 세션이 유효하게 점유 중이면 기존 점유를 돌려줍니다.
+다른 세션이 유효하게 점유 중이면 409(claimed)로 실패합니다.
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		pos, err := parseArgs(leafFlags("issue claim", g), args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.ClaimIssue(ctx, key)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderIssueClaim)
+	},
+}
+
+var issueUnclaimCmd = &command{
+	name: "unclaim", summary: "이슈 점유 해제",
+	usage: `사용법: agb issue unclaim <KEY> [--outcome done|abandoned] [--reason <사유>]
+
+이슈의 미해제 점유를 해제합니다. 점유한 세션 본인이나 사용자 행위자만 해제할 수 있습니다.
+
+옵션:
+  --outcome <결과>        done 또는 abandoned (생략하면 abandoned)
+  --reason <사유>         해제 사유 (1~200자, 제어 문자 불가)
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("issue unclaim", g)
+		var outcome, reason string
+		fs.StringVar(&outcome, "outcome", "", "")
+		fs.StringVar(&reason, "reason", "", "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		body := map[string]any{}
+		if isSet(fs, "outcome") {
+			body["outcome"] = outcome
+		}
+		if isSet(fs, "reason") {
+			body["reason"] = reason
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.UnclaimIssue(ctx, key, body)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderIssueClaim)
+	},
+}
+
+var issueClaimsCmd = &command{
+	name: "claims", summary: "이슈 점유 이력 (최신 먼저)",
+	usage: `사용법: agb issue claims <KEY> [--limit <N>] [--offset <N>]
+
+옵션:
+  --limit <N>             최대 200. 기본 50
+  --offset <N>
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("issue claims", g)
+		var p client.Page
+		fs.IntVar(&p.Limit, "limit", 0, "")
+		fs.IntVar(&p.Offset, "offset", 0, "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.ListIssueClaims(ctx, key, p)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderIssueClaimList)
 	},
 }
 

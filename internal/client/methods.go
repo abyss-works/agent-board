@@ -507,6 +507,28 @@ func (c *Client) Unacknowledge(ctx context.Context, key string) (*Response, erro
 	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
 }
 
+// ClaimIssue claims an issue for the session of the client.
+func (c *Client) ClaimIssue(ctx context.Context, key string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/claim", nil, nil)
+}
+
+// UnclaimIssue releases the open claim on an issue. An empty body sends no
+// request body; otherwise body carries optional outcome and reason fields.
+func (c *Client) UnclaimIssue(ctx context.Context, key string, body map[string]any) (*Response, error) {
+	var payload any
+	if len(body) > 0 {
+		payload = body
+	}
+	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/claim", payload, nil)
+}
+
+// ListIssueClaims lists one issue's claim history, newest first.
+func (c *Client) ListIssueClaims(ctx context.Context, key string, p Page) (*Response, error) {
+	v := url.Values{}
+	p.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/issues/"+url.PathEscape(key)+"/claims", v), nil, nil)
+}
+
 // AddComment adds a comment to an issue. A non-empty summary is sent as the
 // comment's one-line summary, and a non-empty kind as its comment kind.
 func (c *Client) AddComment(ctx context.Context, key, body, summary, kind string) (*Response, error) {
