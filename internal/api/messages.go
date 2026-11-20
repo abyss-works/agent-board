@@ -104,28 +104,28 @@ func (h *handler) createMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var details []Detail
 	if raw, ok := b["to_session"]; ok && !isNull(raw) {
 		var m map[string]json.RawMessage
-		if json.Unmarshal(raw, &m) != nil || m == nil {
-			details = append(details, Detail{Field: "to_session", Reason: "invalid", Message: `{"actor","session_id"} 객체여야 합니다.`})
-		} else if ref, ok := sessionRefObject(m); !ok {
-			details = append(details, Detail{Field: "to_session", Reason: "invalid", Message: `{"actor","session_id"} 객체여야 합니다.`})
-		} else {
-			in.ToSession = &ref
+		if json.Unmarshal(raw, &m) == nil && m != nil {
+			if ref, ok := sessionRefObject(m); ok {
+				in.ToSession = &ref
+			}
+		}
+		if in.ToSession == nil {
+			in.ExtraErrors = append(in.ExtraErrors, model.FieldError{
+				Field: "to_session", Reason: "invalid", Message: `{"actor","session_id"} 객체여야 합니다.`,
+			})
 		}
 	}
 	if raw, ok := b["reply_to"]; ok && !isNull(raw) {
 		var id int64
-		if json.Unmarshal(raw, &id) != nil || id < 1 {
-			details = append(details, Detail{Field: "reply_to", Reason: "invalid", Message: "1 이상의 정수여야 합니다."})
+		if json.Unmarshal(raw, &id) != nil {
+			in.ExtraErrors = append(in.ExtraErrors, model.FieldError{
+				Field: "reply_to", Reason: "invalid", Message: "1 이상의 정수여야 합니다.",
+			})
 		} else {
 			in.ReplyTo = &id
 		}
-	}
-	if len(details) > 0 {
-		writeError(w, validationFailed(details))
-		return
 	}
 	m, err := h.store.CreateMessage(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), in)
 	if err != nil {

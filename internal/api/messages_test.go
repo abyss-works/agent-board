@@ -353,3 +353,70 @@ func TestMessageRoutingErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageCreateValidationMerging(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "sample-app")
+	e.createProject(t, "ARC", "archived-app")
+	if rec := e.do(t, "PATCH", "/v1/projects/ARC", `{"status":"archived"}`, nil); rec.Code != 200 {
+		t.Fatalf("archive ARC: %d %s", rec.Code, rec.Body.String())
+	}
+
+	wantFields := func(t *testing.T, rec *httptest.ResponseRecorder, want ...string) {
+		t.Helper()
+		eb := decodeErr(t, rec)
+		if rec.Code != 422 || eb.Error.Code != "validation_failed" {
+			t.Fatalf("code=%d err=%+v body=%s", rec.Code, eb, rec.Body.String())
+		}
+		got := map[string]bool{}
+		for _, d := range eb.Error.Details {
+			got[d.Field] = true
+		}
+		if len(eb.Error.Details) != len(want) {
+			t.Errorf("details count=%d, want %d: %+v", len(eb.Error.Details), len(want), eb.Error.Details)
+		}
+		for _, field := range want {
+			if !got[field] {
+				t.Errorf("missing field %q in details=%+v", field, eb.Error.Details)
+			}
+		}
+	}
+
+	t.Run("all validation fields merged", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/APP/messages",
+			`{"title":"","to":"a b","to_session":"bad","to_role":"boss","issue":"APP-999","reply_to":0}`, nil)
+		wantFields(t, rec, "to", "title", "to_session", "to_role", "issue", "reply_to")
+	})
+
+	t.Run("to_session object validation merged with title", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/APP/messages",
+			`{"title":"","to_session":{"actor":"BAD","session_id":"s1"}}`, nil)
+		wantFields(t, rec, "title", "to_session")
+	})
+
+	t.Run("invalid to_session does not persist message", func(t *testing.T) {
+		before := e.listMessages(t, "APP", "?all=true")
+		rec := e.do(t, "POST", "/v1/projects/APP/messages", `{"title":"valid","to_session":"bad"}`, nil)
+		wantFields(t, rec, "to_session")
+		after := e.listMessages(t, "APP", "?all=true")
+		if after.Total != before.Total || len(after.Items) != len(before.Items) {
+			t.Errorf("message created despite 422: before=%+v after=%+v", before, after)
+		}
+	})
+
+	t.Run("unknown project takes precedence over field validation", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/NOPE/messages", `{"title":"t","to_session":"bad","reply_to":0}`, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 404 || eb.Error.Code != "not_found" {
+			t.Errorf("code=%d err=%+v body=%s", rec.Code, eb, rec.Body.String())
+		}
+	})
+
+	t.Run("archived project takes precedence over field validation", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/ARC/messages", `{"title":"t","to_session":"bad","reply_to":0}`, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 409 || eb.Error.Code != "conflict" || len(eb.Error.Details) == 0 || eb.Error.Details[0].Reason != "project_not_active" {
+			t.Errorf("code=%d err=%+v body=%s", rec.Code, eb, rec.Body.String())
+		}
+	})
+}

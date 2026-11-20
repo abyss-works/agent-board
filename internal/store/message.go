@@ -12,16 +12,18 @@ import (
 )
 
 // MessageInput is a create request. An empty To leaves the message without
-// an addressee and an empty TTL means model.DefaultMessageTTL.
+// an addressee and an empty TTL means model.DefaultMessageTTL. ExtraErrors
+// carries caller-detected field errors to merge after project checks.
 type MessageInput struct {
-	To        string
-	ToSession *model.SessionRef
-	ToRole    string
-	Issue     string
-	ReplyTo   *int64
-	Title     string
-	Body      string
-	TTL       string
+	To          string
+	ToSession   *model.SessionRef
+	ToRole      string
+	Issue       string
+	ReplyTo     *int64
+	Title       string
+	Body        string
+	TTL         string
+	ExtraErrors []model.FieldError
 }
 
 // MessageFilter selects the messages of a project. Without All, messages that
@@ -332,6 +334,7 @@ func validateMessageRouting(ctx context.Context, tx *sql.Tx, projectID int64, in
 // the trace are kept with it.
 func (s *Store) CreateMessage(ctx context.Context, tr model.Trace, project string, in MessageInput) (*model.Message, error) {
 	verr := &model.ValidationError{}
+	verr.Fields = append(verr.Fields, in.ExtraErrors...)
 	if err := model.ValidateMessage(in.To, in.Title, in.Body, in.TTL); err != nil {
 		var ve *model.ValidationError
 		if errors.As(err, &ve) {
