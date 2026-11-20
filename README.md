@@ -11,7 +11,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 ## 무엇을 하는가
 
 - 프로젝트별로 이슈를 만들고 상태(백로그, 진행, 검토, 완료, 취소, 삭제)를 옮기며, 댓글과 변경 이력을 남깁니다.
-- 모든 쓰기에 행위자(사용자 또는 에이전트), 세션 ID, 기기 이름을 남깁니다. 어느 세션이 어떤 이슈를 진행 중인지(`holder`), 그 세션이 2시간 넘게 활동이 없는지(`stale`)를 활동 기록으로 계산해, 멈춘 작업을 다른 세션이 이어받을 수 있게 합니다.
+- 모든 쓰기에 행위자(사용자 또는 에이전트), 세션 ID, 기기 이름을 남깁니다. 이슈 점유(`issue_claim`)를 저장해 어느 세션이 어떤 이슈를 맡고 있는지(`holder`)와 만료 여부(`stale`)를 관리합니다. 점유는 점유 세션의 마지막 호출에서 30분(대기 상태에서는 24시간) 동안 유효하고, 유효한 점유가 있는 이슈는 다른 에이전트 세션의 점유·상태 변경을 409로 막으며 만료된 점유는 바로 이어받을 수 있습니다(점유가 없는 진행 이슈는 활동 기록으로 대체 계산).
 - 인증된 요청의 행위자와 세션 ID를 세션으로 자동 등록하고 마지막 호출 시각(1분 단위)을 갱신합니다. 마지막 호출에서 30분이 지나면 멈춤(`stale`)으로 표시하며, 부모·자식 세션 관계와 역할·이슈·작업 위치·대기 상태(`waiting_approval`, `waiting_input`, `waiting_external`)를 남깁니다(`agb session`). 대기 중인 세션이 다음 쓰기 요청을 성공시키면 대기 상태는 자동으로 풀립니다. 맥락의 단위는 여전히 이슈입니다.
 - 사용자가 답할 것(검토 대기, 결정이 필요한 질문, 아직 확인하지 않은 이슈, 사용자가 직접 할 일, 대기 세션)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`).
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
@@ -45,6 +45,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 주제 (topic) | `name`, `parent`, `path`(`대주제/주제`) | `active`, `deleted` | 프로젝트 안 두 단계 분류. 이슈가 하나를 가리킴 |
 | 마일스톤 (milestone) | `name`, `description`, `target_date`, `progress` | `open`, `closed`, `deleted` | 이슈가 하나를 가리킴. 진행률은 읽을 때 계산 |
 | 이슈 (issue) | `key`(`APP-12` 형식), `title`, `body`, `type`, `priority`, `labels`, `refs`, `decision_needed`, `recheck_condition`, `version` | `backlog`, `doing`, `review`, `done`, `cancelled`, `deleted` | 상위 이슈(`parent`), 선행 이슈(`depends_on`), 참조(`refs`), 주제, 마일스톤 |
+| 이슈 점유 (issue_claim) | `issue`, `actor`, `session_id`, `claimed_at`, `released_at`, `outcome`, `reason`, `active` | 활성·만료(계산값), 해제(`done`/`abandoned`/`expired`/`taken_over`) | 이슈 하나당 미해제 점유는 최대 하나. 점유 세션의 마지막 호출(30분)·대기 상태(24시간)로 유효성을 판정 |
 | 활동 (activity) | `kind`(`created`/`updated`/`commented`), `changes`, `summary`, `comment_kind`, `body` | 추가만 함 | 이슈 하나에 속함. 댓글도 활동 행 |
 | 기록 문서 (document) | `name`, `kind`, `date`, `title`, `tags`, `archived`, `imported`, `sha256`, 원문 | `current`, `superseded`, `archived`(계산값) | `supersedes`, `related`(문서), `about`(이슈) |
 | 메시지 (message) | `to`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함 |
@@ -363,7 +364,7 @@ agb stats
 | 프로젝트 | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{key}`, `GET /projects/{key}/activity`, `GET /projects/{key}/overview` |
 | 주제 | `GET, POST /projects/{key}/topics`, `PATCH, DELETE /topics/{id}` |
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
-| 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
+| 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST, DELETE /issues/{key}/claim`, `GET /issues/{key}/claims`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
 | 기록 문서 | `GET /projects/{key}/documents`, `POST /projects/{key}/documents:batch`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
 | 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |

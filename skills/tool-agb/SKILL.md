@@ -15,7 +15,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 |---|---|
 | 현황, 다음 할 일 | `agb agenda -p <KEY>`, `agb project overview <KEY>` (1절) |
 | 이슈 등록 | `agb issue create -p <KEY> -t "<제목>" --type <종류> --body-file -` (observation은 `--recheck` 필수, 2절) |
-| 상태 변경 | `agb issue update <ISSUE> --status doing` (3절) |
+| 상태 변경, 점유 | `agb issue update <ISSUE> --status doing`, `agb issue claim\|unclaim\|claims <ISSUE>` (1, 3절) |
 | 댓글 쓰기, 완료 | `agb issue comment <ISSUE> --summary "<요약>" --body "<내용>"`, `--status done` (4, 5절) |
 | 댓글 읽기 | `agb issue activity <ISSUE> --fields kind,actor,at,body --text` ("출력과 종료 코드") |
 | 기록 문서 | `agb doc new <종류> --slug <s> --title "<제목>"`, `agb doc put <경로>`, `agb doc get -p <KEY> <이름> --content` ("기록 문서") |
@@ -149,14 +149,10 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    - 같은 세션을 며칠 뒤 다시 쓰거나 컨텍스트가 압축된 뒤에도 이 절차로 현황을 다시 본다. 어느 시점 이후 바뀐 것(사용자의 "리마인드", "지난번 이후 뭐 했지", 다른 기기나 세션의 작업)은 `agb digest --since <시점> [-p <KEY>]`로 본다. 새 이슈, 상태 변경, 결정 요청, 등록된 기록 문서가 프로젝트별로 나온다. 시점 형식은 `agb digest --help`. `activity`를 여러 번 불러 스크립트로 집계하지 않는다.
    - 검토, 결정 필요, 미확인을 사용자에게 묻는 방법은 "사용자 차례"를 따른다. 묻는 시점의 기본값은 그 절의 "언제"에 있다.
 4. 이번 작업 대상을 다른 세션이 진행 중인지 확인한다. 3의 진행 중 항목의 `holder`를 본다.
-   - `holder`는 그 이슈를 진행으로 옮긴 세션이다. `actor`, `session_id`, `last_active_at`(그 세션이 어느 이슈에든 남긴 마지막 기록), `stale`(마지막 기록에서 2시간이 지남)이 있다.
-   - 다른 세션이 점유했고 `stale`이 `false`이면 그 이슈를 맡지 않는다. 다른 이슈를 고르고, 그 이슈가 꼭 필요하면 사용자에게 알린다.
+   - `holder`는 그 이슈를 점유한 세션이다. `actor`, `session_id`, `last_active_at`, `stale`, `source`(`claim` 또는 활동 기록 대체값 `activity`)가 있다.
+   - 점유는 점유 세션의 마지막 호출에서 30분 이내이거나, 대기 상태(`waiting_*`)를 남긴 뒤 24시간 이내인 동안 유효하다. 유효한 점유가 있는 이슈에 다른 에이전트 세션이 점유하거나 상태를 바꾸려 하면 서버가 409(`claimed`)로 거절한다. 다른 세션이 점유했고 `stale`이 `false`이면 그 이슈를 맡지 않는다. 다른 이슈를 고르고, 그 이슈가 꼭 필요하면 사용자에게 알린다.
    - 이어받거나 이어 갈 진행 중 이슈는 `agb issue get <ISSUE>`로 연다. 표 출력 끝의 "마지막 작업 위치"에 그 이슈를 어느 호스트의 어느 브랜치·워크트리에서 어디까지 했는지가 나온다. 다른 호스트에서 남긴 기록이면 커밋하지 않은 변경은 그 호스트에만 있으므로, 원격에 푸시된 작업 브랜치만 이어받고 나머지는 사용자에게 알린다.
-   - 다른 세션이 점유했고 `stale`이 `true`이면 이어받을 수 있다. 백로그로 되돌린 뒤 다시 진행으로 옮기고, 두 변경 모두 사유를 남긴다.
-     ```
-     agb issue update <ISSUE> --status backlog --reason "<이전 세션 ID>의 점유가 멈춰 이어받음"
-     agb issue update <ISSUE> --status doing --reason "멈춘 점유 이어받음"
-     ```
+   - 다른 세션의 점유가 만료되어 `stale`이 `true`이면 `agb issue claim <ISSUE>`나 `agb issue update <ISSUE> --status doing`으로 바로 이어받을 수 있다. 이전 점유는 서버가 `expired`로 기록하며, 점유가 만료되어도 이슈 상태는 자동으로 바뀌지 않는다. 점유를 직접 해제할 때는 `agb issue unclaim <ISSUE> [--outcome done|abandoned] [--reason "<사유>"]`, 점유 이력은 `agb issue claims <ISSUE>`로 본다.
 
 ## 2. 등록할 때
 
