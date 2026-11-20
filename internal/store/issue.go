@@ -388,14 +388,21 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 			b, _ := json.Marshal(v)
 			changes[f] = model.Change{To: b}
 		}
-		if _, err := insertActivity(ctx, tx, id, model.ActivityCreated, tr, now, changes, nil, nil, nil); err != nil {
+		actID, err := insertActivity(ctx, tx, id, model.ActivityCreated, tr, now, changes, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		if err := s.emitEventTx(ctx, tx, now, &projectID, &in.Project, model.EventIssueCreated, key, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		}); err != nil {
 			return err
 		}
 		if issue.Status == model.StatusDoing {
-			if err := touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
+			if err := s.touchSessionTx(ctx, tx, tr, now.Time()); err != nil {
 				return err
 			}
-			if _, err := insertClaimTx(ctx, tx, id, tr, now); err != nil {
+			if _, err := s.insertClaimTx(ctx, tx, projectID, in.Project, id, key, tr, now); err != nil {
 				return err
 			}
 		}
@@ -491,7 +498,7 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		}
 		if len(changes) == 0 {
 			now := s.stamp()
-			return syncClaimOnStatusChangeTx(ctx, tx, cur.id, tr, kind, model.StatusDoing, nil, now)
+			return s.syncClaimOnStatusChangeTx(ctx, tx, cur.projectID, cur.Project, cur.id, key, tr, kind, model.StatusDoing, nil, now)
 		}
 		if statusChanged {
 			// Always listed with the status, even when the text repeats.
@@ -535,7 +542,7 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			if statusChanged {
 				claimReason = next.StatusReason
 			}
-			if err := syncClaimOnStatusChangeTx(ctx, tx, cur.id, tr, kind, next.Status, claimReason, now); err != nil {
+			if err := s.syncClaimOnStatusChangeTx(ctx, tx, cur.projectID, cur.Project, cur.id, key, tr, kind, next.Status, claimReason, now); err != nil {
 				return err
 			}
 		}
@@ -568,7 +575,14 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if err := writeLinks(ctx, tx, cur.id, next.Labels, depIDs, next.Refs, refTargets); err != nil {
 			return err
 		}
-		if _, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil, nil); err != nil {
+		actID, err := insertActivity(ctx, tx, cur.id, model.ActivityUpdated, tr, now, changes, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		if err := s.emitEventTx(ctx, tx, now, &cur.projectID, &cur.Project, model.EventIssueUpdated, key, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		}); err != nil {
 			return err
 		}
 		changed = true

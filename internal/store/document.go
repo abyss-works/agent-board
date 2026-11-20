@@ -172,7 +172,8 @@ func (s *Store) PutDocument(ctx context.Context, tr model.Trace, project, name s
 	meta, invalid := model.ValidateDocument(name, in.Content, in.Args)
 	sum := sha256.Sum256([]byte(in.Content))
 	hash := hex.EncodeToString(sum[:])
-	now := s.stamp().String()
+	at := s.stamp()
+	now := at.String()
 	var warnings []model.DocumentWarning
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		self := docSelf{projectKey: project, name: name}
@@ -226,7 +227,10 @@ func (s *Store) PutDocument(ctx context.Context, tr model.Trace, project, name s
 				}
 			}
 			created = true
-			return reresolveRelations(ctx, tx, tr, s.stamp(), self)
+			if err := s.emitEventTx(ctx, tx, at, &self.projectID, &project, model.EventDocumentCreated, name, tr.Actor, tr.SessionID, nil); err != nil {
+				return err
+			}
+			return s.reresolveRelations(ctx, tx, tr, at, self)
 		case stored != hash:
 			return &ImmutableError{SHA256: stored}
 		}
@@ -420,7 +424,10 @@ func (s *Store) PutDocumentsBatch(ctx context.Context, tr model.Trace, project s
 			if prep[i].exists {
 				continue
 			}
-			if err := reresolveRelations(ctx, tx, tr, at, prep[i].self); err != nil {
+			if err := s.emitEventTx(ctx, tx, at, &projectID, &project, model.EventDocumentCreated, prep[i].name, tr.Actor, tr.SessionID, nil); err != nil {
+				return err
+			}
+			if err := s.reresolveRelations(ctx, tx, tr, at, prep[i].self); err != nil {
 				return err
 			}
 		}
@@ -663,25 +670,32 @@ func loadDocumentRow(ctx context.Context, tx *sql.Tx, project, name string) (doc
 	return r, err
 }
 
-// appendDocumentActivity appends a record to the activity of a document.
-func appendDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) error {
+// appendDocumentActivity appends a record to the activity of a document and
+// returns its id.
+func appendDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) (int64, error) {
 	b, err := json.Marshal(changes)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = tx.ExecContext(ctx, `insert into document_activity(document_id, actor_id, session_id, client_host, at, changes) values (?, ?, ?, ?, ?, ?)`,
+	res, err := tx.ExecContext(ctx, `insert into document_activity(document_id, actor_id, session_id, client_host, at, changes) values (?, ?, ?, ?, ?, ?)`,
 		docID, tr.Actor, tr.SessionID, tr.ClientHost, at.String(), string(b))
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // insertDocumentActivity appends the change of a document to its activity and
-// stamps the document.
-func insertDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) error {
-	if err := appendDocumentActivity(ctx, tx, docID, tr, at, changes); err != nil {
-		return err
+// stamps the document, returning the inserted activity id.
+func insertDocumentActivity(ctx context.Context, tx *sql.Tx, docID int64, tr model.Trace, at model.Time, changes map[string]model.Change) (int64, error) {
+	id, err := appendDocumentActivity(ctx, tx, docID, tr, at, changes)
+	if err != nil {
+		return 0, err
 	}
-	_, err := tx.ExecContext(ctx, `update document set updated_at = ?, updated_by = ? where id = ?`, at.String(), tr.Actor, docID)
-	return err
+	if _, err := tx.ExecContext(ctx, `update document set updated_at = ?, updated_by = ? where id = ?`, at.String(), tr.Actor, docID); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // SetDocumentArchived marks a document archived or takes the mark off. A
@@ -699,7 +713,14 @@ func (s *Store) SetDocumentArchived(ctx context.Context, tr model.Trace, project
 		if _, err := tx.ExecContext(ctx, `update document set archived = ? where id = ?`, archived, row.id); err != nil {
 			return err
 		}
-		return insertDocumentActivity(ctx, tx, row.id, tr, s.stamp(), map[string]model.Change{"archived": {From: rawJSON(row.archived), To: rawJSON(archived)}})
+		at := s.stamp()
+		actID, err := insertDocumentActivity(ctx, tx, row.id, tr, at, map[string]model.Change{"archived": {From: rawJSON(row.archived), To: rawJSON(archived)}})
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &row.projectID, &project, model.EventDocumentUpdated, name, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -764,7 +785,13 @@ func (s *Store) ChangeDocumentRelation(ctx context.Context, tr model.Trace, proj
 		if len(changes) == 0 {
 			return nil
 		}
-		return insertDocumentActivity(ctx, tx, row.id, tr, at, changes)
+		actID, err := insertDocumentActivity(ctx, tx, row.id, tr, at, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &row.projectID, &project, model.EventDocumentUpdated, name, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+		})
 	})
 	if err != nil {
 		return nil, err

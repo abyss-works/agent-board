@@ -1,5 +1,5 @@
 import { userActorIds } from '@/lib/actors'
-import type { Actor, Agenda, ErrorDetail, Session, SessionListResponse } from './types'
+import type { Actor, Agenda, ErrorDetail, EventListResponse, Session, SessionListResponse } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
@@ -60,6 +60,13 @@ export function isApiError(err: unknown): err is ApiError {
 
 export function isUnauthorized(err: unknown): boolean {
   return isApiError(err) && err.status === 401
+}
+
+export function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === 'AbortError') ||
+    (typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError')
+  )
 }
 
 export function isPreconditionFailed(err: unknown): boolean {
@@ -174,6 +181,20 @@ export interface AgendaParams {
   limit?: number
 }
 
+export interface EventListParams {
+  after?: number
+  project?: string
+  kind?: string
+  limit?: number
+}
+
+export interface EventStreamParams {
+  after?: number
+  project?: string
+  kind?: string
+  lastEventId?: string
+}
+
 export interface RequestOptions {
   query?: QueryParams
   body?: unknown
@@ -221,6 +242,35 @@ export class ApiClient {
     return this.get<Agenda>('/agenda', params ? { ...params } : undefined, signal)
   }
 
+  listEvents(params?: EventListParams, signal?: AbortSignal): Promise<EventListResponse> {
+    return this.get<EventListResponse>('/events', params ? { ...params } : undefined, signal)
+  }
+
+  async openEventStream(params?: EventStreamParams, signal?: AbortSignal): Promise<Response> {
+    const query = buildQuery({
+      after: params?.after,
+      project: params?.project,
+      kind: params?.kind,
+    })
+    const url = `${this.config.baseUrl}/v1/events/stream${query}`
+    const headers: Record<string, string> = {
+      ...headersFor(this.config),
+      Accept: 'text/event-stream',
+    }
+    if (params?.lastEventId) headers['Last-Event-ID'] = params.lastEventId
+
+    let res: Response
+    try {
+      res = await this.fetchFn(url, { method: 'GET', headers, signal })
+    } catch (e) {
+      if (isAbortError(e)) throw e
+      throw new NetworkError(e)
+    }
+    if (!res.ok) return parseErrorResponse(res)
+    if (!res.body) throw new ServerUnavailableError(res.status)
+    return res
+  }
+
   async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
     const url = `${this.config.baseUrl}/v1${path}${buildQuery(opts.query ?? {})}`
     const headers = headersFor(this.config)
@@ -236,26 +286,28 @@ export class ApiClient {
         signal: opts.signal,
       })
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') throw e
+      if (isAbortError(e)) throw e
       throw new NetworkError(e)
     }
     return parseResponse<T>(res)
   }
 }
 
-async function parseResponse<T>(res: Response): Promise<T> {
-  if (res.status === 204) return undefined as T
-  const contentType = res.headers.get('content-type') ?? ''
-  const isJson = contentType.includes('application/json')
+async function parseErrorResponse(res: Response): Promise<never> {
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new ServerUnavailableError(res.status)
-  if (!isJson) {
-    if (res.ok) return undefined as T
-    throw new ServerUnavailableError(res.status)
-  }
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) throw new ServerUnavailableError(res.status)
   const data: unknown = await res.json()
-  if (res.ok) return data as T
   const err = (data as { error?: { code?: string; message?: string; details?: ErrorDetail[] } } | null)?.error
   throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, err?.details ?? [])
+}
+
+async function parseResponse<T>(res: Response): Promise<T> {
+  if (res.status === 204) return undefined as T
+  if (!res.ok) return parseErrorResponse(res)
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) return undefined as T
+  return (await res.json()) as T
 }
 
 /** 공용 토큰으로 서버에 선언된 사용자 행위자의 ID를 받는다. 행위자를 정하기 전이라 X-Actor를 보내지 않는다. */

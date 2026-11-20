@@ -1,8 +1,10 @@
-import { QueryObserver } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
-import { ApiError } from '@/api/client'
+import { environmentManager, QueryObserver } from '@tanstack/react-query'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError, NetworkError, ServerUnavailableError } from '@/api/client'
 import { AppStorage, memoryStore, type KeyValueStore } from '@/lib/storage'
+import { connection } from './connection'
 import { createQueryClient, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
+import { FALLBACK_POLL_MS } from './state'
 
 const rejected = (status: number, reason: string) => new ApiError(status, 'error', '거절', [{ reason }])
 const LIST_KEY = [...LOGIN_ACTORS_KEY, 'token']
@@ -99,5 +101,167 @@ describe('refreshForActor', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(queryFn).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+})
+
+describe('createQueryClient 폴백 폴링과 스트림 연결 상태', () => {
+  it('stream이 connected면 refetchInterval이 false를, 그 외에는 FALLBACK_POLL_MS를 돌려준다', () => {
+    connection.reset()
+    const { client } = setup()
+    const refetchInterval = client.getDefaultOptions().queries?.refetchInterval
+    expect(typeof refetchInterval).toBe('function')
+    const evalInterval = refetchInterval as () => number | false
+
+    expect(connection.getSnapshot().stream).toBe('idle')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markStreamConnecting()
+    expect(connection.getSnapshot().stream).toBe('connecting')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markStreamConnected()
+    expect(connection.getSnapshot().stream).toBe('connected')
+    expect(evalInterval()).toBe(false)
+
+    connection.markStreamReconnecting(new NetworkError())
+    expect(connection.getSnapshot().stream).toBe('reconnecting')
+    expect(connection.getSnapshot().error?.kind).toBe('network')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markStreamReconnecting(new ServerUnavailableError(503))
+    expect(connection.getSnapshot().error?.kind).toBe('server')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markOk()
+    expect(connection.getSnapshot().stream).toBe('reconnecting')
+    expect(connection.getSnapshot().error).toBeNull()
+
+    connection.reset()
+    expect(connection.getSnapshot()).toEqual({ lastOkAt: null, error: null, stream: 'idle' })
+  })
+})
+
+describe('createQueryClient 스트림 상태 전환에 따른 폴백 폴링 동기화', () => {
+  const defaultIsServer = environmentManager.isServer()
+
+  beforeEach(() => {
+    environmentManager.setIsServer(() => false)
+    connection.reset()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    connection.reset()
+    environmentManager.setIsServer(() => defaultIsServer)
+  })
+
+  async function observeQuery(
+    client: ReturnType<typeof setup>['client'],
+    queryKey: readonly unknown[],
+    options?: { refetchInterval?: false },
+  ) {
+    const queryFn = vi.fn(() => Promise.resolve('ok'))
+    const observer = new QueryObserver(client, { queryKey, queryFn, retry: false, ...options })
+    const unsubscribe = observer.subscribe(() => {})
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    } catch (err) {
+      unsubscribe()
+      throw err
+    }
+    return { queryFn, unsubscribe }
+  }
+
+  async function assertReconnectingPollingLifecycle(client: ReturnType<typeof setup>['client'], queryKey: readonly unknown[]) {
+    connection.markStreamConnected()
+    const { queryFn, unsubscribe } = await observeQuery(client, queryKey)
+
+    try {
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS * 4)
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      connection.markStreamReconnecting()
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS)
+      expect(queryFn).toHaveBeenCalledTimes(2)
+
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS)
+      expect(queryFn).toHaveBeenCalledTimes(3)
+
+      connection.markStreamConnected()
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS * 4)
+      expect(queryFn).toHaveBeenCalledTimes(3)
+    } finally {
+      unsubscribe()
+    }
+  }
+
+  it('연결 중 구독한 뒤 connected로 전환되면 폴백 폴링을 중단한다', async () => {
+    connection.markStreamConnecting()
+    const { client } = setup()
+    const { queryFn, unsubscribe } = await observeQuery(client, ['agb', 'issues'])
+
+    try {
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      connection.markStreamConnected()
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS * 4)
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('connected 중 구독한 뒤 reconnecting으로 전환되면 폴백 폴링을 시작하고 재연결 시 중단한다', async () => {
+    const { client } = setup()
+    await assertReconnectingPollingLifecycle(client, ['agb', 'projects'])
+  })
+
+  it('개별 refetchInterval: false 옵션은 reconnecting으로 전환돼도 유지된다', async () => {
+    connection.markStreamConnected()
+    const { client } = setup()
+    const { queryFn, unsubscribe } = await observeQuery(client, ['agb', 'static'], { refetchInterval: false })
+
+    try {
+      connection.markStreamReconnecting()
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS * 2)
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('mount와 unmount로 재구독한 뒤에도 connected에서 reconnecting 전환 시 폴링이 동작한다', async () => {
+    const { client } = setup()
+    client.mount()
+    client.unmount()
+    client.mount()
+
+    try {
+      await assertReconnectingPollingLifecycle(client, ['agb', 'remount'])
+    } finally {
+      client.unmount()
+    }
+  })
+
+  it('unmount 동안 스트림 상태가 바뀐 뒤 다시 mount하면 폴링 타이머를 즉시 동기화한다', async () => {
+    connection.markStreamConnected()
+    const { client } = setup()
+    client.mount()
+    const { queryFn, unsubscribe } = await observeQuery(client, ['agb', 'unmount-change'])
+
+    try {
+      client.unmount()
+      connection.markStreamReconnecting()
+      client.mount()
+
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS)
+      expect(queryFn).toHaveBeenCalledTimes(2)
+    } finally {
+      unsubscribe()
+      client.unmount()
+    }
   })
 })

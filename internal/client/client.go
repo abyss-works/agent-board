@@ -118,22 +118,69 @@ func (c *Client) send(ctx context.Context, method, path string, body any, extra 
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		apiErr := &Error{Status: resp.StatusCode, Body: data}
-		var env struct {
-			Error struct {
-				Code    string   `json:"code"`
-				Message string   `json:"message"`
-				Details []Detail `json:"details"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(data, &env) == nil && env.Error.Code != "" {
-			apiErr.Code, apiErr.Message, apiErr.Details = env.Error.Code, env.Error.Message, env.Error.Details
-		} else {
-			apiErr.Code, apiErr.Message = "http_error", strings.TrimSpace(string(data))
-		}
-		return nil, apiErr
+		return nil, decodeAPIError(resp.StatusCode, data)
 	}
 	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: data}, nil
+}
+
+func decodeAPIError(status int, data []byte) *Error {
+	apiErr := &Error{Status: status, Body: data}
+	var env struct {
+		Error struct {
+			Code    string   `json:"code"`
+			Message string   `json:"message"`
+			Details []Detail `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &env) == nil && env.Error.Code != "" {
+		apiErr.Code, apiErr.Message, apiErr.Details = env.Error.Code, env.Error.Message, env.Error.Details
+	} else {
+		apiErr.Code, apiErr.Message = "http_error", strings.TrimSpace(string(data))
+	}
+	return apiErr
+}
+
+// streamHTTPClient clones c.HTTP with Timeout disabled so long-lived SSE
+// streams reuse Transport, Jar and CheckRedirect without tripping the regular
+// request timeout.
+func (c *Client) streamHTTPClient() *http.Client {
+	if c.HTTP == nil {
+		return &http.Client{Timeout: 0}
+	}
+	cp := *c.HTTP
+	cp.Timeout = 0
+	return &cp
+}
+
+// Stream opens an authenticated GET SSE stream on path and returns the open
+// *http.Response on 2xx. Non-2xx responses are decoded into *Error and closed.
+func (c *Client) Stream(ctx context.Context, path string, extra http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("X-Actor", c.Actor)
+	req.Header.Set("X-Session-Id", c.SessionID)
+	req.Header.Set("X-Client-Host", c.ClientHost)
+	req.Header.Set("User-Agent", "agb/"+c.Version)
+	req.Header.Set("Accept", "text/event-stream")
+	for k, vs := range extra {
+		req.Header[k] = append([]string(nil), vs...)
+	}
+	resp, err := c.streamHTTPClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		data, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		return nil, decodeAPIError(resp.StatusCode, data)
+	}
+	return resp, nil
 }
 
 // Do sends method path with an optional JSON body and decodes the JSON

@@ -363,3 +363,87 @@ describe('세션 API 호출', () => {
     expect(calls[0].url).toBe('/api/staging/v1/agenda')
   })
 })
+
+describe('이벤트 API 호출', () => {
+  it('listEvents는 after, project, kind, limit 질의를 직렬화해 GET /v1/events를 부른다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], next_after: 10 })
+    const client = new ApiClient(config, fetchFn)
+    const res = await client.listEvents({ after: 0, project: 'AGB', kind: 'issue.,claim.', limit: 50 })
+    expect(res).toEqual({ items: [], next_after: 10 })
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe('/api/staging/v1/events?after=0&project=AGB&kind=issue.%2Cclaim.&limit=50')
+  })
+
+  it('listEvents는 매개변수가 없으면 질의 없이 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], next_after: 0 })
+    const client = new ApiClient(config, fetchFn)
+    await client.listEvents()
+    expect(calls[0].url).toBe('/api/staging/v1/events')
+  })
+
+  it('openEventStream은 인증·추적 헤더와 Accept·Last-Event-ID를 보내고 lastEventId는 질의에서 뺀다', async () => {
+    const calls: Captured[] = []
+    const client = new ApiClient(config, async (input, init) => {
+      calls.push({ url: String(input), init: init ?? {} })
+      return new Response(new ReadableStream(), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    })
+    const ctrl = new AbortController()
+    const res = await client.openEventStream(
+      { after: 5, project: 'AGB', kind: 'issue.', lastEventId: '42' },
+      ctrl.signal,
+    )
+    expect(res.ok).toBe(true)
+    expect(calls[0].url).toBe('/api/staging/v1/events/stream?after=5&project=AGB&kind=issue.')
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].init.signal).toBe(ctrl.signal)
+    expect(calls[0].init.headers).toEqual({
+      Authorization: `Bearer ${config.token}`,
+      'X-Actor': 'owner',
+      'X-Session-Id': config.sessionId,
+      'X-Client-Host': 'web',
+      Accept: 'text/event-stream',
+      'Last-Event-ID': '42',
+    })
+  })
+
+  it('openEventStream은 401 JSON 오류를 ApiError로, 503과 비-JSON 오류를 ServerUnavailableError로 던진다', async () => {
+    const unauth = fakeFetch(401, { error: { code: 'unauthorized', message: '유효하지 않은 토큰' } })
+    const err401 = await new ApiClient(config, unauth.fetchFn).openEventStream().catch((e: unknown) => e)
+    expect(err401).toBeInstanceOf(ApiError)
+    expect(isUnauthorized(err401)).toBe(true)
+
+    const down = fakeFetch(503, { error: { code: 'shutting_down', message: '종료 중' } })
+    const err503 = await new ApiClient(config, down.fetchFn).openEventStream().catch((e: unknown) => e)
+    expect(err503).toBeInstanceOf(ServerUnavailableError)
+    expect((err503 as ServerUnavailableError).status).toBe(503)
+
+    const html = fakeFetch(500, '<html>error</html>', { 'content-type': 'text/html' })
+    const err500 = await new ApiClient(config, html.fetchFn).openEventStream().catch((e: unknown) => e)
+    expect(err500).toBeInstanceOf(ServerUnavailableError)
+  })
+
+  it('openEventStream은 AbortError를 그대로 던지고, 다른 fetch 예외는 NetworkError를, 빈 body는 ServerUnavailableError를 던진다', async () => {
+    const abortErr = new DOMException('Aborted', 'AbortError')
+    const abortedClient = new ApiClient(config, async () => {
+      throw abortErr
+    })
+    await expect(abortedClient.openEventStream()).rejects.toBe(abortErr)
+
+    const plainAbortErr = Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    const plainAbortedClient = new ApiClient(config, async () => {
+      throw plainAbortErr
+    })
+    await expect(plainAbortedClient.openEventStream()).rejects.toBe(plainAbortErr)
+
+    const netClient = new ApiClient(config, async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await expect(netClient.openEventStream()).rejects.toBeInstanceOf(NetworkError)
+
+    const emptyBodyClient = new ApiClient(config, async () => new Response(null, { status: 200 }))
+    await expect(emptyBodyClient.openEventStream()).rejects.toBeInstanceOf(ServerUnavailableError)
+  })
+})

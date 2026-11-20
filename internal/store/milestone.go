@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -172,8 +173,15 @@ func (s *Store) CreateMilestone(ctx context.Context, tr model.Trace, project str
 		if id, err = res.LastInsertId(); err != nil {
 			return err
 		}
-		return insertResourceActivity(ctx, tx, projectID, model.ResourceMilestone, id, model.ResourceCreated, tr, at,
-			resourceChanges(nil, milestoneFields(in.Name, in.Description, in.TargetDate, model.MilestoneOpen, nil)))
+		changes := resourceChanges(nil, milestoneFields(in.Name, in.Description, in.TargetDate, model.MilestoneOpen, nil))
+		actID, err := insertResourceActivity(ctx, tx, projectID, model.ResourceMilestone, id, model.ResourceCreated, tr, at, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &projectID, &project, model.EventMilestoneCreated, strconv.FormatInt(id, 10), tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -244,9 +252,16 @@ func (s *Store) UpdateMilestone(ctx context.Context, tr model.Trace, id int64, p
 			next.Name, next.Description, next.TargetDate, string(next.Status), timePtr(closedAt), now.String(), tr.Actor, cur.ID); err != nil {
 			return err
 		}
-		return insertResourceActivity(ctx, tx, cur.projectID, model.ResourceMilestone, cur.ID, model.ResourceUpdated, tr, now,
-			resourceChanges(milestoneFields(cur.Name, cur.Description, cur.TargetDate, cur.Status, cur.ClosedAt),
-				milestoneFields(next.Name, next.Description, next.TargetDate, next.Status, closedAt)))
+		changes := resourceChanges(milestoneFields(cur.Name, cur.Description, cur.TargetDate, cur.Status, cur.ClosedAt),
+			milestoneFields(next.Name, next.Description, next.TargetDate, next.Status, closedAt))
+		actID, err := insertResourceActivity(ctx, tx, cur.projectID, model.ResourceMilestone, cur.ID, model.ResourceUpdated, tr, now, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, now, &cur.projectID, &cur.Project, model.EventMilestoneUpdated, strconv.FormatInt(cur.ID, 10), tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		})
 	})
 	if err != nil {
 		return nil, err

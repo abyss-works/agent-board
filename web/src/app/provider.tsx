@@ -1,9 +1,10 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ApiClient } from '@/api/client'
+import { ApiClient, isActorRejected, isUnauthorized } from '@/api/client'
+import { queryKeysForEvent, subscribeEventStream } from '@/api/events'
 import { AppStorage, browserStore } from '@/lib/storage'
 import { connection } from './connection'
-import { createQueryClient, refreshForActor } from './query-client'
+import { createQueryClient, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
 import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, type AppState } from './state'
 
 const storage = new AppStorage(browserStore())
@@ -66,6 +67,50 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         : null,
     [token, actor, sessionId],
   )
+
+  useEffect(() => {
+    if (!client) return
+    const controller = new AbortController()
+    connection.markStreamConnecting()
+    void subscribeEventStream(
+      client,
+      {
+        onOpen: ({ reconnected, hadCursor }) => {
+          connection.markStreamConnected()
+          if (reconnected && !hadCursor) {
+            void queryClient.invalidateQueries()
+          }
+        },
+        onHeartbeat: () => {
+          connection.markOk()
+        },
+        onEvent: (ev) => {
+          connection.markOk()
+          const seen = new Set<string>()
+          for (const queryKey of queryKeysForEvent(ev)) {
+            const serialized = JSON.stringify(queryKey)
+            if (seen.has(serialized)) continue
+            seen.add(serialized)
+            void queryClient.invalidateQueries({ queryKey })
+          }
+        },
+        onAuthError: (err) => {
+          if (isUnauthorized(err)) {
+            handleUnauthorized()
+          } else if (isActorRejected(err)) {
+            queryClient.removeQueries({ queryKey: LOGIN_ACTORS_KEY, type: 'inactive' })
+            storage.clearActor()
+            handleActorCleared()
+          }
+        },
+        onDisconnect: (err) => {
+          connection.markStreamReconnecting(err)
+        },
+      },
+      { signal: controller.signal },
+    ).catch(() => {})
+    return () => controller.abort()
+  }, [client, queryClient, handleUnauthorized, handleActorCleared])
 
   const state = useMemo<AppState>(
     () => ({ token, actor, project, sessionId, authNotice, login, logout, selectActor, selectProject }),

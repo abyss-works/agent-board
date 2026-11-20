@@ -124,30 +124,30 @@ func TestUpdateSession(t *testing.T) {
 	mustTouch(t, s, trSess, at)
 	mustTouch(t, s, trOwner, at)
 
-	if _, err := s.UpdateSession(ctx, "claude", "none", SessionPatch{}); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "none", SessionPatch{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing session: %v", err)
 	}
 	// An empty patch changes nothing.
 	fixClock(s, at.Add(time.Minute))
-	got, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{})
+	got, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{})
 	if err != nil || got.UpdatedAt != model.NewTime(at) {
 		t.Errorf("empty patch: %+v %v", got, err)
 	}
 
-	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "claude", SessionID: "nope"}}})
+	_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "claude", SessionID: "nope"}}})
 	validationField(t, err, "parent", "unknown_session")
-	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "claude", SessionID: "claude-abc"}}})
+	_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "claude", SessionID: "claude-abc"}}})
 	validationField(t, err, "parent", "cycle")
 	boss := "boss"
-	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &boss}})
+	_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &boss}})
 	validationField(t, err, "role", "")
 	missing := "APP-999"
-	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Issue: Optional[string]{Set: true, Value: &missing}})
+	_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Issue: Optional[string]{Set: true, Value: &missing}})
 	validationField(t, err, "issue", "unknown_issue")
 
 	role, key := "runner", i.Key
 	remote, dirty := "https://user:tok@github.com/a/b.git", 3
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		Parent:   Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "owner", SessionID: "s-owner"}},
 		Role:     Optional[string]{Set: true, Value: &role},
 		Issue:    Optional[string]{Set: true, Value: &key},
@@ -169,11 +169,11 @@ func TestUpdateSession(t *testing.T) {
 
 	// The same values again change nothing; null clears.
 	fixClock(s, at.Add(2*time.Minute))
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &role}})
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &role}})
 	if err != nil || got.UpdatedAt != model.NewTime(at.Add(time.Minute)) {
 		t.Errorf("same role: %s %v", got.UpdatedAt, err)
 	}
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Issue: Optional[string]{Set: true}, Location: Optional[model.SessionLocation]{Set: true}, Parent: Optional[model.SessionRef]{Set: true}})
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Issue: Optional[string]{Set: true}, Location: Optional[model.SessionLocation]{Set: true}, Parent: Optional[model.SessionRef]{Set: true}})
 	if err != nil || got.Issue != nil || got.Location != nil || got.Parent != nil || got.UpdatedAt != model.NewTime(at.Add(2*time.Minute)) {
 		t.Errorf("cleared = %+v %v", got, err)
 	}
@@ -189,7 +189,7 @@ func TestUpdateSessionRejectsADescendantAsParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, child := range []string{"claude-abc.b", "claude-abc.c"} {
-		_, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "claude", SessionID: child}}})
+		_, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "claude", SessionID: child}}})
 		validationField(t, err, "parent", "cycle")
 	}
 }
@@ -246,7 +246,7 @@ func TestCreateChildSessionKeepsAParentRole(t *testing.T) {
 	s, ctx := seeded(t)
 	mustTouch(t, s, trSess, time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC))
 	runner := "runner"
-	if _, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &runner}}); err != nil {
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &runner}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateChildSession(ctx, trSess, ChildSessionInput{SessionID: "claude-abc.k"}); err != nil {
@@ -351,7 +351,7 @@ func TestFingerprintCoversSessionsButNotLastSeen(t *testing.T) {
 		t.Errorf("refreshing last_seen_at changed the fingerprint: %q -> %q", created, touched)
 	}
 	role := "runner"
-	if _, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &role}}); err != nil {
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{Role: Optional[string]{Set: true, Value: &role}}); err != nil {
 		t.Fatal(err)
 	}
 	if patched, _ := s.FingerprintNow(ctx); patched == created {
@@ -406,7 +406,7 @@ func TestSessionLookupPropagatesContextAndDBErrors(t *testing.T) {
 		},
 	} {
 		var ve *model.ValidationError
-		if _, err := s.UpdateSession(canceled, "claude", "claude-abc", patch); !errors.Is(err, context.Canceled) || errors.As(err, &ve) {
+		if _, err := s.UpdateSession(canceled, trSess, "claude", "claude-abc", patch); !errors.Is(err, context.Canceled) || errors.As(err, &ve) {
 			t.Errorf("UpdateSession(%s, canceled) = %v, want context.Canceled", name, err)
 		}
 	}
@@ -429,13 +429,13 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 
 	// Setting state_reason when state is NULL fails with requires_state.
 	r1 := "배포 승인 대기"
-	_, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	_, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		StateReason: Optional[string]{Set: true, Value: &r1},
 	})
 	validationField(t, err, "state_reason", "requires_state")
 
 	// Setting state: null with non-null state_reason fails with requires_state.
-	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State:       Optional[string]{Set: true, Value: nil},
 		StateReason: Optional[string]{Set: true, Value: &r1},
 	})
@@ -443,7 +443,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 
 	// Invalid state fails with field state.
 	paused := "paused"
-	_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State: Optional[string]{Set: true, Value: &paused},
 	})
 	validationField(t, err, "state", "")
@@ -452,7 +452,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	stApp := model.SessionStateWaitingApproval
 	for _, bad := range []string{"", "   ", strings.Repeat("가", 201), "a\nb", "a\x00b"} {
 		b := bad
-		_, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+		_, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 			State:       Optional[string]{Set: true, Value: &stApp},
 			StateReason: Optional[string]{Set: true, Value: &b},
 		})
@@ -467,7 +467,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	padded := "  배포 승인 대기  "
-	got, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	got, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State:       Optional[string]{Set: true, Value: &stApp},
 		StateReason: Optional[string]{Set: true, Value: &padded},
 	})
@@ -489,7 +489,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	t2 := t0.Add(2 * time.Minute)
 	fixClock(s, t2)
 	r2 := "수정된 사유"
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		StateReason: Optional[string]{Set: true, Value: &r2},
 	})
 	if err != nil {
@@ -502,7 +502,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	// Clearing state_reason alone clears only state_reason and preserves state and state_at.
 	t3 := t0.Add(3 * time.Minute)
 	fixClock(s, t3)
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		StateReason: Optional[string]{Set: true, Value: nil},
 	})
 	if err != nil {
@@ -516,7 +516,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	t4 := t0.Add(4 * time.Minute)
 	fixClock(s, t4)
 	stIn := model.SessionStateWaitingInput
-	if _, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State:       Optional[string]{Set: true, Value: &stIn},
 		StateReason: Optional[string]{Set: true, Value: &r1},
 	}); err != nil {
@@ -525,7 +525,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	t5 := t0.Add(5 * time.Minute)
 	fixClock(s, t5)
 	stExt := model.SessionStateWaitingExternal
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State: Optional[string]{Set: true, Value: &stExt},
 	})
 	if err != nil {
@@ -582,7 +582,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	}
 
 	// Explicit state: null clears waiting state.
-	if _, err := s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State:       Optional[string]{Set: true, Value: &stIn},
 		StateReason: Optional[string]{Set: true, Value: &r1},
 	}); err != nil {
@@ -590,7 +590,7 @@ func TestUpdateSessionWaitingStateAndClear(t *testing.T) {
 	}
 	t8 := t0.Add(8 * time.Minute)
 	fixClock(s, t8)
-	got, err = s.UpdateSession(ctx, "claude", "claude-abc", SessionPatch{
+	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		State: Optional[string]{Set: true, Value: nil},
 	})
 	if err != nil || got.State != nil || got.StateReason != nil || got.StateAt != nil || got.UpdatedAt != model.NewTime(t8) {

@@ -26,7 +26,7 @@ import (
 var migrationFS embed.FS
 
 // SchemaVersion is the user_version the store expects after migrating.
-const SchemaVersion = 22
+const SchemaVersion = 23
 
 // goSteps are the migrations that need more than SQL. The step of version n
 // runs after the SQL file of that version, in the same transaction.
@@ -53,10 +53,13 @@ func (e *RefError) Error() string { return fmt.Sprintf("%s: issue %s not found",
 
 // Store is the SQLite-backed persistence layer. One Store per database file.
 type Store struct {
-	db      *sql.DB
-	path    string
-	writeMu sync.Mutex
-	now     func() time.Time
+	db        *sql.DB
+	path      string
+	writeMu   sync.Mutex
+	now       func() time.Time
+	pending   []model.Event
+	hookMu    sync.RWMutex
+	eventHook func([]model.Event)
 }
 
 // DSN builds the connection string used for path: WAL, busy timeout,
@@ -98,6 +101,14 @@ func (s *Store) DB() *sql.DB { return s.db }
 
 // SetClock replaces the time source. Tests use it for deterministic stamps.
 func (s *Store) SetClock(now func() time.Time) { s.now = now }
+
+// SetEventHook registers a callback invoked with committed events in id order
+// after each write transaction commits and releases the write lock.
+func (s *Store) SetEventHook(fn func([]model.Event)) {
+	s.hookMu.Lock()
+	s.eventHook = fn
+	s.hookMu.Unlock()
+}
 
 func (s *Store) stamp() model.Time { return model.NewTime(s.now()) }
 
@@ -175,15 +186,39 @@ func (s *Store) EnsureActors(ctx context.Context, actors []model.Actor) error {
 
 // write runs fn in a serialized write transaction.
 func (s *Store) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
+	var committed []model.Event
+	if err := func() error {
+		s.writeMu.Lock()
+		defer func() {
+			s.pending = nil
+			s.writeMu.Unlock()
+		}()
+		s.pending = nil
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if err := fn(tx); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		if len(s.pending) > 0 {
+			committed = append([]model.Event(nil), s.pending...)
+		}
+		return nil
+	}(); err != nil {
 		return err
 	}
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
+	if len(committed) > 0 {
+		s.hookMu.RLock()
+		hook := s.eventHook
+		s.hookMu.RUnlock()
+		if hook != nil {
+			hook(committed)
+		}
 	}
-	return tx.Commit()
+	return nil
 }

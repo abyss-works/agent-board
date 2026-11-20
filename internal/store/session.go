@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -141,13 +142,26 @@ func scanSession(sc rowScanner, now model.Time) (*model.Session, error) {
 }
 
 // touchSessionTx records a call of the session of tr inside an existing write
-// transaction.
-func touchSessionTx(ctx context.Context, tx *sql.Tx, tr model.Trace, at time.Time) error {
-	now := model.NewTime(at).String()
-	_, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host, updated_at)
-		values (?, ?, ?, ?, ?, ?)
-		on conflict(actor_id, session_id) do update set last_seen_at = excluded.last_seen_at, last_host = excluded.last_host
-		where excluded.last_seen_at >= session.last_seen_at`, tr.Actor, tr.SessionID, now, now, tr.ClientHost, now)
+// transaction. Only inserting a brand new session row emits session.created.
+func (s *Store) touchSessionTx(ctx context.Context, tx *sql.Tx, tr model.Trace, at time.Time) error {
+	stamp := model.NewTime(at)
+	now := stamp.String()
+	res, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host, updated_at)
+		values (?, ?, ?, ?, ?, ?) on conflict(actor_id, session_id) do nothing`,
+		tr.Actor, tr.SessionID, now, now, tr.ClientHost, now)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return s.emitEventTx(ctx, tx, stamp, nil, nil, model.EventSessionCreated, tr.Actor+"/"+tr.SessionID, tr.Actor, tr.SessionID, nil)
+	}
+	_, err = tx.ExecContext(ctx, `update session set last_seen_at = ?, last_host = ?
+		where actor_id = ? and session_id = ? and ? >= last_seen_at`,
+		now, tr.ClientHost, tr.Actor, tr.SessionID, now)
 	return err
 }
 
@@ -156,7 +170,7 @@ func touchSessionTx(ctx context.Context, tx *sql.Tx, tr model.Trace, at time.Tim
 // last_host, unless the stored call is later. updated_at does not move.
 func (s *Store) TouchSession(ctx context.Context, tr model.Trace, at time.Time) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		return touchSessionTx(ctx, tx, tr, at)
+		return s.touchSessionTx(ctx, tx, tr, at)
 	})
 }
 
@@ -358,7 +372,7 @@ func stripUserinfo(raw string) string {
 // UpdateSession applies a merge patch to a session. Only the fields whose
 // value changes are written; updated_at moves when one does. A location is
 // replaced as a whole and stamped with the time it is reported.
-func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPatch) (*model.Session, error) {
+func (s *Store) UpdateSession(ctx context.Context, tr model.Trace, actor, id string, p SessionPatch) (*model.Session, error) {
 	now := s.stamp()
 	self := model.SessionRef{Actor: actor, SessionID: id}
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -369,15 +383,22 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 		verr := &model.ValidationError{}
 		var sets []string
 		var args []any
+		fieldSet := map[string]bool{}
 		set := func(col string, v any) {
 			sets = append(sets, col+" = ?")
 			args = append(args, v)
+		}
+		mark := func(fields ...string) {
+			for _, f := range fields {
+				fieldSet[f] = true
+			}
 		}
 		if p.Parent.Set {
 			if p.Parent.Value == nil {
 				if cur.parentActor.Valid {
 					set("parent_actor_id", nil)
 					set("parent_session_id", nil)
+					mark("parent")
 				}
 			} else {
 				ref := *p.Parent.Value
@@ -388,6 +409,7 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 				if ok && (cur.parentActor.String != ref.Actor || cur.parentSession.String != ref.SessionID) {
 					set("parent_actor_id", ref.Actor)
 					set("parent_session_id", ref.SessionID)
+					mark("parent")
 				}
 			}
 		}
@@ -395,15 +417,18 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 			if p.Role.Value == nil {
 				if cur.role.Valid {
 					set("role", nil)
+					mark("role")
 				}
 			} else if sessionRole(*p.Role.Value, verr); !cur.role.Valid || cur.role.String != *p.Role.Value {
 				set("role", *p.Role.Value)
+				mark("role")
 			}
 		}
 		if p.Issue.Set {
 			if p.Issue.Value == nil {
 				if cur.issueID.Valid {
 					set("issue_id", nil)
+					mark("issue")
 				}
 			} else {
 				issueID, ok, err := sessionIssueID(ctx, tx, *p.Issue.Value, verr)
@@ -412,6 +437,7 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 				}
 				if ok && (!cur.issueID.Valid || cur.issueID.Int64 != issueID) {
 					set("issue_id", issueID)
+					mark("issue")
 				}
 			}
 		}
@@ -419,6 +445,7 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 			if p.Location.Value == nil {
 				if cur.location.Valid {
 					set("location", nil)
+					mark("location")
 				}
 			} else {
 				loc := *p.Location.Value
@@ -432,6 +459,7 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 					return err
 				}
 				set("location", string(raw))
+				mark("location")
 			}
 		}
 		if p.State.Set {
@@ -445,6 +473,7 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 					set("state", nil)
 					set("state_reason", nil)
 					set("state_at", nil)
+					mark("state", "state_reason", "state_at")
 				}
 			} else {
 				st := *p.State.Value
@@ -470,12 +499,14 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 					set("state", st)
 					set("state_reason", reason)
 					set("state_at", now.String())
+					mark("state", "state_reason", "state_at")
 				}
 			}
 		} else if p.StateReason.Set {
 			if p.StateReason.Value == nil {
 				if cur.stateReason.Valid {
 					set("state_reason", nil)
+					mark("state_reason")
 				}
 			} else if !cur.state.Valid {
 				verr.Fields = append(verr.Fields, model.FieldError{
@@ -488,6 +519,7 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 					verr.Fields = append(verr.Fields, model.FieldError{Field: "state_reason", Reason: "invalid", Message: msg})
 				} else if !cur.stateReason.Valid || cur.stateReason.String != cleaned {
 					set("state_reason", cleaned)
+					mark("state_reason")
 				}
 			}
 		}
@@ -498,9 +530,18 @@ func (s *Store) UpdateSession(ctx context.Context, actor, id string, p SessionPa
 			return nil
 		}
 		set("updated_at", now.String())
-		_, err = tx.ExecContext(ctx, `update session set `+strings.Join(sets, ", ")+` where actor_id = ? and session_id = ?`,
-			append(args, actor, id)...)
-		return err
+		if _, err := tx.ExecContext(ctx, `update session set `+strings.Join(sets, ", ")+` where actor_id = ? and session_id = ?`,
+			append(args, actor, id)...); err != nil {
+			return err
+		}
+		fields := make([]string, 0, len(fieldSet))
+		for f := range fieldSet {
+			fields = append(fields, f)
+		}
+		sort.Strings(fields)
+		return s.emitEventTx(ctx, tx, now, nil, nil, model.EventSessionUpdated, actor+"/"+id, tr.Actor, tr.SessionID, map[string]any{
+			"fields": fields,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -535,6 +576,11 @@ func (s *Store) ClearSessionWaiting(ctx context.Context, actor, id string) (mode
 			return err
 		}
 		cleared = n > 0
+		if cleared {
+			return s.emitEventTx(ctx, tx, now, nil, nil, model.EventSessionUpdated, actor+"/"+id, actor, id, map[string]any{
+				"fields": []string{"state", "state_at", "state_reason"},
+			})
+		}
 		return nil
 	})
 	if err != nil {
@@ -547,7 +593,8 @@ func (s *Store) ClearSessionWaiting(ctx context.Context, actor, id string) (mode
 // same actor. The parent is written too when no request has left it yet, and
 // a parent without a role becomes main.
 func (s *Store) CreateChildSession(ctx context.Context, tr model.Trace, in ChildSessionInput) (*model.Session, error) {
-	now := s.stamp().String()
+	at := s.stamp()
+	now := at.String()
 	role := string(model.RoleSubagent)
 	if in.Role != nil {
 		role = *in.Role
@@ -577,18 +624,41 @@ func (s *Store) CreateChildSession(ctx context.Context, tr model.Trace, in Child
 		} else if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host, updated_at)
-			values (?, ?, ?, ?, ?, ?) on conflict(actor_id, session_id) do nothing`, tr.Actor, tr.SessionID, now, now, tr.ClientHost, now); err != nil {
+		parentRes, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host, updated_at)
+			values (?, ?, ?, ?, ?, ?) on conflict(actor_id, session_id) do nothing`, tr.Actor, tr.SessionID, now, now, tr.ClientHost, now)
+		if err != nil {
 			return err
+		}
+		if pn, err := parentRes.RowsAffected(); err != nil {
+			return err
+		} else if pn > 0 {
+			if err := s.emitEventTx(ctx, tx, at, nil, nil, model.EventSessionCreated, tr.Actor+"/"+tr.SessionID, tr.Actor, tr.SessionID, nil); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `insert into session(actor_id, session_id, first_seen_at, last_seen_at, last_host,
 			parent_actor_id, parent_session_id, role, issue_id, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tr.Actor, in.SessionID, now, now, tr.ClientHost, tr.Actor, tr.SessionID, role, issueID, now); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `update session set role = 'main', updated_at = ? where actor_id = ? and session_id = ? and role is null`,
+		if err := s.emitEventTx(ctx, tx, at, nil, nil, model.EventSessionCreated, tr.Actor+"/"+in.SessionID, tr.Actor, tr.SessionID, nil); err != nil {
+			return err
+		}
+		roleRes, err := tx.ExecContext(ctx, `update session set role = 'main', updated_at = ? where actor_id = ? and session_id = ? and role is null`,
 			now, tr.Actor, tr.SessionID)
-		return err
+		if err != nil {
+			return err
+		}
+		if rn, err := roleRes.RowsAffected(); err != nil {
+			return err
+		} else if rn > 0 {
+			if err := s.emitEventTx(ctx, tx, at, nil, nil, model.EventSessionUpdated, tr.Actor+"/"+tr.SessionID, tr.Actor, tr.SessionID, map[string]any{
+				"fields": []string{"role"},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

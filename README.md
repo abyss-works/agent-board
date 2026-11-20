@@ -17,6 +17,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
 - 이슈, 댓글, 기록 문서를 키워드(SQLite FTS5)로 찾고, 임베딩 API를 설정하면 의미 검색을 섞어 찾습니다. 이슈와 문서의 연결을 따라가 선례를 모아 봅니다(`agb recall`, `agb graph`).
 - 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
+- 모든 도메인 쓰기를 단조 증가하는 통합 이벤트 스트림으로 저장하고, 조회(`GET /v1/events`)와 SSE 구독(`GET /v1/events/stream`, `agb watch`)을 제공합니다.
 
 ## 설계 원칙
 
@@ -51,6 +52,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 메시지 (message) | `to`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함 |
 | 토큰 (token) | `actor`, `client_host`, `last_used_at`, `revoked_at` | 활성, 폐기 | 에이전트 행위자 하나 |
 | 세션 (session) | `actor`, `session_id`, `named`, `first_seen_at`, `last_seen_at`, `last_host`, `last_project`, `parent`, `role`, `issue`, `location`, `state`, `state_reason`, `state_at`, `stale` | 활성, 멈춤(계산값), 대기(`waiting_approval`/`waiting_input`/`waiting_external`) | 행위자 하나에 속함. 부모 세션과 이슈를 가리킴 |
+| 이벤트 (event) | `id`, `at`, `project`, `kind`, `subject`, `actor`, `session_id`, `data` | 추가만 함 | 프로젝트에 속하거나(`project`), 프로젝트 무관(`null`, 세션 이벤트) |
 | 임베딩, 유사 문서 | 청크별 벡터, 문서 쌍과 점수 | 파생 데이터 | 의미 검색과 `similar` 그래프 간선 |
 
 ### 이슈
@@ -345,6 +347,7 @@ agb graph APP-12 --depth 2
 agb msg put -p APP --to codex -t "배포 끝" --ttl 3d
 agb msg list -p APP --unread          # 내가 확인하지 않은 메시지
 agb msg ack 12 13                     # 처리한 뒤 확인 표시
+agb watch -p APP --kind issue.,message. --timeout 5m   # 조건에 맞는 첫 이벤트까지 대기
 agb digest --since 3d
 agb stats
 ```
@@ -367,12 +370,13 @@ agb stats
 | 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST, DELETE /issues/{key}/claim`, `GET /issues/{key}/claims`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
 | 기록 문서 | `GET /projects/{key}/documents`, `POST /projects/{key}/documents:batch`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
 | 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
+| 이벤트 | `GET /events`, `GET /events/stream`(SSE, `Last-Event-ID` 지원) |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |
 | 로그인과 토큰 | `POST /device-authorizations`, `GET, PATCH /device-authorizations/{user_code}`(사용자 전용), `GET /tokens`(사용자 전용), `POST /tokens`, `DELETE /tokens/current`, `DELETE /tokens/{id}`(사용자 전용) |
 
 - 오류는 `{"error": {"code", "message", "details": [{"field", "reason", "message"}]}}` 형태입니다. 지원하지 않는 메서드는 `Allow` 헤더와 함께 405입니다.
 - 문서 이름에는 `/`가 들어갈 수 있으므로, 문서 경로는 이름 뒤의 접미어(`/archive`, `/relations`, `/activity`)로 하위 리소스를 구분합니다.
-- 서버는 라우트별 요청 수, 5xx 수, 처리 시간 분포를 메모리에 모아 `/v1/stats`로 보여 줍니다. 다시 시작하면 0부터 셉니다.
+- 서버는 라우트별 요청 수, 5xx 수, 처리 시간 분포를 메모리에 모아 `/v1/stats`로 보여 줍니다. 장시간 연결되는 SSE 스트림(`/v1/events/stream`)은 일반 `routes` 분포와 분리해 `streams`로 집계합니다. 다시 시작하면 0부터 셉니다.
 
 ## 웹 클라이언트
 
