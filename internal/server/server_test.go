@@ -105,3 +105,55 @@ func TestStartFailureClosesStore(t *testing.T) {
 		t.Fatalf("database file is still held after a failed Start: %v", err)
 	}
 }
+
+func TestShutdownClosesOpenEventStreams(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Addr:    "127.0.0.1:0",
+		DataDir: filepath.Join(dir, "data"),
+		Token:   testToken,
+		Actors:  []model.Actor{{ID: "owner", Kind: model.ActorUser}},
+	}
+	srv, err := New(cfg, Options{Version: "t", Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := srv.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest("GET", "http://"+addr+"/v1/events/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Actor", "owner")
+	req.Header.Set("X-Session-Id", "s-stream")
+	req.Header.Set("X-Client-Host", "h1")
+	resp, err := (&http.Client{Timeout: 0}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("stream status = %d, want 200", resp.StatusCode)
+	}
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(resp.Body)
+		readDone <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown with open stream failed: %v", err)
+	}
+	select {
+	case err := <-readDone:
+		if err != nil {
+			t.Errorf("stream body read after shutdown = %v, want clean EOF", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("open event stream did not close on Shutdown")
+	}
+}

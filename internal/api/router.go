@@ -44,6 +44,9 @@ type Options struct {
 	// SimilarModel is the embedding model whose similar-document pairs the
 	// graph shows. Empty when search by meaning is off: no similar edges.
 	SimilarModel string
+	// SSEPingInterval is how often an open event stream sends a keepalive
+	// comment. Zero uses the default (20 seconds).
+	SSEPingInterval time.Duration
 }
 
 type handler struct {
@@ -52,6 +55,7 @@ type handler struct {
 	store   *store.Store
 	devices *deviceStore
 	stats   *statsCollector
+	broker  *eventBroker
 	started time.Time
 
 	// seen holds, per actor and session ID, when this process last wrote the
@@ -60,9 +64,30 @@ type handler struct {
 	seen   map[string]time.Time
 }
 
-// New builds the complete HTTP handler.
+type closeableHandler struct {
+	http.Handler
+	closeFn func()
+}
+
+func (c *closeableHandler) Close() error {
+	c.closeFn()
+	return nil
+}
+
+// New builds the complete HTTP handler. The returned handler also implements
+// io.Closer to close open SSE streams before server shutdown.
 func New(o Options) http.Handler {
-	h := &handler{opts: o, actors: map[string]model.Actor{}, store: o.Store, stats: newStatsCollector(), seen: map[string]time.Time{}}
+	h := &handler{
+		opts:   o,
+		actors: map[string]model.Actor{},
+		store:  o.Store,
+		stats:  newStatsCollector(),
+		broker: newEventBroker(),
+		seen:   map[string]time.Time{},
+	}
+	if h.store != nil {
+		h.store.SetEventHook(h.broker.Notify)
+	}
 	for _, a := range o.Actors {
 		h.actors[a.ID] = a
 	}
@@ -89,6 +114,7 @@ func New(o Options) http.Handler {
 	h.registerMilestones(protected)
 	h.registerMessages(protected)
 	h.registerSessions(protected)
+	h.registerEvents(protected)
 	h.registerDocuments(protected)
 	h.registerSearch(protected)
 	h.registerGraph(protected)
@@ -121,7 +147,10 @@ func New(o Options) http.Handler {
 		root.Handle("/v1/", guarded)
 		root.Handle("/", webHandler(o.Web))
 	}
-	return logging(h.opts.Logger, h.stats, root)
+	return &closeableHandler{
+		Handler: logging(h.opts.Logger, h.stats, root),
+		closeFn: h.broker.Close,
+	}
 }
 
 // startsLogin reports whether the request is one of the two that start a
@@ -179,6 +208,7 @@ func (h *handler) serverStats(w http.ResponseWriter, r *http.Request) {
 		"started_at": model.NewTime(h.started),
 		"db_bytes":   size,
 		"routes":     h.stats.snapshot(),
+		"streams":    h.stats.streamSnapshot(),
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -168,11 +169,15 @@ func (s *Server) startBackground(ctx context.Context) {
 	}
 }
 
-// Shutdown stops accepting connections, waits for in-flight requests until
-// ctx expires, stops background jobs and closes the store.
+// Shutdown stops accepting connections, closes open SSE streams, waits for
+// in-flight requests until ctx expires, stops background jobs and closes the
+// store.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	if closer, ok := s.http.Handler.(io.Closer); ok {
+		_ = closer.Close()
 	}
 	err := s.http.Shutdown(ctx)
 	<-s.done

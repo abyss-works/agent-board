@@ -106,6 +106,16 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+func (w *statusWriter) Flush() {
+	if fl, ok := w.ResponseWriter.(http.Flusher); ok {
+		fl.Flush()
+	}
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func truncate(s string) string {
 	if len(s) > logValueLimit {
 		return s[:logValueLimit]
@@ -129,7 +139,11 @@ func logging(logger *slog.Logger, stats *statsCollector, next http.Handler) http
 		if pattern == "" {
 			pattern = unroutedPattern
 		}
-		stats.record(r.Method, pattern, sw.status, elapsed)
+		if pattern == streamEventsPattern {
+			stats.recordStream(r.Method, pattern, sw.status, elapsed)
+		} else {
+			stats.record(r.Method, pattern, sw.status, elapsed)
+		}
 		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
