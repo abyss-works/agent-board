@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useApi } from '@/app/state'
 import { milestoneListParams } from '@/lib/milestones'
-import { issueListQuery, type IssueListFilters } from './client'
+import { issueListQuery, type IssueListFilters, type SessionListParams } from './client'
 import type {
   Activity,
   Actor,
@@ -26,6 +26,8 @@ import type {
   ProjectCreate,
   ProjectPatch,
   QueueItem,
+  Session,
+  SessionListResponse,
   Template,
   Topic,
   TopicCreate,
@@ -92,15 +94,65 @@ export interface ActivityFilters {
   project: string | null
   actor: string | null
   kind: string | null
+  /** 세션 ID 필터. 서버 GET /v1/activity의 session 질의로 보낸다. */
+  session?: string | null
+  limit?: number
 }
 
-export function useActivity(f: ActivityFilters) {
+export function activityQueryKey(f: ActivityFilters) {
+  return [QUERY_ROOT, 'activity', f.project, f.actor, f.kind, f.session ?? null, f.limit ?? 100] as const
+}
+
+export function useActivity(f: ActivityFilters, options?: { enabled?: boolean }) {
   const api = useApi()
+  const session = f.session ?? null
+  const limit = f.limit ?? 100
   return useQuery({
-    queryKey: [QUERY_ROOT, 'activity', f.project, f.actor, f.kind],
+    queryKey: activityQueryKey(f),
     queryFn: ({ signal }) =>
-      api.get<Page<Activity>>('/activity', { project: f.project, actor: f.actor, kind: f.kind, limit: 100 }, signal),
+      api.get<Page<Activity>>('/activity', { project: f.project, actor: f.actor, kind: f.kind, session, limit }, signal),
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function sessionsQueryKey(params?: SessionListParams) {
+  return [
+    QUERY_ROOT,
+    'sessions',
+    params?.project ?? null,
+    params?.actor ?? null,
+    params?.parent ?? null,
+    params?.active ?? null,
+    params?.named ?? null,
+    params?.waiting ?? null,
+    params?.limit ?? null,
+    params?.offset ?? null,
+  ] as const
+}
+
+/** 세션 목록 조회. 기본 3초 폴링을 상속한다. */
+export function useSessions(params?: SessionListParams, options?: { enabled?: boolean }) {
+  const api = useApi()
+  return useQuery<SessionListResponse>({
+    queryKey: sessionsQueryKey(params),
+    queryFn: ({ signal }) => api.listSessions(params, signal),
+    placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function sessionQueryKey(actor: string | null, sessionId: string | null) {
+  return [QUERY_ROOT, 'session', actor, sessionId] as const
+}
+
+/** 세션 단건 조회(자식 세션 포함). 행위자와 세션 ID가 모두 있을 때만 호출한다. */
+export function useSession(actor: string | null, sessionId: string | null) {
+  const api = useApi()
+  return useQuery<Session>({
+    queryKey: sessionQueryKey(actor, sessionId),
+    queryFn: ({ signal }) => api.getSession(actor!, sessionId!, signal),
+    enabled: actor !== null && sessionId !== null,
   })
 }
 

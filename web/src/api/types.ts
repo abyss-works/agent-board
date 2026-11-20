@@ -16,6 +16,8 @@ export type DocumentKind = string
 export type DocumentState = 'current' | 'superseded' | 'archived'
 /** GET /v1/tokens의 status 질의 값. 활성이 서버 기본이다. */
 export type ActorTokenFilter = 'active' | 'revoked' | 'all'
+export type SessionRole = 'main' | 'subagent' | 'runner'
+export type SessionState = 'waiting_approval' | 'waiting_input' | 'waiting_external'
 
 export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'idea', 'observation']
 export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review', 'done', 'cancelled', 'deleted']
@@ -27,6 +29,8 @@ export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted
 /** 이름과 순서를 아는 종류. 이 밖의 종류도 올 수 있다. */
 export const DOCUMENT_KINDS: DocumentKind[] = ['decision', 'incident', 'report', 'implementation', 'other']
 export const DOCUMENT_STATES: DocumentState[] = ['current', 'superseded', 'archived']
+export const SESSION_ROLES: SessionRole[] = ['main', 'subagent', 'runner']
+export const SESSION_STATES: SessionState[] = ['waiting_approval', 'waiting_input', 'waiting_external']
 
 export interface Project {
   key: string
@@ -177,6 +181,50 @@ export interface Activity {
 export interface Actor {
   id: string
   kind: ActorKind
+}
+
+/** 행위자와 세션 ID로 특정하는 세션 참조. */
+export interface SessionRef {
+  actor: string
+  session_id: string
+}
+
+/** 세션이 마지막으로 보고한 작업 위치. 보고하지 않은 필드는 null이다. */
+export interface SessionLocation {
+  repo_remote: string | null
+  branch: string | null
+  worktree: string | null
+  head: string | null
+  dirty_count: number | null
+  reported_at: string | null
+}
+
+/** 에이전트 세션. last_project와 stale은 서버가 조회할 때 계산하고, children은 단건 조회에만 붙는다. */
+export interface Session {
+  actor: string
+  session_id: string
+  named: boolean
+  first_seen_at: string
+  last_seen_at: string
+  last_host: string
+  last_project: string | null
+  parent: SessionRef | null
+  role: SessionRole | null
+  issue: string | null
+  location: SessionLocation | null
+  state: SessionState | null
+  state_reason: string | null
+  state_at: string | null
+  stale: boolean
+  updated_at: string
+  children?: Session[]
+}
+
+export interface SessionListResponse {
+  items: Session[]
+  total: number
+  limit: number
+  offset: number
 }
 
 /** CLI가 만든 기기 승인 요청. 사용자가 코드를 확인하고 승인하거나 거부한다. 서버 메모리에만 있고 600초 뒤 만료한다. */
