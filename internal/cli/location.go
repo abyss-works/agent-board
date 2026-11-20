@@ -111,6 +111,37 @@ func git(dir string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
+// sessionLocation reads the location of a session from the repository at
+// dir: the origin URL without credentials, the branch, the absolute path of
+// the top folder, the short HEAD and the number of uncommitted files. Values
+// git cannot give are left out. File contents are never read.
+func sessionLocation(dir string) (map[string]any, error) {
+	top, err := git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, fmt.Errorf("%s는 git 저장소가 아닙니다: %w", dir, err)
+	}
+	loc := map[string]any{"worktree": filepath.FromSlash(top)}
+	if remote := remoteURL(dir); remote != "" {
+		loc["repo_remote"] = remote
+	}
+	if branch, err := git(dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && branch != "" {
+		loc["branch"] = branch
+	}
+	if head, err := git(dir, "rev-parse", "--short", "HEAD"); err == nil && head != "" {
+		loc["head"] = head
+	}
+	status, err := git(dir, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	dirty := 0
+	if status != "" {
+		dirty = len(strings.Split(status, "\n"))
+	}
+	loc["dirty_count"] = dirty
+	return loc, nil
+}
+
 // latestLocation returns the newest location part in activity bodies listed
 // newest first, with the index of its record, or -1 when there is none.
 func latestLocation(bodies []string) (string, int) {
