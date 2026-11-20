@@ -452,3 +452,20 @@ export interface MilestonePatch {
 export interface DeviceAuthorizationPatch {
   status: Exclude<DeviceAuthorizationStatus, 'pending'>
 }
+
+/** 통합 이벤트 스트림의 단건. 프로젝트가 없는 전역 이벤트는 project가 null이다. */
+export interface EventItem {
+  id: number
+  at: string
+  project: string | null
+  kind: string
+  subject: string
+  actor: string
+  session_id: string
+  data: Record<string, unknown>
+}
+
+export interface EventListResponse {
+  items: EventItem[]
+  next_after: number
+}

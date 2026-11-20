@@ -1,8 +1,10 @@
 import { QueryObserver } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
-import { ApiError } from '@/api/client'
+import { ApiError, NetworkError, ServerUnavailableError } from '@/api/client'
 import { AppStorage, memoryStore, type KeyValueStore } from '@/lib/storage'
+import { connection } from './connection'
 import { createQueryClient, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
+import { FALLBACK_POLL_MS } from './state'
 
 const rejected = (status: number, reason: string) => new ApiError(status, 'error', '거절', [{ reason }])
 const LIST_KEY = [...LOGIN_ACTORS_KEY, 'token']
@@ -99,5 +101,42 @@ describe('refreshForActor', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(queryFn).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+})
+
+describe('createQueryClient 폴백 폴링과 스트림 연결 상태', () => {
+  it('stream이 connected면 refetchInterval이 false를, 그 외에는 FALLBACK_POLL_MS를 돌려준다', () => {
+    connection.reset()
+    const { client } = setup()
+    const refetchInterval = client.getDefaultOptions().queries?.refetchInterval
+    expect(typeof refetchInterval).toBe('function')
+    const evalInterval = refetchInterval as () => number | false
+
+    expect(connection.getSnapshot().stream).toBe('idle')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markStreamConnecting()
+    expect(connection.getSnapshot().stream).toBe('connecting')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markStreamConnected()
+    expect(connection.getSnapshot().stream).toBe('connected')
+    expect(evalInterval()).toBe(false)
+
+    connection.markStreamReconnecting(new NetworkError())
+    expect(connection.getSnapshot().stream).toBe('reconnecting')
+    expect(connection.getSnapshot().error?.kind).toBe('network')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markStreamReconnecting(new ServerUnavailableError(503))
+    expect(connection.getSnapshot().error?.kind).toBe('server')
+    expect(evalInterval()).toBe(FALLBACK_POLL_MS)
+
+    connection.markOk()
+    expect(connection.getSnapshot().stream).toBe('reconnecting')
+    expect(connection.getSnapshot().error).toBeNull()
+
+    connection.reset()
+    expect(connection.getSnapshot()).toEqual({ lastOkAt: null, error: null, stream: 'idle' })
   })
 })

@@ -146,7 +146,7 @@ export function sessionsQueryKey(params?: SessionListParams) {
   ] as const
 }
 
-/** 세션 목록 조회. 기본 3초 폴링을 상속한다. */
+/** 세션 목록 조회. 기본 갱신 정책을 상속한다. */
 export function useSessions(params?: SessionListParams, options?: { enabled?: boolean }) {
   const api = useApi()
   return useQuery<SessionListResponse>({
@@ -240,7 +240,7 @@ export function useMilestones(projectKey: string | null, statuses: readonly Mile
   })
 }
 
-/** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 3초 갱신에서 뺀다. */
+/** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 주기적 갱신에서 뺀다. */
 export function useTemplates() {
   const api = useApi()
   return useQuery({
@@ -267,7 +267,7 @@ function deviceAuthorizationKey(userCode: string | null) {
 
 /**
  * 기기 승인 요청 한 건. 정규화한 코드(`XXXX-XXXX`)로 조회하고, 코드가 없으면 부르지 않는다.
- * 요청은 CLI가 토큰을 받아 가면 서버에서 지워지므로 3초 갱신과 창 포커스 갱신에서 뺀다.
+ * 요청은 CLI가 토큰을 받아 가면 서버에서 지워지므로 주기적 갱신과 창 포커스 갱신에서 뺀다.
  * 승인·거부한 뒤 화면의 결과가 사라지지 않게 하려는 것이다.
  */
 export function useDeviceAuthorization(userCode: string | null) {
