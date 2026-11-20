@@ -143,7 +143,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
    ```
    agb agenda -p <KEY>
    ```
-   - 사용자 차례(검토, 결정 필요, 미확인, 사용자 할 일), 에이전트(진행 중, 다음 할 일), 대기(막힘, 외부 대기)가 나온다. `user-task`와 `external` 이슈는 다음 할 일에 나오지 않는다. 옵션은 `agb agenda --help`.
+   - 사용자 차례(검토, 결정 필요, 미확인, 사용자 할 일, 대기 세션), 에이전트(진행 중, 다음 할 일), 대기(막힘, 외부 대기)가 나온다. `user-task`와 `external` 이슈는 다음 할 일에 나오지 않는다. 옵션은 `agb agenda --help`.
    - 오래됨 개수가 0이 아니면 `agb issue list --dormant`로 본다. 30일 넘게 활동이 없는 열린 이슈이며 표시일 뿐 자동으로 닫히지 않으니, 닫을지는 사용자와 판단할 대상으로 본다.
    - 분포와 최근 활동까지 보려면 `agb project overview <KEY>`를 쓴다.
    - 같은 세션을 며칠 뒤 다시 쓰거나 컨텍스트가 압축된 뒤에도 이 절차로 현황을 다시 본다. 어느 시점 이후 바뀐 것(사용자의 "리마인드", "지난번 이후 뭐 했지", 다른 기기나 세션의 작업)은 `agb digest --since <시점> [-p <KEY>]`로 본다. 새 이슈, 상태 변경, 결정 요청, 등록된 기록 문서가 프로젝트별로 나온다. 시점 형식은 `agb digest --help`. `activity`를 여러 번 불러 스크립트로 집계하지 않는다.
@@ -353,6 +353,11 @@ agb milestone list -p <KEY>
 
 - 서브에이전트에 작업을 맡길 때는 `agb session start --role subagent --issue <KEY>`로 자식 세션을 만들고, 출력된 세션 ID를 맡기는 지시에 넣는다.
 - 서브에이전트는 모든 `agb` 명령에 `--session-id <그 ID>`를 붙인다. 그러지 않으면 부모 세션으로 기록된다.
+- 사용자에게 승인이나 입력을 묻고 멈출 때는 대기 상태를 남긴다. 대기 중인 세션은 `agb agenda`의 사용자 차례(`waiting_sessions`)에 보이며, 그 세션의 다음 쓰기 요청이 성공하면 서버가 자동으로 해제한다.
+  ```
+  agb session set --state waiting_input --reason "<사유>"
+  ```
+  - 승인 대기는 `waiting_approval`, 사용자 입력 대기는 `waiting_input`, 외부 대기는 `waiting_external`을 쓴다. 직접 해제할 때는 `--state none`을 준다.
 
 ## 5. 마칠 때
 
