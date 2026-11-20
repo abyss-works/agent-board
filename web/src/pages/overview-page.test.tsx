@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import { ApiClient } from '@/api/client'
-import { QUERY_ROOT } from '@/api/queries'
-import { issueSummary } from '@/api/test-fixtures'
-import type { DoingItem, IssueSummary, Overview, Section } from '@/api/types'
+import { QUERY_ROOT, sessionsQueryKey } from '@/api/queries'
+import { issueSummary, sessionFixture } from '@/api/test-fixtures'
+import type { DoingItem, IssueSummary, Overview, Section, Session } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
 import { OverviewPage } from './overview-page'
 
@@ -52,9 +52,17 @@ function overview(partial: Partial<Overview> = {}): Overview {
   }
 }
 
-function render(o: Overview): string {
+function render(o: Overview, waitingSessions?: Session[]): string {
   const client = new QueryClient()
   client.setQueryData([QUERY_ROOT, 'overview', 'AGB'], o)
+  if (waitingSessions !== undefined) {
+    client.setQueryData(sessionsQueryKey({ project: 'AGB', waiting: true }), {
+      items: waitingSessions,
+      total: waitingSessions.length,
+      limit: 50,
+      offset: 0,
+    })
+  }
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <AppStateContext.Provider value={state}>
@@ -131,5 +139,33 @@ describe('현황의 진행 중', () => {
   it('멈춘 행위자에만 멈춤 표시를 붙인다', () => {
     expect(doing.match(/멈춤/g)).toHaveLength(1)
     expect(doing.indexOf('멈춤')).toBeGreaterThan(doing.indexOf('codex'))
+  })
+})
+
+describe('현황의 대기 세션', () => {
+  it('대기 세션이 있으면 내 차례에 대기 세션 카드를 보인다', () => {
+    const waiting = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-wait-1',
+      last_project: 'AGB',
+      issue: 'APP-12',
+      state: 'waiting_approval',
+      state_reason: '배포 승인이 필요합니다',
+      state_at: '2026-10-17T07:05:00.000Z',
+    })
+    const html = render(overview(), [waiting])
+    const card = sectionOf(html, '대기 세션')
+    expect(card).toContain('agent-a')
+    expect(card).toContain('sess-wait-1')
+    expect(card).toContain('승인 대기')
+    expect(card).toContain('배포 승인이 필요합니다')
+    expect(card).toContain('href="/issues/APP-12"')
+    expect(card).toContain('href="/sessions"')
+    expect(card).toContain('href="/sessions?actor=agent-a&amp;session=sess-wait-1"')
+  })
+
+  it('대기 세션이 0건이면 대기 세션 카드를 보이지 않는다', () => {
+    const html = render(overview(), [])
+    expect(html).not.toContain('>대기 세션</h3>')
   })
 })

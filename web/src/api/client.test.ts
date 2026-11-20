@@ -311,3 +311,40 @@ describe('isActorRejected', () => {
     expect(isActorRejected(new Error('x'))).toBe(false)
   })
 })
+
+describe('세션 API 호출', () => {
+  it('listSessions는 질의 매개변수를 붙여 GET /v1/sessions를 부른다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], total: 0, limit: 50, offset: 0 })
+    const client = new ApiClient(config, fetchFn)
+    const res = await client.listSessions({
+      project: 'APP',
+      actor: 'agent-a',
+      parent: 'agent-a/root-1',
+      active: true,
+      named: true,
+      waiting: false,
+      limit: 100,
+      offset: 10,
+    })
+    expect(res.total).toBe(0)
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe(
+      '/api/staging/v1/sessions?project=APP&actor=agent-a&parent=agent-a%2Froot-1&active=true&named=true&waiting=false&limit=100&offset=10',
+    )
+  })
+
+  it('listSessions는 매개변수가 없으면 질의 없이 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], total: 0, limit: 50, offset: 0 })
+    const client = new ApiClient(config, fetchFn)
+    await client.listSessions()
+    expect(calls[0].url).toBe('/api/staging/v1/sessions')
+  })
+
+  it('getSession은 actor와 session_id를 URL 인코딩해 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { actor: 'agent-a', session_id: 'sess.1+a' })
+    const client = new ApiClient(config, fetchFn)
+    await client.getSession('agent-a', 'sess.1+a')
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe('/api/staging/v1/sessions/agent-a/sess.1%2Ba')
+  })
+})
