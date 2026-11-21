@@ -23,10 +23,10 @@ func TestAgenda(t *testing.T) {
 		Projects    []struct {
 			Project  project `json:"project"`
 			UserTurn struct {
-				Review         section[issue] `json:"review"`
-				Decisions      section[issue] `json:"decisions"`
-				Unacknowledged section[issue] `json:"unacknowledged"`
-				Tasks          section[issue] `json:"tasks"`
+				Review     section[issue] `json:"review"`
+				Decisions  section[issue] `json:"decisions"`
+				Unverified section[issue] `json:"unverified"`
+				Tasks      section[issue] `json:"tasks"`
 			} `json:"user_turn"`
 			Agent struct {
 				Doing section[issue] `json:"doing"`

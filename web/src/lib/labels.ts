@@ -11,6 +11,7 @@ import type {
   ProjectStatus,
   SessionRole,
   SessionState,
+  VerificationState,
 } from '@/api/types'
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
@@ -98,6 +99,12 @@ export const SESSION_ROLE_LABEL: Record<SessionRole, string> = {
   runner: 'runner',
 }
 
+export const VERIFICATION_STATE_LABEL: Record<VerificationState, string> = {
+  none: '해당 없음',
+  pending: '검증 필요',
+  verified: '검증 완료',
+}
+
 /** 활동 기록 `changes`의 필드 이름 */
 export const FIELD_LABEL: Record<string, string> = {
   title: '제목',
@@ -114,7 +121,8 @@ export const FIELD_LABEL: Record<string, string> = {
   topic: '주제',
   milestone: '마일스톤',
   status_reason: '상태 사유',
-  acknowledged: '확인',
+  verification_state: '검증 상태',
+  verification_note: '검증 메모',
   project: '프로젝트',
 }
 
@@ -128,6 +136,10 @@ export function statusLabel(s: string): string {
 
 export function typeLabel(t: string): string {
   return (TYPE_LABEL as Record<string, string>)[t] ?? LEGACY_TYPE_LABEL[t] ?? t
+}
+
+export function verificationStateLabel(s: string): string {
+  return (VERIFICATION_STATE_LABEL as Record<string, string>)[s] ?? s
 }
 
 export function fieldLabel(f: string): string {

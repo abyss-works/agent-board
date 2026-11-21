@@ -324,7 +324,7 @@ func TestOverviewTablesAddDecisionColumn(t *testing.T) {
 		`"doing":` + empty + `,"review":` + empty + `,"blocked":` + empty +
 		`,"decisions":{"total":1,"items":[` + withDecision(plain, decisionQuestion) + `]}` +
 		`,"next":{"total":1,"items":[` + queueItem(strings.Replace(plain, "CLI-1", "CLI-2", 1)) + `]}` +
-		`,"unacknowledged":` + empty + `,"recent_activity":` + empty + `}`
+		`,"unverified":` + empty + `,"recent_activity":` + empty + `}`
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/projects/CLI/overview", canned{body: body})
 	h := newHarness(t, srv, true)
@@ -361,12 +361,12 @@ func TestDecisionsTableShowsWaitingSessionsInOverviewAndAgenda(t *testing.T) {
 		return `{"project":` + project + `,"generated_at":"2026-10-17T09:00:00.000Z","counts":{"total":3,"open":3,"by_status":{},"by_type":{},"by_priority":{}},` +
 			`"doing":` + empty + `,"review":` + empty + `,"blocked":` + empty +
 			`,"decisions":{"total":` + fmt.Sprintf("%d", len(items)) + `,"items":[` + strings.Join(items, ",") + `]}` +
-			`,"next":` + empty + `,"unacknowledged":` + empty + `,"recent_activity":` + empty + `}`
+			`,"next":` + empty + `,"unverified":` + empty + `,"recent_activity":` + empty + `}`
 	}
 	agendaBody := func(items ...string) string {
 		return `{"generated_at":"2026-10-17T09:00:00.000Z","projects":[{"project":` + project + `,"dormant":0,"user_turn":{` +
 			`"review":` + empty + `,"decisions":{"total":` + fmt.Sprintf("%d", len(items)) + `,"items":[` + strings.Join(items, ",") + `]}` +
-			`,"unacknowledged":` + empty + `,"tasks":` + empty + `,"waiting_sessions":` + empty + `},` +
+			`,"unverified":` + empty + `,"tasks":` + empty + `,"waiting_sessions":` + empty + `},` +
 			`"agent":{"doing":` + empty + `,"next":` + empty + `},"waiting":{"blocked":` + empty + `,"external":` + empty + `}}]}`
 	}
 
@@ -435,13 +435,13 @@ func TestDecisionsTableShowsWaitingSessionsInOverviewAndAgenda(t *testing.T) {
 	}
 }
 
-func TestActivityShowsDecisionNeededAndAcknowledgedChanges(t *testing.T) {
+func TestActivityShowsDecisionNeededAndVerificationChanges(t *testing.T) {
 	record := func(id int, changes string) string {
 		return fmt.Sprintf(`{"id":%d,"issue":"CLI-1","project":"CLI","kind":"updated","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:10:21.000Z","changes":%s,"summary":null,"body":null}`, id, changes)
 	}
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: `{"items":[` +
-		record(4, `{"acknowledged":{"from":true,"to":false},"title":{"from":"이전 제목","to":"새 제목"}}`) + `,` +
+		record(4, `{"verification_note":{"from":null,"to":"화면 확인"},"verification_state":{"from":"none","to":"pending"}}`) + `,` +
 		record(3, `{"decision_needed":{"from":"어느 쪽으로 갈까요?","to":null}}`) + `,` +
 		record(2, `{"decision_needed":{"from":"A안?","to":"B안?"}}`) + `,` +
 		record(1, `{"decision_needed":{"from":null,"to":"어느 쪽으로 갈까요?"}}`) + `],"total":4,"limit":50,"offset":0}`})
@@ -452,7 +452,7 @@ func TestActivityShowsDecisionNeededAndAcknowledgedChanges(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 	for _, want := range []string{
-		"acknowledged: true → false; title: 이전 제목 → 새 제목",
+		"verification_note: - → 화면 확인; verification_state: none → pending",
 		"decision_needed: 어느 쪽으로 갈까요? → -",
 		"decision_needed: A안? → B안?",
 		"decision_needed: - → 어느 쪽으로 갈까요?",

@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, ArrowRightIcon, BellDotIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon } from 'lucide-react'
+import { AlertTriangleIcon, ArrowRightIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon, ShieldAlertIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useAgenda, useOverview, useProjects } from '@/api/queries'
@@ -13,7 +13,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { WaitingStateBadge } from '@/components/session/session-meta'
 import { Badge } from '@/components/ui/badge'
 import { useFlash } from '@/hooks/use-flash'
-import { unacknowledgedListPath } from '@/lib/acknowledge'
+import { unverifiedListPath } from '@/lib/verification'
 import { PRIORITY_LABEL, PROJECT_STATUS_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
 import { sessionDetailPath, sessionKey, sessionRefLabel } from '@/lib/session-tree'
 import { formatKst, formatKstTime } from '@/lib/time'
@@ -57,11 +57,11 @@ const ACCENT = {
     title: 'text-rose-300',
     badge: 'destructive',
   },
-  unacknowledged: {
-    section: 'border-sky-500/40 bg-sky-500/[0.04]',
-    header: 'border-sky-500/30 bg-sky-500/10',
-    title: 'text-sky-300',
-    badge: 'info',
+  unverified: {
+    section: 'border-rose-500/40 bg-rose-500/[0.04]',
+    header: 'border-rose-500/30 bg-rose-500/10',
+    title: 'text-rose-300',
+    badge: 'destructive',
   },
 } as const
 
@@ -80,6 +80,7 @@ function Section({
   to,
   icon,
   accent,
+  extra,
   children,
 }: {
   title: string
@@ -87,6 +88,7 @@ function Section({
   to?: string
   icon?: ReactNode
   accent?: keyof typeof ACCENT
+  extra?: ReactNode
   children: ReactNode
 }) {
   const tone = accent && total > 0 ? ACCENT[accent] : null
@@ -102,6 +104,7 @@ function Section({
         ) : (
           <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}</span>
         )}
+        {extra}
         {to ? (
           <Link to={to} className="ml-auto inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground">
             전체 보기 <ArrowRightIcon className="size-3" />
@@ -178,6 +181,30 @@ function IssueList({ items, flash, showReady }: { items: (IssueSummary | QueueIt
         <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
       ) : (
         items.map((i) => <IssueRow key={i.key} issue={i} compact flash={flash.has(i.key)} showReady={showReady} />)
+      )}
+    </div>
+  )
+}
+
+/** 검증 필요 이슈 목록. verification_note가 있으면 행 아래에 한 줄 미리보기를 붙인다. */
+function UnverifiedList({ items, flash }: { items: IssueSummary[]; flash: Set<string> }) {
+  return (
+    <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
+      {items.length === 0 ? (
+        <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
+      ) : (
+        <ul className="divide-y divide-border/60">
+          {items.map((item) => (
+            <li key={item.key} className={item.verification_note ? '[&>a]:border-b-0' : undefined}>
+              <IssueRow issue={item} compact flash={flash.has(item.key)} />
+              {item.verification_note ? (
+                <p className="mr-3 mb-1.5 ml-9 truncate text-[0.6875rem] text-muted-foreground" title={item.verification_note}>
+                  {item.verification_note}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )
@@ -309,7 +336,7 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
   const waitingSessions = waitingSection?.items ?? []
   const waitingTotal = waitingSection?.total ?? 0
   const issues = o
-    ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unacknowledged.items]
+    ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unverified.items]
     : undefined
   const flash = useFlash(issues, (i) => i.key, (i) => i.updated_at)
   const flashActivity = useFlash(o?.recent_activity.items, (a: Activity) => a.id, () => '')
@@ -381,13 +408,14 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
               <IssueList items={o.next.items} flash={flash} showReady />
             </Section>
             <Section
-              title="미확인"
-              total={o.unacknowledged.total}
-              to={unacknowledgedListPath()}
-              icon={<BellDotIcon className="size-3.5" />}
-              accent="unacknowledged"
+              title="검증 필요"
+              total={o.unverified.total}
+              to={unverifiedListPath()}
+              icon={<ShieldAlertIcon className="size-3.5 text-rose-400" />}
+              accent="unverified"
+              extra={o.unverified.total > 0 ? <span className="text-[0.6875rem] text-rose-300/80">릴리즈 차단</span> : null}
             >
-              <IssueList items={o.unacknowledged.items} flash={flash} />
+              <UnverifiedList items={o.unverified.items} flash={flash} />
             </Section>
           </div>
         </Group>

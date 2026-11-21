@@ -87,11 +87,12 @@ func TestEventsAllKindsAndPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Issue create, update, ack, comment
+	// 4. Issue create, update, verify, comment
 	iss, err := s.CreateIssue(ctx, trClaude, IssueInput{
-		Project: "APP",
-		Title:   "implement events",
-		Body:    "## 배경\n배경\n\n## 할 일\n- 구현\n\n## 완료 조건\n- 통과",
+		Project:           "APP",
+		Title:             "implement events",
+		Body:              "## 배경\n배경\n\n## 할 일\n- 구현\n\n## 완료 조건\n- 통과",
+		VerificationState: model.VerificationPending,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,8 +101,8 @@ func TestEventsAllKindsAndPayloads(t *testing.T) {
 	if _, changed, err := s.UpdateIssue(ctx, trOwner, iss.Key, IssuePatch{Title: &newTitle}, nil); err != nil || !changed {
 		t.Fatalf("UpdateIssue: changed=%v err=%v", changed, err)
 	}
-	if _, changed, err := s.SetAcknowledged(ctx, trOwner, iss.Key, true, nil); err != nil || !changed {
-		t.Fatalf("SetAcknowledged: changed=%v err=%v", changed, err)
+	if _, changed, err := s.VerifyIssue(ctx, trOwner, iss.Key, nil); err != nil || !changed {
+		t.Fatalf("VerifyIssue: changed=%v err=%v", changed, err)
 	}
 	cmt, err := s.AddComment(ctx, trClaude, iss.Key, "looks good", nil, nil)
 	if err != nil {
@@ -282,10 +283,10 @@ func TestEventsAllKindsAndPayloads(t *testing.T) {
 		t.Errorf("issue.created = %d, want 1", len(evs))
 	}
 	if evs := find("issue.updated", iss.Key); len(evs) != 2 {
-		t.Errorf("issue.updated = %d, want 2 (title + ack)", len(evs))
+		t.Errorf("issue.updated = %d, want 2 (title + verify)", len(evs))
 	} else {
-		if f := stringSliceField(t, decodeEventData(t, evs[1]), "fields"); !reflect.DeepEqual(f, []string{"acknowledged"}) {
-			t.Errorf("ack issue.updated fields = %v", f)
+		if f := stringSliceField(t, decodeEventData(t, evs[1]), "fields"); !reflect.DeepEqual(f, []string{"verification_state"}) {
+			t.Errorf("verify issue.updated fields = %v", f)
 		}
 	}
 	if evs := find("issue.commented", iss.Key); len(evs) != 1 {
@@ -383,7 +384,10 @@ func TestEventsNoOpDoesNotEmit(t *testing.T) {
 	mustProject(t, s, ctx, "APP")
 	tp := mustTopic(t, s, "APP", "t1", nil)
 	ms := mustMilestone(t, s, "APP", "m1")
-	iss := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "APP", Title: "no-op test"})
+	iss := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "APP", Title: "no-op test", VerificationState: model.VerificationPending})
+	if _, _, err := s.VerifyIssue(ctx, trOwner, iss.Key, nil); err != nil {
+		t.Fatal(err)
+	}
 	docName := "2026-11-20-1000-decision-noop.md"
 	docText := "---\nkind: decision\ndate: 2026-11-20 10:00\ntitle: Noop\n---\nbody\n"
 	if _, _, err := s.PutDocument(ctx, trOwner, "APP", docName, DocumentInput{Content: docText}); err != nil {
@@ -429,8 +433,8 @@ func TestEventsNoOpDoesNotEmit(t *testing.T) {
 	if _, changed, err := s.UpdateIssue(ctx, trOwner, iss.Key, IssuePatch{}, nil); err != nil || changed {
 		t.Fatalf("no-op UpdateIssue: changed=%v err=%v", changed, err)
 	}
-	if _, changed, err := s.SetAcknowledged(ctx, trOwner, iss.Key, true, nil); err != nil || changed {
-		t.Fatalf("no-op SetAcknowledged: changed=%v err=%v", changed, err)
+	if _, changed, err := s.VerifyIssue(ctx, trOwner, iss.Key, nil); err != nil || changed {
+		t.Fatalf("no-op VerifyIssue: changed=%v err=%v", changed, err)
 	}
 	if _, created, err := s.PutDocument(ctx, trOwner, "APP", docName, DocumentInput{Content: docText}); err != nil || created {
 		t.Fatalf("no-op PutDocument: created=%v err=%v", created, err)

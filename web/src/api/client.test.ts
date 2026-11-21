@@ -89,11 +89,13 @@ describe('issueListQuery', () => {
     const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
     expect(issueListQuery({ ...base, topic: ['4'], milestone: ['2'] })).toBe('?project=AGB&topic=4&milestone=2')
   })
-  it('확인 여부 필터는 값이 있을 때만 붙인다', () => {
-    const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
-    expect(issueListQuery({ ...base, acknowledged: 'false' })).toBe('?project=AGB&acknowledged=false')
-    expect(issueListQuery({ ...base, acknowledged: 'true' })).toBe('?project=AGB&acknowledged=true')
-    expect(issueListQuery(base)).toBe('?project=AGB')
+  it('검증 상태 필터는 단일 값과 배열을 쉼표 OR로 붙이고 비면 생략한다', () => {
+    const base = { project: 'APP', status: [], type: [], priority: [], label: [], q: '', sort: '' }
+    expect(issueListQuery({ ...base, verification: 'pending' })).toBe('?project=APP&verification=pending')
+    expect(issueListQuery({ ...base, verification: 'verified' })).toBe('?project=APP&verification=verified')
+    expect(issueListQuery({ ...base, verification: ['pending', 'verified'] })).toBe('?project=APP&verification=pending%2Cverified')
+    expect(issueListQuery({ ...base, verification: [] })).toBe('?project=APP')
+    expect(issueListQuery(base)).toBe('?project=APP')
   })
   it('오래됨 필터는 true일 때만 붙인다', () => {
     const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
@@ -230,6 +232,30 @@ describe('ApiClient', () => {
     const ctrl = new AbortController()
     await client.get('/board', undefined, ctrl.signal)
     expect(calls[0].init.signal).toBe(ctrl.signal)
+  })
+
+  it('verifyIssue는 POST /v1/issues/{key}/verify를 호출하고 version이 있으면 If-Match를 보낸다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { key: 'APP-1', verification_state: 'verified', version: 2 })
+    const client = new ApiClient(config, fetchFn)
+    await client.verifyIssue('APP-1', 1)
+    expect(calls[0].url).toBe('/api/staging/v1/issues/APP-1/verify')
+    expect(calls[0].init.method).toBe('POST')
+    expect((calls[0].init.headers as Record<string, string>)['If-Match']).toBe('"1"')
+
+    await client.verifyIssue('APP-1')
+    expect((calls[1].init.headers as Record<string, string>)['If-Match']).toBeUndefined()
+  })
+
+  it('unverifyIssue는 DELETE /v1/issues/{key}/verify를 호출하고 version이 있으면 If-Match를 보낸다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { key: 'APP-1', verification_state: 'pending', version: 3 })
+    const client = new ApiClient(config, fetchFn)
+    await client.unverifyIssue('APP-1', 2)
+    expect(calls[0].url).toBe('/api/staging/v1/issues/APP-1/verify')
+    expect(calls[0].init.method).toBe('DELETE')
+    expect((calls[0].init.headers as Record<string, string>)['If-Match']).toBe('"2"')
+
+    await client.unverifyIssue('APP-1')
+    expect((calls[1].init.headers as Record<string, string>)['If-Match']).toBeUndefined()
   })
 })
 

@@ -178,12 +178,10 @@ func TestDecisionNeededOnTheAPI(t *testing.T) {
 	}
 }
 
-// When the spec of an acknowledged issue changes, the server clears the
-// acknowledgement and the activity record of the same write says so. Every
-// other change leaves it.
-func TestSpecChangeClearsTheAcknowledgementOnTheAPI(t *testing.T) {
+// Editing a verified issue never auto-reverts its verification state.
+func TestEditsKeepVerificationOnTheAPI(t *testing.T) {
 	e := newEnv(t)
-	e.createProject(t, "AGB", "agent-board")
+	e.createProject(t, "APP", "Example App")
 	owner := map[string]string{"X-Actor": "owner"}
 	feature, _ := model.TemplateFor(model.TypeFeature)
 	longer, err := json.Marshal(feature.Body + "\n보충")
@@ -191,17 +189,16 @@ func TestSpecChangeClearsTheAcknowledgementOnTheAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// issue has the agent create an issue in the given status and the user acknowledge it.
-	issue := func(status string) (key string, version int64) {
+	verifiedIssue := func(status string) (key string, version int64) {
 		t.Helper()
-		i := e.createIssue(t, `{"project":"AGB","title":"agent work","status":"`+status+`"}`)
-		rec := e.do(t, "POST", "/v1/issues/"+i.Key+"/acknowledge", "", owner)
-		var acked model.Issue
-		decodeJSON(t, rec, &acked)
-		if rec.Code != 200 || acked.AcknowledgedAt == nil {
-			t.Fatalf("acknowledge %s: %d %s", i.Key, rec.Code, rec.Body.String())
+		i := e.createIssue(t, `{"project":"APP","title":"ui work","status":"`+status+`","verification_state":"pending","verification_note":"Check screen"}`)
+		rec := e.do(t, "POST", "/v1/issues/"+i.Key+"/verify", "", owner)
+		var v model.Issue
+		decodeJSON(t, rec, &v)
+		if rec.Code != 200 || v.VerificationState != model.VerificationVerified || v.VerifiedAt == nil {
+			t.Fatalf("verify %s: %d %s", i.Key, rec.Code, rec.Body.String())
 		}
-		return i.Key, acked.Version
+		return i.Key, v.Version
 	}
 	newest := func(key string) model.Activity {
 		t.Helper()
@@ -219,61 +216,77 @@ func TestSpecChangeClearsTheAcknowledgementOnTheAPI(t *testing.T) {
 		"body":            {"backlog", nil, `{"body":` + string(longer) + `}`},
 		"type":            {"backlog", owner, `{"type":"design"}`},
 		"review to doing": {"review", nil, `{"status":"doing"}`},
+		"labels":          {"backlog", nil, `{"labels":["api"]}`},
+		"priority":        {"backlog", nil, `{"priority":"P0"}`},
 	} {
-		key, version := issue(c.status)
+		key, version := verifiedIssue(c.status)
 		rec := e.do(t, "PATCH", "/v1/issues/"+key, c.body, c.headers)
 		var got model.Issue
 		decodeJSON(t, rec, &got)
-		if rec.Code != 200 || got.AcknowledgedAt != nil || got.AcknowledgedBy != nil || got.Version != version+1 || rec.Header().Get("ETag") != etagOf(version+1) {
-			t.Errorf("%s: %d acknowledged %v, version %d (was %d)", name, rec.Code, got.AcknowledgedAt, got.Version, version)
+		if rec.Code != 200 || got.VerificationState != model.VerificationVerified || got.VerifiedAt == nil || got.VerifiedBy == nil || *got.VerifiedBy != "owner" || got.Version != version+1 {
+			t.Errorf("%s: %d state=%s verified_at=%v version=%d (was %d)", name, rec.Code, got.VerificationState, got.VerifiedAt, got.Version, version)
 		}
-		if !strings.Contains(rec.Body.String(), `"acknowledged_at":null,"acknowledged_by":null`) {
-			t.Errorf("%s: the response shows the issue as unacknowledged: %s", name, rec.Body.String())
+		if _, has := newest(key).Changes["verification_state"]; has {
+			t.Errorf("%s: unexpected verification_state change in activity", name)
 		}
-		ack, has := newest(key).Changes["acknowledged"]
-		if !has || string(ack.From) != "true" || string(ack.To) != "false" {
-			t.Errorf("%s: the record lacks acknowledged true -> false: %+v", name, newest(key).Changes)
+	}
+}
+
+// Closing a milestone is blocked with 409 unverified_issues while pending
+// issues remain in it, and succeeds once they are verified.
+func TestMilestoneCloseBlockedByUnverifiedIssues(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "Example App")
+	owner := map[string]string{"X-Actor": "owner"}
+
+	rec := e.do(t, "POST", "/v1/projects/APP/milestones", `{"name":"v1.0"}`, owner)
+	if rec.Code != 201 {
+		t.Fatalf("create milestone: %d %s", rec.Code, rec.Body.String())
+	}
+	var m model.Milestone
+	decodeJSON(t, rec, &m)
+	msID := strconv.FormatInt(m.ID, 10)
+
+	// One pending issue with note, one pending issue without note, one plain (none) issue.
+	withNote := e.createIssue(t, `{"project":"APP","title":"Login screen","milestone":`+msID+`,"verification_state":"pending","verification_note":"Check button alignment"}`)
+	noNote := e.createIssue(t, `{"project":"APP","title":"Settings modal","status":"done","milestone":`+msID+`,"verification_state":"pending"}`)
+	e.createIssue(t, `{"project":"APP","title":"Backend refactor","milestone":`+msID+`}`)
+
+	// Closing the milestone fails with 409 unverified_issues.
+	rec = e.do(t, "PATCH", "/v1/milestones/"+msID, `{"status":"closed"}`, owner)
+	if rec.Code != 409 {
+		t.Fatalf("close milestone with unverified: %d %s", rec.Code, rec.Body.String())
+	}
+	eb := decodeErr(t, rec)
+	if eb.Error.Code != "unverified_issues" || eb.Error.Message != "검증되지 않은 항목이 남아 마일스톤을 닫을 수 없습니다." {
+		t.Errorf("error = %+v", eb.Error)
+	}
+	if len(eb.Error.Details) != 2 {
+		t.Fatalf("details len = %d, want 2: %+v", len(eb.Error.Details), eb.Error.Details)
+	}
+	joined := ""
+	for _, d := range eb.Error.Details {
+		if d.Field != "verification" || d.Reason != "unverified" {
+			t.Errorf("detail = %+v", d)
 		}
-		// The new spec can be acknowledged again.
-		if rec := e.do(t, "POST", "/v1/issues/"+key+"/acknowledge", "", owner); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"acknowledged_by":"owner"`) {
-			t.Errorf("%s: acknowledge again: %d %s", name, rec.Code, rec.Body.String())
-		}
+		joined += d.Message + "\n"
+	}
+	if !strings.Contains(joined, withNote.Key) || !strings.Contains(joined, "Check button alignment") {
+		t.Errorf("details lack key/note for %s: %s", withNote.Key, joined)
+	}
+	if !strings.Contains(joined, noNote.Key) || !strings.Contains(joined, "Settings modal") {
+		t.Errorf("details lack key/title for %s: %s", noNote.Key, joined)
 	}
 
-	for name, c := range map[string]struct {
-		status string
-		body   string
-	}{
-		"labels":             {"backlog", `{"labels":["api"]}`},
-		"priority":           {"backlog", `{"priority":"P0"}`},
-		"refs":               {"backlog", `{"refs":["file:api.md"]}`},
-		"decision_needed":    {"backlog", `{"decision_needed":"어느 쪽으로 할지"}`},
-		"backlog to doing":   {"backlog", `{"status":"doing"}`},
-		"doing to review":    {"doing", `{"status":"review"}`},
-		"review to done":     {"review", `{"status":"done"}`},
-		"the title repeated": {"backlog", `{"title":"agent work","labels":["api"]}`},
-	} {
-		key, version := issue(c.status)
-		rec := e.do(t, "PATCH", "/v1/issues/"+key, c.body, nil)
-		var got model.Issue
-		decodeJSON(t, rec, &got)
-		if rec.Code != 200 || got.AcknowledgedAt == nil || got.AcknowledgedBy == nil || *got.AcknowledgedBy != "owner" || got.Version != version+1 {
-			t.Errorf("%s: %d acknowledged %v, version %d (was %d)", name, rec.Code, got.AcknowledgedAt, got.Version, version)
-		}
-		if _, has := newest(key).Changes["acknowledged"]; has {
-			t.Errorf("%s: the record has an acknowledged change", name)
-		}
+	// Verify both pending issues, then close succeeds with 200.
+	if rec := e.do(t, "POST", "/v1/issues/"+withNote.Key+"/verify", "", owner); rec.Code != 200 {
+		t.Fatalf("verify %s: %d %s", withNote.Key, rec.Code, rec.Body.String())
 	}
-
-	// A comment, and a write that changes nothing, keep it and write nothing to the issue.
-	key, version := issue("backlog")
-	if rec := e.do(t, "POST", "/v1/issues/"+key+"/comments", `{"body":"착수한다."}`, nil); rec.Code != 201 {
-		t.Fatalf("comment: %d %s", rec.Code, rec.Body.String())
+	if rec := e.do(t, "POST", "/v1/issues/"+noNote.Key+"/verify", "", owner); rec.Code != 200 {
+		t.Fatalf("verify %s: %d %s", noNote.Key, rec.Code, rec.Body.String())
 	}
-	rec := e.do(t, "PATCH", "/v1/issues/"+key, `{"title":"agent work","type":"feature","status":"backlog"}`, nil)
-	var got model.Issue
-	decodeJSON(t, rec, &got)
-	if rec.Code != 200 || got.AcknowledgedAt == nil || got.Version != version {
-		t.Errorf("a write that changes nothing: %d acknowledged %v, version %d (was %d)", rec.Code, got.AcknowledgedAt, got.Version, version)
+	rec = e.do(t, "PATCH", "/v1/milestones/"+msID, `{"status":"closed"}`, owner)
+	if rec.Code != 200 {
+		t.Fatalf("close milestone after verify: %d %s", rec.Code, rec.Body.String())
 	}
 }

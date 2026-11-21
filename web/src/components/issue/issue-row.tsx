@@ -4,7 +4,7 @@ import type { IssueSummary, QueueItem } from '@/api/types'
 import { formatKst, formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { DecisionBadge, DormantBadge, IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon } from './meta'
+import { DecisionBadge, DormantBadge, IssueKey, LabelChip, PriorityIcon, StatusIcon, TypeIcon, VerificationBadge } from './meta'
 
 /** FTS 스니펫의 `[일치]` 부분을 강조해 그린다. */
 export function SnippetText({ snippet }: { snippet: string }) {
@@ -68,6 +68,7 @@ export function IssueRow({ issue, flash, compact, showReady }: Props) {
         ) : null}
       </div>
       {/* 줄어드는 제목 칸 밖에 두어야 좁은 행에서 옆 항목과 겹치지 않는다. */}
+      {issue.verification_state === 'pending' ? <VerificationBadge state="pending" note={issue.verification_note} /> : null}
       {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
       {issue.dormant ? <DormantBadge /> : null}
       {!compact && issue.topic_path ? (

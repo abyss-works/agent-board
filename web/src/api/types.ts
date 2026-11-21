@@ -4,6 +4,7 @@ export type IssueType = 'feature' | 'bug' | 'design' | 'idea' | 'observation'
 export type IssueStatus = 'backlog' | 'doing' | 'review' | 'done' | 'cancelled' | 'deleted'
 export type ProjectStatus = 'active' | 'archived' | 'deleted'
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3'
+export type VerificationState = 'none' | 'pending' | 'verified'
 export type ActorKind = 'user' | 'agent'
 export type ActivityKind = 'created' | 'updated' | 'commented'
 /** 지식이 담긴 댓글의 종류. 진행 기록에는 없다. */
@@ -23,6 +24,7 @@ export const ISSUE_TYPES: IssueType[] = ['feature', 'bug', 'design', 'idea', 'ob
 export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review', 'done', 'cancelled', 'deleted']
 export const OPEN_STATUSES: IssueStatus[] = ['backlog', 'doing', 'review']
 export const PRIORITIES: Priority[] = ['P0', 'P1', 'P2', 'P3']
+export const VERIFICATION_STATES: VerificationState[] = ['none', 'pending', 'verified']
 export const PROJECT_STATUSES: ProjectStatus[] = ['active', 'archived', 'deleted']
 export const ACTIVITY_KINDS: ActivityKind[] = ['created', 'updated', 'commented']
 export const MILESTONE_STATUSES: MilestoneStatus[] = ['open', 'closed', 'deleted']
@@ -107,9 +109,13 @@ export interface IssueSummary {
   milestone_name: string | null
   /** 마지막 상태 변경의 사유. 상태를 바꾼 적이 없으면 null이다. */
   status_reason: string | null
-  /** 사용자가 이 이슈를 확인한 시각과 행위자. 미확인이면 둘 다 null이다. 작업 흐름과 무관한 표시다. */
-  acknowledged_at: string | null
-  acknowledged_by: string | null
+  /** 릴리즈 전 사용자 검증 게이트 상태. pending은 마일스톤 닫기와 릴리즈를 막는다. */
+  verification_state: VerificationState
+  /** 사용자가 확인할 내용 메모. 없으면 null이다. */
+  verification_note: string | null
+  /** 사용자가 검증 완료한 시각과 행위자. 검증 완료가 아니면 둘 다 null이다. */
+  verified_at: string | null
+  verified_by: string | null
   version: number
   created_at: string
   updated_at: string
@@ -334,8 +340,8 @@ export interface Overview {
   /** decision_needed가 있는 열린 이슈 */
   decisions: Section<DecisionItem>
   next: Section<QueueItem>
-  /** 삭제되지 않은 미확인 이슈. 최근에 만든 것부터. */
-  unacknowledged: Section<IssueSummary>
+  /** 취소·삭제되지 않은 검증 필요(pending) 이슈. 최근 수정 순. */
+  unverified: Section<IssueSummary>
   recent_activity: Section<Activity>
 }
 
@@ -345,7 +351,7 @@ export interface AgendaProject {
   user_turn: {
     review: Section<IssueSummary>
     decisions: Section<DecisionItem>
-    unacknowledged: Section<IssueSummary>
+    unverified: Section<IssueSummary>
     tasks: Section<IssueSummary>
     waiting_sessions: Section<Session>
   }
@@ -397,6 +403,8 @@ export interface IssueCreate {
   decision_needed?: string | null
   topic?: number | null
   milestone?: number | null
+  verification_state?: VerificationState
+  verification_note?: string | null
 }
 
 /** PATCH /v1/issues/{key} 본문(JSON Merge Patch). null은 지움이다. */
@@ -416,6 +424,8 @@ export interface IssuePatch {
   refs?: string[]
   recheck_condition?: string | null
   decision_needed?: string | null
+  verification_state?: VerificationState
+  verification_note?: string | null
 }
 
 export interface ProjectCreate {

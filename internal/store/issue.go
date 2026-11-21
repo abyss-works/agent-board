@@ -21,63 +21,67 @@ type Optional[T any] struct {
 // IssueInput is the server-side shape of a create request. Zero enum values
 // take the defaults.
 type IssueInput struct {
-	Project          string
-	Title            string
-	Body             string
-	Type             model.IssueType
-	Status           model.IssueStatus
-	Priority         model.Priority
-	Labels           []string
-	Parent           *string
-	DependsOn        []string
-	Refs             []string
-	RecheckCondition *string
-	DecisionNeeded   *string
-	Topic            *int64
-	Milestone        *int64
+	Project           string
+	Title             string
+	Body              string
+	Type              model.IssueType
+	Status            model.IssueStatus
+	Priority          model.Priority
+	Labels            []string
+	Parent            *string
+	DependsOn         []string
+	Refs              []string
+	RecheckCondition  *string
+	DecisionNeeded    *string
+	Topic             *int64
+	Milestone         *int64
+	VerificationState model.VerificationState
+	VerificationNote  *string
 }
 
 // IssuePatch is a JSON merge patch. Nil pointers are unchanged; Optional
 // fields distinguish "clear" from "keep".
 type IssuePatch struct {
-	Title            *string
-	Body             *string
-	Type             *model.IssueType
-	Status           *model.IssueStatus
-	Priority         *model.Priority
-	Labels           *[]string
-	Parent           Optional[string]
-	DependsOn        *[]string
-	Refs             *[]string
-	RecheckCondition Optional[string]
-	DecisionNeeded   Optional[string]
-	Topic            Optional[int64]
-	Milestone        Optional[int64]
-	StatusReason     *string // only valid together with a status change
+	Title             *string
+	Body              *string
+	Type              *model.IssueType
+	Status            *model.IssueStatus
+	Priority          *model.Priority
+	Labels            *[]string
+	Parent            Optional[string]
+	DependsOn         *[]string
+	Refs              *[]string
+	RecheckCondition  Optional[string]
+	DecisionNeeded    Optional[string]
+	Topic             Optional[int64]
+	Milestone         Optional[int64]
+	VerificationState *model.VerificationState
+	VerificationNote  Optional[string]
+	StatusReason      *string // only valid together with a status change
 }
 
 // IssueFilter selects, searches and orders issues.
 type IssueFilter struct {
-	Projects        []string
-	Statuses        []model.IssueStatus
-	Types           []model.IssueType
-	Priorities      []model.Priority
-	Labels          []string // AND
-	Refs            []string // AND, exact "kind:value"
-	Parent          *string  // "none" selects issues without a parent
-	CreatedBy       []string
-	UpdatedBy       []string
-	StatusChangedBy []string
-	Acknowledged    *bool // true: acknowledged by the user, false: not yet
-	Dormant         *bool // true: only open issues without activity for model.IssueDormantAfter
-	Topics          []int64
-	TopicNone       bool // also select issues without a topic
-	Milestones      []int64
-	MilestoneNone   bool // also select issues without a milestone
-	Query           string
-	Sort            []Sort // priority, created_at, updated_at, key, relevance
-	Limit           int
-	Offset          int
+	Projects           []string
+	Statuses           []model.IssueStatus
+	Types              []model.IssueType
+	Priorities         []model.Priority
+	Labels             []string // AND
+	Refs               []string // AND, exact "kind:value"
+	Parent             *string  // "none" selects issues without a parent
+	CreatedBy          []string
+	UpdatedBy          []string
+	StatusChangedBy    []string
+	VerificationStates []model.VerificationState
+	Dormant            *bool // true: only open issues without activity for model.IssueDormantAfter
+	Topics             []int64
+	TopicNone          bool // also select issues without a topic
+	Milestones         []int64
+	MilestoneNone      bool // also select issues without a milestone
+	Query              string
+	Sort               []Sort // priority, created_at, updated_at, key, relevance
+	Limit              int
+	Offset             int
 
 	closedSince    *model.Time // board: only issues closed at or after this time
 	decisionNeeded bool        // overview: only issues that ask for a decision
@@ -128,7 +132,7 @@ func issueCols(withBody bool) string {
 		i.parent_id, par.key, i.recheck_condition, i.decision_needed, i.topic_id,
 		case when tp.id is null then null when tpp.id is null then tp.name else tpp.name || '/' || tp.name end,
 		i.milestone_id, ms.name,
-		i.status_reason, i.acknowledged_at, i.acknowledged_by, i.version, i.created_at, i.updated_at, i.closed_at,
+		i.status_reason, i.verification_state, i.verification_note, i.verified_at, i.verified_by, i.version, i.created_at, i.updated_at, i.closed_at,
 		i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by,
 		` + lastActivityExpr
 }
@@ -138,12 +142,12 @@ type rowScanner interface{ Scan(...any) error }
 // issueScan holds the columns of issueCols that need conversion after the
 // scan.
 type issueScan struct {
-	parentKey, recheck, reason, closedAt sql.NullString
-	topicPath, ackAt, ackBy              sql.NullString
-	milestoneName, decision              sql.NullString
-	topicID, milestoneID                 sql.NullInt64
-	created, updated, statusChanged      string
-	lastActivity                         string
+	parentKey, recheck, reason, closedAt                sql.NullString
+	topicPath, verificationNote, verifiedAt, verifiedBy sql.NullString
+	milestoneName, decision                             sql.NullString
+	topicID, milestoneID                                sql.NullInt64
+	created, updated, statusChanged                     string
+	lastActivity                                        string
 }
 
 // scanIssue scans the columns of issueCols followed by the extra
@@ -153,7 +157,7 @@ func scanIssue(sc rowScanner, extra ...any) (*issueRow, error) {
 	var raw issueScan
 	dest := []any{&r.id, &r.projectID, &r.Project, &r.projectStatus, &r.Number, &r.Key, &r.Title, &r.Body, &r.Type, &r.Status, &r.Priority,
 		&r.parentID, &raw.parentKey, &raw.recheck, &raw.decision, &raw.topicID, &raw.topicPath, &raw.milestoneID, &raw.milestoneName,
-		&raw.reason, &raw.ackAt, &raw.ackBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
+		&raw.reason, &r.VerificationState, &raw.verificationNote, &raw.verifiedAt, &raw.verifiedBy, &r.Version, &raw.created, &raw.updated, &raw.closedAt,
 		&raw.statusChanged, &r.StatusChangedBy, &r.CreatedBy, &r.UpdatedBy, &raw.lastActivity}
 	if err := sc.Scan(append(dest, extra...)...); err != nil {
 		return nil, err
@@ -190,15 +194,18 @@ func (r *issueRow) finishScan(raw issueScan) error {
 	if raw.reason.Valid {
 		r.StatusReason = &raw.reason.String
 	}
-	if raw.ackBy.Valid {
-		r.AcknowledgedBy = &raw.ackBy.String
+	if raw.verificationNote.Valid {
+		r.VerificationNote = &raw.verificationNote.String
 	}
-	if raw.ackAt.Valid {
-		t, err := model.ParseTime(raw.ackAt.String)
+	if raw.verifiedBy.Valid {
+		r.VerifiedBy = &raw.verifiedBy.String
+	}
+	if raw.verifiedAt.Valid {
+		t, err := model.ParseTime(raw.verifiedAt.String)
 		if err != nil {
 			return err
 		}
-		r.AcknowledgedAt = &t
+		r.VerifiedAt = &t
 	}
 	var err error
 	if r.CreatedAt, err = model.ParseTime(raw.created); err != nil {
@@ -300,7 +307,9 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 		Project: in.Project, Title: in.Title, Body: in.Body,
 		Type: in.Type, Status: in.Status, Priority: in.Priority,
 		Labels: in.Labels, Parent: in.Parent, DependsOn: in.DependsOn, Refs: in.Refs, RecheckCondition: in.RecheckCondition,
-		DecisionNeeded: in.DecisionNeeded, Topic: in.Topic, Milestone: in.Milestone, Version: 1, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
+		DecisionNeeded: in.DecisionNeeded, Topic: in.Topic, Milestone: in.Milestone,
+		VerificationState: in.VerificationState, VerificationNote: in.VerificationNote,
+		Version: 1, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
 		StatusChangedBy: tr.Actor, CreatedBy: tr.Actor, UpdatedBy: tr.Actor,
 	}
 	if issue.Type == "" {
@@ -312,8 +321,14 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 	if issue.Priority == "" {
 		issue.Priority = model.DefaultPriority(issue.Type)
 	}
+	if issue.VerificationState == "" {
+		issue.VerificationState = model.DefaultVerificationState
+	}
 	model.NormalizeIssue(&issue)
 	checks := []error{model.ValidateIssue(&issue)}
+	if issue.VerificationState == model.VerificationVerified {
+		checks = append(checks, violation("verification_state", "생성 시에는 none 또는 pending만 지정할 수 있습니다."))
+	}
 	if kind == model.ActorAgent {
 		// An agent writes every body to its type's template; the user writes freely.
 		checks = append(checks, model.CheckTemplate(issue.Type, issue.Body))
@@ -363,16 +378,11 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 			return err
 		}
 		key = model.IssueKey(in.Project, number)
-		// What the user creates the user already knows; what an agent creates waits for the user.
-		var ackAt, ackBy any
-		if kind == model.ActorUser {
-			ackAt, ackBy = now.String(), tr.Actor
-		}
 		res, err := tx.ExecContext(ctx, `insert into issue(project_id, number, key, title, body, type, status, priority, parent_id, recheck_condition, decision_needed, topic_id, milestone_id,
-			acknowledged_at, acknowledged_by, version, created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
-			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+			verification_state, verification_note, verified_at, verified_by, version, created_at, updated_at, closed_at, status_changed_at, status_changed_by, created_by, updated_by)
+			values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, 1, ?, ?, ?, ?, ?, ?, ?)`,
 			projectID, number, key, issue.Title, issue.Body, string(issue.Type), string(issue.Status), string(issue.Priority), parentID, issue.RecheckCondition, issue.DecisionNeeded, issue.Topic, issue.Milestone,
-			ackAt, ackBy, now.String(), now.String(), timePtr(issue.ClosedAt), now.String(), tr.Actor, tr.Actor, tr.Actor)
+			string(issue.VerificationState), issue.VerificationNote, now.String(), now.String(), timePtr(issue.ClosedAt), now.String(), tr.Actor, tr.Actor, tr.Actor)
 		if err != nil {
 			return err
 		}
@@ -417,9 +427,6 @@ func (s *Store) CreateIssue(ctx context.Context, tr model.Trace, in IssueInput) 
 // UpdateIssue applies a merge patch. It returns the resulting issue and
 // whether anything changed; an unchanged issue gets no activity record and
 // keeps its version. ifMatch, when non-nil, must equal the current version.
-//
-// An acknowledged issue whose spec changes loses the acknowledgement in the
-// same write: see changesSpec.
 func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, patch IssuePatch, ifMatch *int64) (*model.Issue, bool, error) {
 	kind, err := actorKind(ctx, s.db, tr.Actor)
 	if err != nil {
@@ -474,9 +481,26 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if patch.Milestone.Set {
 			next.Milestone = patch.Milestone.Value
 		}
+		var verifyStateErr error
+		if patch.VerificationState != nil {
+			if *patch.VerificationState == model.VerificationVerified && cur.VerificationState != model.VerificationVerified {
+				verifyStateErr = violation("verification_state", "verified 상태는 검증 완료 요청으로만 바꿀 수 있습니다.")
+			} else {
+				next.VerificationState = *patch.VerificationState
+			}
+		}
+		if patch.VerificationNote.Set {
+			next.VerificationNote = patch.VerificationNote.Value
+		} else if patch.VerificationState != nil && *patch.VerificationState == model.VerificationNone {
+			next.VerificationNote = nil
+		}
+		if next.VerificationState == model.VerificationNone || next.VerificationState == model.VerificationPending {
+			next.VerifiedAt = nil
+			next.VerifiedBy = nil
+		}
 		model.NormalizeIssue(&next)
 		reason, reasonErr := model.ResolveStatusReason(cur.Status, next.Status, patch.StatusReason)
-		checks := []error{model.ValidateIssue(&next), reasonErr}
+		checks := []error{model.ValidateIssue(&next), reasonErr, verifyStateErr}
 		if kind == model.ActorAgent && (next.Body != cur.Body || next.Type != cur.Type) {
 			// A new body or a new type puts the body to the template of the type it ends up with.
 			checks = append(checks, model.CheckTemplate(next.Type, next.Body))
@@ -503,10 +527,6 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 		if statusChanged {
 			// Always listed with the status, even when the text repeats.
 			changes["status_reason"] = model.Change{From: rawJSON(cur.StatusReason), To: rawJSON(next.StatusReason)}
-		}
-		if cur.AcknowledgedAt != nil && changesSpec(changes, cur.Status, next.Status) {
-			next.AcknowledgedAt, next.AcknowledgedBy = nil, nil
-			changes["acknowledged"] = model.Change{From: rawJSON(true), To: rawJSON(false)}
 		}
 		parentID, depIDs, err := resolveLinks(ctx, tx, next.Parent, next.DependsOn)
 		if err != nil {
@@ -560,10 +580,10 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `update issue set title = ?, body = ?, type = ?, status = ?, priority = ?, parent_id = ?, recheck_condition = ?, decision_needed = ?,
-			topic_id = ?, milestone_id = ?, status_reason = ?, acknowledged_at = ?, acknowledged_by = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?,
+			topic_id = ?, milestone_id = ?, status_reason = ?, verification_state = ?, verification_note = ?, verified_at = ?, verified_by = ?, version = ?, updated_at = ?, updated_by = ?, closed_at = ?,
 			status_changed_at = ?, status_changed_by = ? where id = ?`,
 			next.Title, next.Body, string(next.Type), string(next.Status), string(next.Priority), parentID, next.RecheckCondition, next.DecisionNeeded,
-			next.Topic, next.Milestone, next.StatusReason, timePtr(next.AcknowledgedAt), next.AcknowledgedBy, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt),
+			next.Topic, next.Milestone, next.StatusReason, string(next.VerificationState), next.VerificationNote, timePtr(next.VerifiedAt), next.VerifiedBy, next.Version, now.String(), tr.Actor, timePtr(next.ClosedAt),
 			next.StatusChangedAt.String(), next.StatusChangedBy, cur.id); err != nil {
 			return err
 		}
@@ -595,19 +615,6 @@ func (s *Store) UpdateIssue(ctx context.Context, tr model.Trace, key string, pat
 	return issue, changed, err
 }
 
-// changesSpec reports whether an update changes what the issue says, which
-// makes the user's acknowledgement of the old spec stale: its title, body or
-// type, or a return from review to doing, which is a rejection. Anything else
-// leaves the acknowledgement alone.
-func changesSpec(changes map[string]model.Change, from, to model.IssueStatus) bool {
-	for _, f := range []string{"title", "body", "type"} {
-		if _, ok := changes[f]; ok {
-			return true
-		}
-	}
-	return from == model.StatusReview && to == model.StatusDoing
-}
-
 func timePtr(t *model.Time) any {
 	if t == nil {
 		return nil
@@ -626,7 +633,7 @@ func fieldValues(i *model.Issue) map[string]any {
 	return map[string]any{
 		"title": i.Title, "body": i.Body, "type": i.Type, "status": i.Status, "priority": i.Priority,
 		"labels": i.Labels, "parent": i.Parent, "depends_on": i.DependsOn, "refs": i.Refs, "recheck_condition": i.RecheckCondition, "decision_needed": i.DecisionNeeded, "topic": i.Topic,
-		"milestone": i.Milestone,
+		"milestone": i.Milestone, "verification_state": i.VerificationState, "verification_note": i.VerificationNote,
 	}
 }
 
@@ -812,13 +819,7 @@ func (s *Store) buildIssueQuery(f IssueFilter) (issueQuery, error) {
 		where = append(where, clause)
 		args = append(args, milestoneArgs...)
 	}
-	if f.Acknowledged != nil {
-		if *f.Acknowledged {
-			where = append(where, "i.acknowledged_at is not null")
-		} else {
-			where = append(where, "i.acknowledged_at is null")
-		}
-	}
+	in("i.verification_state", enumStrings(f.VerificationStates))
 	if f.Dormant != nil {
 		if *f.Dormant {
 			where = append(where, dormantCond)

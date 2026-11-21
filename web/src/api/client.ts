@@ -1,5 +1,5 @@
 import { userActorIds } from '@/lib/actors'
-import type { Actor, Agenda, ErrorDetail, EventListResponse, Session, SessionListResponse } from './types'
+import type { Actor, Agenda, ErrorDetail, EventListResponse, Issue, Session, SessionListResponse, VerificationState } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
@@ -126,8 +126,8 @@ export interface IssueListFilters {
   topic?: readonly string[]
   /** 마일스톤 ID(문자열)와 none. 쉼표 OR. none은 마일스톤이 없는 이슈다. */
   milestone?: readonly string[]
-  /** 'false'면 미확인만, 'true'면 확인된 것만. 없으면 거르지 않는다. */
-  acknowledged?: 'true' | 'false'
+  /** 검증 상태 필터(none, pending, verified). 배열이면 쉼표 OR. 없으면 거르지 않는다. */
+  verification?: VerificationState | readonly VerificationState[]
   /** 'true'면 30일 넘게 활동이 없는 열린 이슈만. 없으면 거르지 않는다. */
   dormant?: 'true'
   q: string
@@ -146,7 +146,7 @@ export function issueListQuery(f: IssueListFilters): string {
     label: f.label,
     topic: f.topic?.join(','),
     milestone: f.milestone?.join(','),
-    acknowledged: f.acknowledged,
+    verification: Array.isArray(f.verification) ? f.verification.join(',') : f.verification,
     dormant: f.dormant,
     q: f.q.trim(),
     sort: f.sort,
@@ -228,6 +228,14 @@ export class ApiClient {
 
   delete<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('DELETE', path, opts)
+  }
+
+  verifyIssue(key: string, version?: number): Promise<Issue> {
+    return this.post<Issue>(`/issues/${key}/verify`, undefined, version !== undefined ? { ifMatch: version } : {})
+  }
+
+  unverifyIssue(key: string, version?: number): Promise<Issue> {
+    return this.delete<Issue>(`/issues/${key}/verify`, version !== undefined ? { ifMatch: version } : {})
   }
 
   listSessions(params?: SessionListParams, signal?: AbortSignal): Promise<SessionListResponse> {

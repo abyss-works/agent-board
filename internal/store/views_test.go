@@ -414,7 +414,7 @@ func TestViewItemsCarryDecisionNeeded(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	const question = "어느 쪽으로 할지"
-	dep := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "doing", Status: model.StatusDoing, DecisionNeeded: str(question)})
+	dep := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "doing", Status: model.StatusDoing, DecisionNeeded: str(question), VerificationState: model.VerificationPending})
 	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "review", Status: model.StatusReview, DecisionNeeded: str(question)})
 	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "blocked", DependsOn: []string{dep.Key}, DecisionNeeded: str(question)})
 	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "ready", Priority: model.P0, DecisionNeeded: str(question)})
@@ -444,7 +444,7 @@ func TestViewItemsCarryDecisionNeeded(t *testing.T) {
 	has("overview blocked", o.Blocked.Items[0].DecisionNeeded)
 	has("overview decisions", o.Decisions.Items[0].DecisionNeeded)
 	has("overview next", o.Next.Items[0].DecisionNeeded)
-	has("overview unacknowledged", o.Unacknowledged.Items[0].DecisionNeeded)
+	has("overview unverified", o.Unverified.Items[0].DecisionNeeded)
 }
 
 func TestQueueLeavesOutExternalWaits(t *testing.T) {

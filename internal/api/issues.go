@@ -11,7 +11,7 @@ import (
 func (h *handler) registerIssues(mux *http.ServeMux) {
 	route(mux, "/v1/issues", methods{"GET": h.listIssues, "POST": h.createIssue})
 	route(mux, "/v1/issues/{key}", methods{"GET": h.getIssue, "PATCH": h.patchIssue, "DELETE": h.deleteIssue})
-	route(mux, "/v1/issues/{key}/acknowledge", methods{"POST": h.acknowledge, "DELETE": h.unacknowledge})
+	route(mux, "/v1/issues/{key}/verify", methods{"POST": h.verifyIssue, "DELETE": h.unverifyIssue})
 	route(mux, "/v1/issues/{key}/claim", methods{"POST": h.claimIssue, "DELETE": h.releaseClaim})
 	route(mux, "/v1/issues/{key}/claims", methods{"GET": h.listIssueClaims})
 	route(mux, "/v1/issues/{key}/comments", methods{"POST": h.createComment})
@@ -23,6 +23,7 @@ func (h *handler) registerIssues(mux *http.ServeMux) {
 var issueWriteFields = map[string]bool{
 	"title": true, "body": true, "type": true, "status": true, "priority": true,
 	"labels": true, "parent": true, "depends_on": true, "refs": true, "recheck_condition": true, "decision_needed": true, "topic": true, "milestone": true,
+	"verification_state": true, "verification_note": true,
 }
 
 // issuePatchFields are the fields of a PATCH: the create fields plus the
@@ -30,7 +31,7 @@ var issueWriteFields = map[string]bool{
 var issuePatchFields = withFields(issueWriteFields, "status_reason")
 
 // issueFields are the activity change fields accepted by the field filter.
-var issueFields = withFields(issuePatchFields, "acknowledged")
+var issueFields = withFields(issuePatchFields)
 
 func withFields(base map[string]bool, extra ...string) map[string]bool {
 	out := make(map[string]bool, len(base)+len(extra))
@@ -54,7 +55,7 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in store.IssueInput
-	var parent, recheck, decision string
+	var parent, recheck, decision, verificationNote string
 	var topic, milestone int64
 	// Nulls on non-nullable fields are left at their zero value so that
 	// validation reports them (an empty title, for example).
@@ -100,6 +101,14 @@ func (h *handler) createIssue(w http.ResponseWriter, r *http.Request) {
 			present, null, e := field(b, "milestone", &milestone)
 			if present && !null {
 				in.Milestone = &milestone
+			}
+			return e
+		},
+		func() *apiError { _, _, e := field(b, "verification_state", &in.VerificationState); return e },
+		func() *apiError {
+			present, null, e := field(b, "verification_note", &verificationNote)
+			if present && !null {
+				in.VerificationNote = &verificationNote
 			}
 			return e
 		},
@@ -157,7 +166,8 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 	var status model.IssueStatus
 	var prio model.Priority
 	var labels, deps, refs []string
-	var parent, recheck, decision, statusReason string
+	var parent, recheck, decision, statusReason, verificationNote string
+	var verState model.VerificationState
 	var topic, milestone int64
 	steps := []func() *apiError{
 		func() *apiError {
@@ -255,6 +265,21 @@ func (h *handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 			nonNull("status_reason", p, n, func() { patch.StatusReason = &statusReason })
 			return e
 		},
+		func() *apiError {
+			p, n, e := field(b, "verification_state", &verState)
+			nonNull("verification_state", p, n, func() { patch.VerificationState = &verState })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "verification_note", &verificationNote)
+			if p {
+				patch.VerificationNote = store.Optional[string]{Set: true}
+				if !n {
+					patch.VerificationNote.Value = &verificationNote
+				}
+			}
+			return e
+		},
 	}
 	for _, step := range steps {
 		if aerr := step(); aerr != nil {
@@ -302,14 +327,16 @@ func (h *handler) applyIssuePatch(w http.ResponseWriter, r *http.Request, patch 
 	writeJSON(w, http.StatusOK, issue)
 }
 
-func (h *handler) acknowledge(w http.ResponseWriter, r *http.Request) { h.setAcknowledged(w, r, true) }
-func (h *handler) unacknowledge(w http.ResponseWriter, r *http.Request) {
-	h.setAcknowledged(w, r, false)
+func (h *handler) verifyIssue(w http.ResponseWriter, r *http.Request) {
+	h.setVerification(w, r, true)
+}
+func (h *handler) unverifyIssue(w http.ResponseWriter, r *http.Request) {
+	h.setVerification(w, r, false)
 }
 
-// setAcknowledged marks or unmarks an issue as acknowledged by the user. A
-// request that changes nothing answers 200 without a record.
-func (h *handler) setAcknowledged(w http.ResponseWriter, r *http.Request, acknowledged bool) {
+// setVerification marks a pending issue as verified or reverts a verified issue
+// back to pending. A request that changes nothing answers 200 without a record.
+func (h *handler) setVerification(w http.ResponseWriter, r *http.Request, verify bool) {
 	if aerr := newQuery(r).finish(); aerr != nil {
 		writeError(w, aerr)
 		return
@@ -319,7 +346,15 @@ func (h *handler) setAcknowledged(w http.ResponseWriter, r *http.Request, acknow
 		writeError(w, aerr)
 		return
 	}
-	issue, _, err := h.store.SetAcknowledged(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), acknowledged, version)
+	var (
+		issue *model.Issue
+		err   error
+	)
+	if verify {
+		issue, _, err = h.store.VerifyIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version)
+	} else {
+		issue, _, err = h.store.UnverifyIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version)
+	}
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
@@ -389,14 +424,7 @@ func issueListFilter(q *query, statusDefault string) store.IssueFilter {
 		}
 		f.Milestones = append(f.Milestones, id)
 	}
-	switch v := q.one("acknowledged"); v {
-	case "":
-	case "true", "false":
-		acknowledged := v == "true"
-		f.Acknowledged = &acknowledged
-	default:
-		q.add("acknowledged", "true 또는 false여야 합니다.")
-	}
+	f.VerificationStates = parseEnumList(q, "verification", model.ParseVerificationState)
 	switch v := q.one("dormant"); v {
 	case "":
 	case "true":

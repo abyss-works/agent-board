@@ -1,9 +1,10 @@
 import { BugIcon, DraftingCompassIcon, EyeIcon, LightbulbIcon, PuzzleIcon } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
-import type { IssueStatus, IssueType, Priority } from '@/api/types'
+import type { IssueStatus, IssueType, Priority, VerificationState } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { hashColor } from '@/lib/colors'
-import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
+import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL, VERIFICATION_STATE_LABEL } from '@/lib/labels'
+import { verificationBadgeVariant } from '@/lib/verification'
 import { cn } from '@/lib/utils'
 
 // 상태 아이콘. 원의 채움 정도로 진행을 나타낸다.
@@ -138,6 +139,21 @@ export function DormantBadge() {
   return (
     <Badge variant="outline" title="30일 넘게 활동이 없음">
       오래됨
+    </Badge>
+  )
+}
+
+/** 사용자 검증 게이트 상태 배지. none은 아무것도 그리지 않는다. */
+export function VerificationBadge({ state, note }: { state: VerificationState; note?: string | null }) {
+  const variant = verificationBadgeVariant(state)
+  if (!variant) return null
+  const label = VERIFICATION_STATE_LABEL[state]
+  const title = state === 'pending'
+    ? note ? `${label} (릴리즈 차단): ${note}` : `${label} (릴리즈 차단)`
+    : note ? `${label}: ${note}` : label
+  return (
+    <Badge variant={variant} title={title}>
+      {label}
     </Badge>
   )
 }
