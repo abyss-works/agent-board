@@ -216,3 +216,21 @@ func TestSkillShowIndexFitsInFirstCharacters(t *testing.T) {
 		t.Error("index shows agb msg put without the required --title")
 	}
 }
+
+func TestSkillDocumentsSemanticField(t *testing.T) {
+	skill := embeddedSkill(t, "SKILL.md")
+	const heading = "### 작업 전에 과거 기록을 찾을 때\n"
+	start := strings.Index(skill, heading)
+	if start < 0 {
+		t.Fatalf("SKILL.md lacks the %q section", heading)
+	}
+	section := skill[start:]
+	if end := strings.Index(section[len(heading):], "\n## "); end >= 0 {
+		section = section[:len(heading)+end]
+	}
+	for _, want := range []string{"`semantic`", "`ok`", "`disabled`", "`failed`"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("past-records search section lacks %s", want)
+		}
+	}
+}
