@@ -185,7 +185,7 @@ func TestValidateIssueDecisionNeeded(t *testing.T) {
 	// A question can stay on an issue of any type.
 	for _, typ := range IssueTypes {
 		for _, c := range cases {
-			i := Issue{Title: "t", Type: typ, Status: StatusBacklog, Priority: P2, DecisionNeeded: c.question}
+			i := Issue{Title: "t", Type: typ, Status: StatusBacklog, Priority: P2, VerificationState: VerificationNone, DecisionNeeded: c.question}
 			if typ == TypeObservation {
 				i.RecheckCondition = text("다음 릴리즈")
 			}
@@ -374,5 +374,113 @@ func TestTimeJSON(t *testing.T) {
 	var np *Time
 	if b, _ = json.Marshal(np); string(b) != "null" {
 		t.Fatalf("nil *Time = %s", b)
+	}
+}
+
+func TestVerificationStateEnum(t *testing.T) {
+	if want := []VerificationState{VerificationNone, VerificationPending, VerificationVerified}; !reflect.DeepEqual(VerificationStates, want) {
+		t.Errorf("VerificationStates = %v, want %v", VerificationStates, want)
+	}
+	for _, s := range []string{"none", "pending", "verified"} {
+		if got, ok := ParseVerificationState(s); !ok || string(got) != s {
+			t.Errorf("ParseVerificationState(%q) = %q, %v", s, got, ok)
+		}
+	}
+	for _, bad := range []string{"", "done", "unverified", "PENDING"} {
+		if _, ok := ParseVerificationState(bad); ok {
+			t.Errorf("ParseVerificationState(%q) should be invalid", bad)
+		}
+	}
+}
+
+func TestValidateIssueVerification(t *testing.T) {
+	text := func(s string) *string { return &s }
+	cases := []struct {
+		name       string
+		state      VerificationState
+		note       *string
+		wantFields []string
+		wantNote   *string
+	}{
+		{"none without note", VerificationNone, nil, nil, nil},
+		{"pending without note", VerificationPending, nil, nil, nil},
+		{"verified without note", VerificationVerified, nil, nil, nil},
+		{"pending with trimmed note", VerificationPending, text("  화면 확인  "), nil, text("화면 확인")},
+		{"pending with 500 runes", VerificationPending, text(strings.Repeat("가", MaxVerificationNoteRunes)), nil, text(strings.Repeat("가", MaxVerificationNoteRunes))},
+		{"pending with 501 runes", VerificationPending, text(strings.Repeat("가", MaxVerificationNoteRunes+1)), []string{"verification_note"}, nil},
+		{"pending with empty note", VerificationPending, text(""), []string{"verification_note"}, nil},
+		{"pending with whitespace note", VerificationPending, text("   \t\n  "), []string{"verification_note"}, nil},
+		{"none with note", VerificationNone, text("화면 확인"), []string{"verification_note"}, nil},
+		{"none with empty note", VerificationNone, text(""), []string{"verification_note"}, nil},
+		{"invalid state", VerificationState("unknown"), nil, []string{"verification_state"}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			i := Issue{
+				Title:             "t",
+				Type:              TypeFeature,
+				Status:            StatusBacklog,
+				Priority:          P2,
+				VerificationState: c.state,
+				VerificationNote:  c.note,
+			}
+			NormalizeIssue(&i)
+			err := ValidateIssue(&i)
+			if len(c.wantFields) == 0 {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !reflect.DeepEqual(i.VerificationNote, c.wantNote) {
+					t.Errorf("VerificationNote = %v, want %v", i.VerificationNote, c.wantNote)
+				}
+				return
+			}
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v, want *ValidationError", err)
+			}
+			got := make([]string, len(ve.Fields))
+			for idx, f := range ve.Fields {
+				got[idx] = f.Field
+			}
+			if !reflect.DeepEqual(got, c.wantFields) {
+				t.Errorf("fields = %v, want %v", got, c.wantFields)
+			}
+		})
+	}
+}
+
+func TestIssueCarriesVerificationFields(t *testing.T) {
+	note := "실제 기기에서 확인"
+	by := "owner"
+	at := NewTime(time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC))
+	i := Issue{
+		Key:               "APP-1",
+		VerificationState: VerificationVerified,
+		VerificationNote:  &note,
+		VerifiedAt:        &at,
+		VerifiedBy:        &by,
+	}
+	s := i.Summary()
+	if s.VerificationState != VerificationVerified || s.VerificationNote == nil || *s.VerificationNote != note ||
+		s.VerifiedAt == nil || *s.VerifiedAt != at || s.VerifiedBy == nil || *s.VerifiedBy != by {
+		t.Errorf("summary = %+v", s)
+	}
+	for name, v := range map[string]any{"issue": i, "summary": s} {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		js := string(b)
+		for _, want := range []string{
+			`"verification_state":"verified"`,
+			`"verification_note":"실제 기기에서 확인"`,
+			`"verified_at":"2026-11-21T10:00:00.000Z"`,
+			`"verified_by":"owner"`,
+		} {
+			if !strings.Contains(js, want) {
+				t.Errorf("%s JSON missing %s: %s", name, want, js)
+			}
+		}
 	}
 }

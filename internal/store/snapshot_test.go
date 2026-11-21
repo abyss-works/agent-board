@@ -64,15 +64,23 @@ func TestSnapshotAndFingerprint(t *testing.T) {
 	}
 }
 
-// A snapshot is a complete copy of the schema version 3 data: topics, the
-// topic of an issue, its status reason and its acknowledgement.
-func TestSnapshotCarriesTopicsReasonsAndAcknowledgements(t *testing.T) {
+// A snapshot is a complete copy of topics, the topic of an issue, its status
+// reason, and its verification fields.
+func TestSnapshotCarriesTopicsReasonsAndVerifications(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	flow := mustTopic(t, s, "AGB", "이슈 흐름", nil)
 	triage := mustTopic(t, s, "AGB", "트리아지", &flow.ID)
-	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "agent work", Topic: &triage.ID})
+	i1 := mustIssue(t, s, ctx, trClaude, IssueInput{
+		Title:             "agent work",
+		Topic:             &triage.ID,
+		VerificationState: model.VerificationPending,
+		VerificationNote:  str("화면 확인"),
+	})
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "user work"})
+	if _, _, err := s.VerifyIssue(ctx, trOwner, i1.Key, nil); err != nil {
+		t.Fatal(err)
+	}
 	cancelled := model.StatusCancelled
 	if _, _, err := s.UpdateIssue(ctx, trOwner, "AGB-2", IssuePatch{Status: &cancelled, StatusReason: str("정리")}, nil); err != nil {
 		t.Fatal(err)
@@ -87,17 +95,17 @@ func TestSnapshotCarriesTopicsReasonsAndAcknowledgements(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	var version, topics, topicIssues, acked, reasons int
+	var version, topics, topicIssues, verified, reasons int
 	if err := db.QueryRow("pragma user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(`select (select count(*) from topic), (select count(*) from issue where topic_id is not null),
-		(select count(*) from issue where acknowledged_at is not null), (select count(*) from issue where status_reason is not null)`).
-		Scan(&topics, &topicIssues, &acked, &reasons); err != nil {
+		(select count(*) from issue where verification_state = 'verified' and verified_at is not null), (select count(*) from issue where status_reason is not null)`).
+		Scan(&topics, &topicIssues, &verified, &reasons); err != nil {
 		t.Fatal(err)
 	}
-	if version != SchemaVersion || topics != 2 || topicIssues != 1 || acked != 1 || reasons != 1 {
-		t.Errorf("snapshot: version %d, topics %d, issues with a topic %d, acknowledged %d, with a reason %d", version, topics, topicIssues, acked, reasons)
+	if version != SchemaVersion || topics != 2 || topicIssues != 1 || verified != 1 || reasons != 1 {
+		t.Errorf("snapshot: version %d, topics %d, issues with a topic %d, verified %d, with a reason %d", version, topics, topicIssues, verified, reasons)
 	}
 }
 

@@ -215,9 +215,30 @@ func (s *Store) Labels(ctx context.Context, projects []string) ([]LabelCount, er
 	return out, rows.Err()
 }
 
-// notDeleted are the statuses of issues that have not been soft deleted.
-var notDeleted = []model.IssueStatus{
-	model.StatusBacklog, model.StatusDoing, model.StatusReview, model.StatusDone, model.StatusCancelled,
+// activeForVerification are the statuses of issues that count toward the
+// verification gate: every status except cancelled and deleted (done is included).
+var activeForVerification = []model.IssueStatus{
+	model.StatusBacklog, model.StatusDoing, model.StatusReview, model.StatusDone,
+}
+
+// ListUnverifiedIssues returns all non-cancelled, non-deleted issues (including
+// done) with verification_state = 'pending' for project, optionally scoped to
+// milestoneID, ordered newest updated first.
+func (s *Store) ListUnverifiedIssues(ctx context.Context, project string, milestoneID *int64) ([]model.IssueSummary, error) {
+	f := IssueFilter{
+		Statuses:           activeForVerification,
+		VerificationStates: []model.VerificationState{model.VerificationPending},
+		Sort:               []Sort{{Field: "updated_at", Desc: true}},
+		Limit:              -1,
+	}
+	if project != "" {
+		f.Projects = []string{project}
+	}
+	if milestoneID != nil {
+		f.Milestones = []int64{*milestoneID}
+	}
+	items, _, err := s.ListIssues(ctx, f)
+	return items, err
 }
 
 // Section is a capped list with its full count.
@@ -245,7 +266,7 @@ type Overview struct {
 	Blocked        Section[model.QueueItem]    `json:"blocked"`
 	Decisions      Section[model.DecisionItem] `json:"decisions"`
 	Next           Section[model.QueueItem]    `json:"next"`
-	Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
+	Unverified     Section[model.IssueSummary] `json:"unverified"`
 	RecentActivity Section[model.Activity]     `json:"recent_activity"`
 }
 
@@ -332,15 +353,17 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 		return nil, err
 	}
 	o.Next = Section[model.QueueItem]{Total: total, Items: next}
-	notAcknowledged := false
-	unacked, total, err := s.ListIssues(ctx, IssueFilter{
-		Projects: projects, Statuses: notDeleted, Acknowledged: &notAcknowledged,
-		Sort: []Sort{{Field: "created_at", Desc: true}}, Limit: limit,
+	unverified, total, err := s.ListIssues(ctx, IssueFilter{
+		Projects:           projects,
+		Statuses:           activeForVerification,
+		VerificationStates: []model.VerificationState{model.VerificationPending},
+		Sort:               []Sort{{Field: "updated_at", Desc: true}},
+		Limit:              limit,
 	})
 	if err != nil {
 		return nil, err
 	}
-	o.Unacknowledged = Section[model.IssueSummary]{Total: total, Items: unacked}
+	o.Unverified = Section[model.IssueSummary]{Total: total, Items: unverified}
 	acts, total, err := s.ListActivity(ctx, ActivityFilter{Projects: projects, Limit: limit})
 	if err != nil {
 		return nil, err
@@ -364,7 +387,7 @@ type AgendaProject struct {
 	UserTurn struct {
 		Review          Section[model.IssueSummary] `json:"review"`
 		Decisions       Section[model.DecisionItem] `json:"decisions"`
-		Unacknowledged  Section[model.IssueSummary] `json:"unacknowledged"`
+		Unverified      Section[model.IssueSummary] `json:"unverified"`
 		Tasks           Section[model.IssueSummary] `json:"tasks"`
 		WaitingSessions Section[model.Session]      `json:"waiting_sessions"`
 	} `json:"user_turn"`
@@ -419,7 +442,7 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		var p AgendaProject
 		p.Project = o.Project
 		p.Dormant = dormantTotal
-		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unacknowledged = o.Review, o.Decisions, o.Unacknowledged
+		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unverified = o.Review, o.Decisions, o.Unverified
 		p.UserTurn.Tasks = Section[model.IssueSummary]{Total: taskTotal, Items: tasks}
 		p.UserTurn.WaitingSessions = waitingSessions
 		p.Agent.Doing, p.Agent.Next = o.Doing, o.Next

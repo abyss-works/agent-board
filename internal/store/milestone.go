@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,26 @@ import (
 // ErrDuplicateMilestoneName reports a name that another milestone of the
 // project, one that is not deleted, already has. HTTP maps it to 409.
 var ErrDuplicateMilestoneName = errors.New("duplicate milestone name")
+
+// ErrUnverifiedIssues is wrapped by UnverifiedIssuesError when a milestone
+// cannot be closed because it still has issues waiting for user verification.
+var ErrUnverifiedIssues = errors.New("unverified issues remain")
+
+// UnverifiedIssuesError reports that closing a milestone is blocked by one or
+// more non-cancelled, non-deleted issues whose verification_state is pending.
+type UnverifiedIssuesError struct {
+	Issues []model.IssueSummary
+}
+
+func (e *UnverifiedIssuesError) Error() string {
+	keys := make([]string, len(e.Issues))
+	for i, it := range e.Issues {
+		keys[i] = it.Key
+	}
+	return fmt.Sprintf("unverified issues remain: %s", strings.Join(keys, ", "))
+}
+
+func (e *UnverifiedIssuesError) Unwrap() error { return ErrUnverifiedIssues }
 
 // MilestoneInput is a create request. An empty Description is the default and
 // a nil TargetDate sets no date.
@@ -240,6 +261,15 @@ func (s *Store) UpdateMilestone(ctx context.Context, tr model.Trace, id int64, p
 				return err
 			}
 		}
+		if next.Status == model.MilestoneClosed && cur.Status != model.MilestoneClosed {
+			pending, err := s.listUnverifiedMilestoneIssues(ctx, tx, cur.ID)
+			if err != nil {
+				return err
+			}
+			if len(pending) > 0 {
+				return &UnverifiedIssuesError{Issues: pending}
+			}
+		}
 		now := s.stamp()
 		closedAt := cur.ClosedAt
 		switch {
@@ -305,4 +335,35 @@ func milestoneFilterClause(milestones []int64, none bool) (string, []any) {
 		return "", nil
 	}
 	return "(" + strings.Join(parts, " or ") + ")", args
+}
+
+// listUnverifiedMilestoneIssues returns all non-cancelled, non-deleted issues
+// (including done) in milestoneID with verification_state = 'pending', newest
+// updated first.
+func (s *Store) listUnverifiedMilestoneIssues(ctx context.Context, q querier, milestoneID int64) ([]model.IssueSummary, error) {
+	rows, err := q.QueryContext(ctx, `select `+issueCols(false)+issueFrom+
+		` where i.milestone_id = ? and i.status not in ('cancelled','deleted') and i.verification_state = 'pending' order by i.updated_at desc, i.id desc`, milestoneID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*issueRow
+	for rows.Next() {
+		r, err := scanIssue(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := loadLinks(ctx, q, list); err != nil {
+		return nil, err
+	}
+	items := make([]model.IssueSummary, len(list))
+	for n, r := range list {
+		items[n] = s.summary(r)
+	}
+	return items, nil
 }
