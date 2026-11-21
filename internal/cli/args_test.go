@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,26 @@ func TestLeafFlagsRegistersAllGlobalsExceptSkipped(t *testing.T) {
 		all = append(all, f.Name)
 	})
 
+	specs := map[string]struct {
+		initVal string
+		newVal  string
+		get     func(*globals) string
+	}{
+		"json":        {"true", "true", func(g *globals) string { return strconv.FormatBool(g.json) }},
+		"table":       {"true", "true", func(g *globals) string { return strconv.FormatBool(g.table) }},
+		"text":        {"true", "true", func(g *globals) string { return strconv.FormatBool(g.text) }},
+		"context":     {"ctx-init", "ctx-new", func(g *globals) string { return g.context }},
+		"url":         {"http://init.example.com", "http://new.example.com", func(g *globals) string { return g.url }},
+		"actor":       {"init-actor", "new-actor", func(g *globals) string { return g.actor }},
+		"session-id":  {"init-sess", "new-sess", func(g *globals) string { return g.sessionID }},
+		"client-host": {"init-host", "new-host", func(g *globals) string { return g.clientHost }},
+		"config":      {"init-config.json", "new-config.json", func(g *globals) string { return g.config }},
+		"fields":      {"id", "id,actor", func(g *globals) string { return g.fields }},
+	}
+	if len(all) != len(specs) {
+		t.Fatalf("specs cover %d flags, globals registered %d: %v", len(specs), len(all), all)
+	}
+
 	cases := []struct {
 		name string
 		skip []string
@@ -73,9 +94,21 @@ func TestLeafFlagsRegistersAllGlobalsExceptSkipped(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g := &globals{json: true, context: "staging", fields: "id", text: true}
-			fs := leafFlags(tc.name, g, tc.skip...)
+			gInit := &globals{
+				json:       true,
+				table:      true,
+				text:       true,
+				context:    "ctx-init",
+				url:        "http://init.example.com",
+				actor:      "init-actor",
+				sessionID:  "init-sess",
+				clientHost: "init-host",
+				config:     "init-config.json",
+				fields:     "id",
+			}
+			fs := leafFlags(tc.name, gInit, tc.skip...)
 			for _, name := range all {
+				sp := specs[name]
 				got := fs.Lookup(name)
 				if slices.Contains(tc.skip, name) {
 					if got != nil {
@@ -85,6 +118,10 @@ func TestLeafFlagsRegistersAllGlobalsExceptSkipped(t *testing.T) {
 				}
 				if got == nil {
 					t.Errorf("global flag %q is missing", name)
+					continue
+				}
+				if got.Value.String() != sp.initVal || got.DefValue != sp.initVal {
+					t.Errorf("flag %q initial=(%q, def=%q), want %q", name, got.Value.String(), got.DefValue, sp.initVal)
 				}
 			}
 			var registered int
@@ -92,14 +129,31 @@ func TestLeafFlagsRegistersAllGlobalsExceptSkipped(t *testing.T) {
 			if want := len(all) - len(tc.skip); registered != want {
 				t.Errorf("registered %d flags, want %d", registered, want)
 			}
-			if got := fs.Lookup("context"); got == nil || got.Value.String() != "staging" {
-				t.Errorf("context flag = %v, want staging", got)
+
+			gParsed := &globals{}
+			fsParse := leafFlags(tc.name, gParsed, tc.skip...)
+			var args []string
+			for _, name := range all {
+				if slices.Contains(tc.skip, name) {
+					continue
+				}
+				args = append(args, "--"+name+"="+specs[name].newVal)
 			}
-			if got := fs.Lookup("fields"); got == nil || got.Value.String() != "id" {
-				t.Errorf("fields flag = %v, want id", got)
+			if err := fsParse.Parse(args); err != nil {
+				t.Fatalf("Parse(%v): %v", args, err)
 			}
-			if got := fs.Lookup("text"); got == nil || got.Value.String() != "true" {
-				t.Errorf("text flag = %v, want true", got)
+			for _, name := range all {
+				sp := specs[name]
+				got := sp.get(gParsed)
+				if slices.Contains(tc.skip, name) {
+					if got != "" && got != "false" {
+						t.Errorf("skipped flag %q altered gParsed: got %q", name, got)
+					}
+					continue
+				}
+				if got != sp.newVal {
+					t.Errorf("parsed %q -> g = %q, want %q", name, got, sp.newVal)
+				}
 			}
 		})
 	}

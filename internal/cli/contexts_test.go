@@ -627,25 +627,43 @@ func TestActivityContextFlagAndFieldsProjection(t *testing.T) {
 	if strings.TrimSpace(h.stdout.String()) != want {
 		t.Errorf("stdout = %s, want %s", h.stdout.String(), want)
 	}
+
+	h.env["AGB_CONTEXT"] = "prod"
+	if code := h.run("activity", "--context", "staging", "--fields", "id"); code != 0 {
+		t.Fatalf("with AGB_CONTEXT=prod: code=%d stderr=%s", code, h.stderr)
+	}
+	if len(prod.reqs) != 0 || len(staging.reqs) != 2 {
+		t.Fatalf("with AGB_CONTEXT=prod: prod=%d staging=%d", len(prod.reqs), len(staging.reqs))
+	}
+	if strings.TrimSpace(h.stdout.String()) != want {
+		t.Errorf("with AGB_CONTEXT=prod: stdout = %s, want %s", h.stdout.String(), want)
+	}
 }
 
 func TestConfigSetContextRejectsTextWithoutFields(t *testing.T) {
-	for _, args := range [][]string{
-		{"config", "set-context", "prod", "--url", "http://127.0.0.1:9000", "--text"},
-		{"--text", "config", "set-context", "prod", "--url", "http://127.0.0.1:9000"},
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"config", "set-context", "prod", "--url", "http://127.0.0.1:9000", "--text"}, []string{"--text", "--fields"}},
+		{[]string{"--text", "config", "set-context", "prod", "--url", "http://127.0.0.1:9000"}, []string{"--text", "--fields"}},
+		{[]string{"--fields", ",", "config", "set-context", "prod", "--url", "http://127.0.0.1:9000"}, []string{"--fields"}},
+		{[]string{"config", "set-context", "prod", "--url", "http://127.0.0.1:9000", "--fields", ","}, []string{"--fields"}},
 	} {
 		h := newHarness(t, nil, false)
 		for k := range h.env {
 			delete(h.env, k)
 		}
-		if code := h.run(args...); code != 2 {
-			t.Errorf("%v: code=%d, want 2 (stderr=%s)", args, code, h.stderr)
+		if code := h.run(tc.args...); code != 2 {
+			t.Errorf("%v: code=%d, want 2 (stderr=%s)", tc.args, code, h.stderr)
 		}
-		if !strings.Contains(h.stderr.String(), "--text") || !strings.Contains(h.stderr.String(), "--fields") {
-			t.Errorf("%v: stderr=%s", args, h.stderr)
+		for _, w := range tc.want {
+			if !strings.Contains(h.stderr.String(), w) {
+				t.Errorf("%v: stderr=%s (missing %q)", tc.args, h.stderr, w)
+			}
 		}
 		if _, err := os.Stat(h.app.ConfigPath); !os.IsNotExist(err) {
-			t.Errorf("%v: config file was created on usage error: %v", args, err)
+			t.Errorf("%v: config file was created on usage error: %v", tc.args, err)
 		}
 	}
 }

@@ -265,6 +265,15 @@ func TestActivityCommonFlagsAndTextOutput(t *testing.T) {
 		t.Errorf("case1 limit query=%q, want 1", req.Query.Get("limit"))
 	}
 
+	got = textRun(t, h, 0, "--text", "activity", "--fields", "id")
+	if got != "501\n" {
+		t.Errorf("split --text before / --fields after out=%q", got)
+	}
+	got = textRun(t, h, 0, "--fields", "id", "activity", "--text")
+	if got != "501\n" {
+		t.Errorf("split --fields before / --text after out=%q", got)
+	}
+
 	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":502,"actor":"codex"}],"total":1,"limit":50,"offset":0}`})
 	h.env["AGB_ACTOR"] = "claude"
 	h.env["AGB_CLIENT_HOST"] = "laptop"

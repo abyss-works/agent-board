@@ -23,7 +23,7 @@ var activityCmd = &command{
   --sort <at|-at>         기본 -at (최신 먼저)
   --limit <N>, --offset <N>
 
-주의: --actor 와 --client-host 는 이 명령에서는 필터입니다. 요청 헤더의 행위자는 AGB_ACTOR 나 설정 파일로 정합니다.
+주의: --actor 와 --client-host 는 이 명령 뒤에서는 필터입니다. 요청의 행위자와 기기 이름은 명령 앞 --actor·--client-host, 환경변수(AGB_ACTOR, AGB_CLIENT_HOST), 설정 파일(기기 이름은 기본 호스트 이름) 순으로 정합니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		// --actor and --client-host filter here, so skip them from globals.
