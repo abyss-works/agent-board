@@ -267,9 +267,25 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	var ierr *store.ImmutableError
 	var merr *store.MetadataDiffError
 	var cerr *store.ErrIssueClaimed
+	var uerr *store.UnverifiedIssuesError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return notFound("대상이 없습니다.")
+	case errors.As(err, &uerr):
+		details := make([]Detail, len(uerr.Issues))
+		for i, it := range uerr.Issues {
+			msg := it.Key + ": " + it.Title
+			if it.VerificationNote != nil && *it.VerificationNote != "" {
+				msg = it.Key + ": " + *it.VerificationNote
+			}
+			details[i] = Detail{Field: "verification", Reason: "unverified", Message: msg}
+		}
+		return &apiError{
+			Status:  http.StatusConflict,
+			Code:    "unverified_issues",
+			Message: "검증되지 않은 항목이 남아 마일스톤을 닫을 수 없습니다.",
+			Details: details,
+		}
 	case errors.As(err, &cerr):
 		return &apiError{
 			Status:  http.StatusConflict,

@@ -58,9 +58,9 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 ### 이슈
 
 - 종류: `feature`, `bug`, `design`, `idea`, `observation`. `observation`은 다시 볼 조건(`recheck_condition`)이 필수입니다.
-- 종류, 상태, 결정 필요, 확인은 서로 독립된 네 축입니다.
+- 종류, 상태, 결정 필요, 사용자 검증은 서로 독립된 네 축입니다.
   - 결정 필요(`decision_needed`): 사용자의 답을 기다리는 질문 한 문장입니다. 현황과 아젠다의 `decisions.items[].waiting_sessions`에는 그 이슈를 점유 중이거나 지정한 활성 대기 세션(대기 상태 설정 후 24시간 이내)이 함께 붙습니다.
-  - 확인(`ack`): 사용자가 지금의 이슈 내용을 알고 있는지 나타냅니다. 작업 흐름을 막지 않으며, 제목·본문·종류가 바뀌거나 `review`에서 `doing`으로 돌아가면 다시 미확인이 됩니다. 사용자가 만든 이슈는 만들 때 확인된 것으로 표시됩니다.
+  - 사용자 검증(`verification_state`): 기본값은 `none`이며, 화면·사용감·실기기 확인처럼 사용자가 직접 확인해야 하는 항목만 선택적으로 `pending`과 검증 메모(`verification_note`)를 붙입니다. 코드·테스트·조사 항목은 기본값 `none`으로 둡니다. 검증 완료(`verified`)는 `agb issue verify`로 기록하며, 이후 이슈를 수정해도 자동으로 되돌아가지 않습니다. 취소·삭제되지 않은 `pending` 항목이 남아 있으면 마일스톤을 닫을 수 없고(`409 unverified_issues`), `agb release check`가 종료 코드 1로 알립니다.
 - 우선순위: `P0`~`P3`. 지정하지 않으면 `bug`는 P1, `idea`와 `observation`은 P3, 나머지는 P2입니다. P0(장애, 데이터 손실, 보안 결함)은 서버가 자동으로 매기지 않습니다.
 - 에이전트가 만드는 이슈는 본문이 종류별 템플릿(`agb template show <종류>`)의 `##` 제목을 순서대로 모두 갖춰야 합니다.
 - `cancelled`와 `deleted`로 바꿀 때는 사유가 필수입니다. 삭제는 상태 변경이며 다른 상태로 되돌릴 수 있습니다.
@@ -332,10 +332,11 @@ agb issue comment APP-12 --kind decision --summary "정렬 기준 결정" --body
 agb issue comment APP-12 --status done --body "..."
 ```
 
-사용자는 `agb agenda`의 사용자 차례(검토 대기, 결정 필요, 미확인, 대기 세션)를 에이전트에게 말해 답하거나, 웹이나 CLI에서 직접 처리합니다.
+사용자는 `agb agenda`의 사용자 차례(검토 대기, 결정 필요, 검증 필요, 대기 세션)를 에이전트에게 말해 답하거나, 웹이나 CLI에서 직접 처리합니다.
 
 ```bash
-agb --actor owner issue ack APP-12
+agb --actor owner issue verify APP-12
+agb release check -p APP --milestone v1.0
 ```
 
 기록 문서와 검색:
@@ -377,7 +378,7 @@ agb stats
 | 프로젝트 | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{key}`, `GET /projects/{key}/activity`, `GET /projects/{key}/overview` |
 | 주제 | `GET, POST /projects/{key}/topics`, `PATCH, DELETE /topics/{id}` |
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
-| 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST, DELETE /issues/{key}/claim`, `GET /issues/{key}/claims`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
+| 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/verify`, `POST, DELETE /issues/{key}/claim`, `GET /issues/{key}/claims`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
 | 기록 문서 | `GET /projects/{key}/documents`, `POST /projects/{key}/documents:batch`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
 | 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
 | 이벤트 | `GET /events`, `GET /events/stream`(SSE, `Last-Event-ID` 지원) |

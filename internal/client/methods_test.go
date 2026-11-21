@@ -213,11 +213,12 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		{"list by milestone", func() (*Response, error) {
 			return c.ListIssues(ctx, IssueFilter{Milestone: "3,none"})
 		}, "GET", "/v1/issues", "milestone=3%2Cnone", ""},
-		{"acknowledge", func() (*Response, error) { return c.Acknowledge(ctx, "CLI-1") }, "POST", "/v1/issues/CLI-1/acknowledge", "", ""},
-		{"unacknowledge", func() (*Response, error) { return c.Unacknowledge(ctx, "CLI-1") }, "DELETE", "/v1/issues/CLI-1/acknowledge", "", ""},
-		{"list unacknowledged", func() (*Response, error) {
-			return c.ListIssues(ctx, IssueFilter{Project: "CLI", Acknowledged: "false"})
-		}, "GET", "/v1/issues", "acknowledged=false&project=CLI", ""},
+		{"verify", func() (*Response, error) { return c.Verify(ctx, "CLI-1", "") }, "POST", "/v1/issues/CLI-1/verify", "", ""},
+		{"verify with version", func() (*Response, error) { return c.Verify(ctx, "CLI-1", "3") }, "POST", "/v1/issues/CLI-1/verify", "", ""},
+		{"unverify", func() (*Response, error) { return c.Unverify(ctx, "CLI-1", "") }, "DELETE", "/v1/issues/CLI-1/verify", "", ""},
+		{"list pending verification", func() (*Response, error) {
+			return c.ListIssues(ctx, IssueFilter{Project: "CLI", Verification: "pending"})
+		}, "GET", "/v1/issues", "project=CLI&verification=pending", ""},
 		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "", "") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
 		{"comment with summary", func() (*Response, error) {
 			return c.AddComment(ctx, "CLI-1", "댓글", "서버 랭킹 함수 구현", "")

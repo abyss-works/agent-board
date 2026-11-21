@@ -65,7 +65,7 @@ type IssueFilter struct {
 	Parent          string
 	Topic           string // topic ids and none, comma separated (OR)
 	Milestone       string // milestone ids and none, comma separated (OR)
-	Acknowledged    string // "true" or "false"; empty sends no filter
+	Verification    string // none, pending, verified, comma separated (OR); empty sends no filter
 	Dormant         bool   // only dormant issues; false sends no filter
 	CreatedBy       string
 	UpdatedBy       string
@@ -92,7 +92,7 @@ func (f IssueFilter) Values() url.Values {
 	set(v, "parent", f.Parent)
 	set(v, "topic", f.Topic)
 	set(v, "milestone", f.Milestone)
-	set(v, "acknowledged", f.Acknowledged)
+	set(v, "verification", f.Verification)
 	if f.Dormant {
 		v.Set("dormant", "true")
 	}
@@ -517,14 +517,16 @@ func (c *Client) RevokeCurrentToken(ctx context.Context) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/tokens/current", nil, nil)
 }
 
-// Acknowledge marks an issue as acknowledged by the actor of the request.
-func (c *Client) Acknowledge(ctx context.Context, key string) (*Response, error) {
-	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
+// Verify marks a pending issue as verified by the actor of the request. A
+// non-empty version is sent as If-Match.
+func (c *Client) Verify(ctx context.Context, key, version string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/verify", nil, ifMatch(version))
 }
 
-// Unacknowledge clears the acknowledgement of an issue.
-func (c *Client) Unacknowledge(ctx context.Context, key string) (*Response, error) {
-	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
+// Unverify reverts a verified issue back to pending. A non-empty version is
+// sent as If-Match.
+func (c *Client) Unverify(ctx context.Context, key, version string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/verify", nil, ifMatch(version))
 }
 
 // ClaimIssue claims an issue for the session of the client.

@@ -174,13 +174,16 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"type", string(i.Type)},
 		{"status", string(i.Status)},
 		{"status_reason", deref(i.StatusReason, "-")},
-		{"acknowledged", a.acknowledgedText(i.AcknowledgedAt, i.AcknowledgedBy)},
+		{"verification", a.verificationText(i.VerificationState, i.VerifiedAt, i.VerifiedBy)},
 		{"priority", string(i.Priority)},
 		{"labels", joinOr(i.Labels, "-")},
 		{"parent", deref(i.Parent, "-")},
 		{"depends_on", joinOr(i.DependsOn, "-")},
 		{"refs", joinOr(i.Refs, "-")},
 		{"recheck_condition", deref(i.RecheckCondition, "-")},
+	}
+	if i.VerificationNote != nil {
+		pairs = append(pairs, [2]string{"verification_note", *i.VerificationNote})
 	}
 	if i.DecisionNeeded != nil {
 		pairs = append(pairs, [2]string{"결정 필요", *i.DecisionNeeded})
@@ -218,16 +221,19 @@ func milestoneText(id *int64, name *string) string {
 	return *name + " (" + strconv.FormatInt(*id, 10) + ")"
 }
 
-// acknowledgedText says whether the user has seen an issue: "no", or "yes"
-// with the time and, when known, who.
-func (a *App) acknowledgedText(at *model.Time, by *string) string {
-	if at == nil {
-		return "no"
+// verificationText formats an issue's verification state, including the
+// verification time and actor when verified.
+func (a *App) verificationText(state model.VerificationState, at *model.Time, by *string) string {
+	if state == "" {
+		return string(model.VerificationNone)
+	}
+	if state != model.VerificationVerified || at == nil {
+		return string(state)
 	}
 	if by == nil {
-		return "yes (" + formatTime(*at, a.Location) + ")"
+		return string(state) + " (" + formatTime(*at, a.Location) + ")"
 	}
-	return "yes (" + formatTime(*at, a.Location) + ", " + *by + ")"
+	return string(state) + " (" + formatTime(*at, a.Location) + ", " + *by + ")"
 }
 
 // rawString shows a JSON value compactly: strings without quotes, the
@@ -544,7 +550,7 @@ type overview struct {
 	Blocked        section[model.QueueItem]    `json:"blocked"`
 	Decisions      section[model.DecisionItem] `json:"decisions"`
 	Next           section[model.QueueItem]    `json:"next"`
-	Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
+	Unverified     section[model.IssueSummary] `json:"unverified"`
 	RecentActivity section[model.Activity]     `json:"recent_activity"`
 }
 
@@ -591,7 +597,7 @@ func (a *App) renderOverview(w io.Writer, resp *client.Response) error {
 		a.decisionsTable(o.Decisions.Items).write(w, a.TermWidth)
 	}
 	queue("next", o.Next)
-	issues("unacknowledged", o.Unacknowledged)
+	issues("unverified", o.Unverified)
 	fmt.Fprintf(w, "\n== recent_activity (%d) ==\n", o.RecentActivity.Total)
 	if len(o.RecentActivity.Items) > 0 {
 		a.activityTable(o.RecentActivity.Items).write(w, a.TermWidth)
@@ -640,7 +646,7 @@ type agenda struct {
 		UserTurn struct {
 			Review          section[model.IssueSummary] `json:"review"`
 			Decisions       section[model.DecisionItem] `json:"decisions"`
-			Unacknowledged  section[model.IssueSummary] `json:"unacknowledged"`
+			Unverified      section[model.IssueSummary] `json:"unverified"`
 			Tasks           section[model.IssueSummary] `json:"tasks"`
 			WaitingSessions section[model.Session]      `json:"waiting_sessions"`
 		} `json:"user_turn"`
@@ -666,14 +672,14 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 	for _, p := range ag.Projects {
 		u, g, wt := p.UserTurn, p.Agent, p.Waiting
 		fmt.Fprintf(w, "\n### %s (%s)\n", p.Project.Key, p.Project.Name)
-		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d, 사용자 할 일 %d, 대기 세션 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total, u.Tasks.Total, u.WaitingSessions.Total)
+		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 검증 필요 %d, 사용자 할 일 %d, 대기 세션 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unverified.Total, u.Tasks.Total, u.WaitingSessions.Total)
 		if len(u.Review.Items) > 0 {
 			a.issueTable(u.Review.Items).write(w, a.TermWidth)
 		}
 		if len(u.Decisions.Items) > 0 {
 			a.decisionsTable(u.Decisions.Items).write(w, a.TermWidth)
 		}
-		for _, s := range []section[model.IssueSummary]{u.Unacknowledged, u.Tasks} {
+		for _, s := range []section[model.IssueSummary]{u.Unverified, u.Tasks} {
 			if len(s.Items) > 0 {
 				a.issueTable(s.Items).write(w, a.TermWidth)
 			}
