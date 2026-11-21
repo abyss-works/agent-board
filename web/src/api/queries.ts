@@ -334,13 +334,12 @@ export function useDeleteIssue() {
   })
 }
 
-/** 이슈 하나의 확인 표시를 켜거나 끈다. If-Match는 보내지 않아 다른 변경과 겹쳐도 실패하지 않는다. */
-export function useSetAcknowledged() {
+/** 검증 필요(pending) 이슈를 검증 완료(verified)로 표시한다. */
+export function useVerifyIssue() {
   const api = useApi()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ key, acknowledged }: { key: string; acknowledged: boolean }) =>
-      acknowledged ? api.post<Issue>(`/issues/${key}/acknowledge`, undefined) : api.delete<Issue>(`/issues/${key}/acknowledge`),
+    mutationFn: ({ key, version }: { key: string; version?: number }) => api.verifyIssue(key, version),
     onSuccess: (issue) => {
       qc.setQueryData([QUERY_ROOT, 'issue', issue.key], issue)
     },
@@ -348,23 +347,36 @@ export function useSetAcknowledged() {
   })
 }
 
-export interface AcknowledgeManyResult {
+/** 검증 완료(verified) 이슈를 다시 검증 필요(pending)로 되돌린다. */
+export function useUnverifyIssue() {
+  const api = useApi()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, version }: { key: string; version?: number }) => api.unverifyIssue(key, version),
+    onSuccess: (issue) => {
+      qc.setQueryData([QUERY_ROOT, 'issue', issue.key], issue)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: [QUERY_ROOT] }),
+  })
+}
+
+export interface VerifyManyResult {
   done: number
   failed: number
   /** 처음 실패한 요청의 오류 */
   firstError: unknown
 }
 
-/** 키마다 확인 요청을 차례로 보낸다. 일부가 실패해도 나머지는 계속한다. */
-export function useAcknowledgeMany() {
+/** 키마다 검증 완료 요청을 차례로 보낸다. 일부가 실패해도 나머지는 계속한다. */
+export function useVerifyMany() {
   const api = useApi()
   const invalidate = useInvalidateAll()
   return useMutation({
-    mutationFn: async (keys: string[]): Promise<AcknowledgeManyResult> => {
-      const result: AcknowledgeManyResult = { done: 0, failed: 0, firstError: undefined }
+    mutationFn: async (keys: string[]): Promise<VerifyManyResult> => {
+      const result: VerifyManyResult = { done: 0, failed: 0, firstError: undefined }
       for (const key of keys) {
         try {
-          await api.post<Issue>(`/issues/${key}/acknowledge`, undefined)
+          await api.verifyIssue(key)
           result.done += 1
         } catch (err) {
           result.failed += 1

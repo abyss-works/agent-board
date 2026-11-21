@@ -3,7 +3,7 @@ import type { IssueSummary } from '@/api/types'
 import { formatRelative } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { IssueLink } from './issue-link'
-import { DecisionBadge, DormantBadge, IssueKey, LabelChip, PriorityIcon, TypeIcon } from './meta'
+import { DecisionBadge, DormantBadge, IssueKey, LabelChip, PriorityIcon, TypeIcon, VerificationBadge } from './meta'
 
 interface Props {
   issue: IssueSummary
@@ -39,6 +39,7 @@ export function IssueCardBody({ issue, flash, overlay, className }: Props & { cl
         {issue.title}
       </IssueLink>
       <div className="mt-2 flex flex-wrap items-center gap-1">
+        {issue.verification_state === 'pending' ? <VerificationBadge state="pending" note={issue.verification_note} /> : null}
         {issue.decision_needed ? <DecisionBadge question={issue.decision_needed} /> : null}
         {issue.dormant ? <DormantBadge /> : null}
         {issue.labels.slice(0, 3).map((l) => (

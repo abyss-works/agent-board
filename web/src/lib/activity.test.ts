@@ -108,34 +108,33 @@ describe('상태 변경의 사유', () => {
   })
 })
 
-describe('확인 표시의 변경', () => {
-  it('확인과 해제를 한국어로 보인다', () => {
-    expect(formatValue(true, 'acknowledged')).toBe('확인됨')
-    expect(formatValue(false, 'acknowledged')).toBe('미확인')
-    const lines = describeChanges(activity({ changes: { acknowledged: { from: false, to: true } } }))
-    expect(lines).toEqual([{ field: 'acknowledged', label: '확인', from: '미확인', to: '확인됨' }])
-    expect(summarizeActivity(activity({ changes: { acknowledged: { from: true, to: false } } }))).toBe('확인: 확인됨 → 미확인')
+describe('검증 상태와 메모의 변경', () => {
+  it('검증 상태를 한국어로 보인다', () => {
+    expect(formatValue('none', 'verification_state')).toBe('해당 없음')
+    expect(formatValue('pending', 'verification_state')).toBe('검증 필요')
+    expect(formatValue('verified', 'verification_state')).toBe('검증 완료')
+    const lines = describeChanges(activity({ changes: { verification_state: { from: 'none', to: 'pending' } } }))
+    expect(lines).toEqual([{ field: 'verification_state', label: '검증 상태', from: '해당 없음', to: '검증 필요' }])
+    expect(summarizeActivity(activity({ changes: { verification_state: { from: 'pending', to: 'verified' } } }))).toBe(
+      '검증 상태: 검증 필요 → 검증 완료',
+    )
   })
-  it('명세가 바뀌어 서버가 확인을 푼 기록은 확인 줄이 함께 나온다', () => {
-    const edited = activity({ changes: { acknowledged: { from: true, to: false }, title: { from: '옛 제목', to: '새 제목' } } })
-    expect(describeChanges(edited)).toEqual([
-      { field: 'acknowledged', label: '확인', from: '확인됨', to: '미확인' },
-      { field: 'title', label: '제목', from: '옛 제목', to: '새 제목' },
-    ])
-    expect(summarizeActivity(edited)).toBe('확인: 확인됨 → 미확인 · 제목: 옛 제목 → 새 제목')
-  })
-  it('검토에서 진행으로 되돌려 확인이 풀린 기록은 사유가 상태 줄에 붙고 확인 줄이 따로 나온다', () => {
-    const rejected = activity({
+  it('검증 상태와 메모가 함께 바뀌면 두 줄로 보인다', () => {
+    const edited = activity({
       changes: {
-        acknowledged: { from: true, to: false },
-        status: { from: 'review', to: 'doing' },
-        status_reason: { from: null, to: '검토 → 진행' },
+        verification_state: { from: 'none', to: 'pending' },
+        verification_note: { from: null, to: '스테이징 결제 화면 확인' },
       },
     })
-    expect(describeChanges(rejected)).toEqual([
-      { field: 'acknowledged', label: '확인', from: '확인됨', to: '미확인' },
-      { field: 'status', label: '상태', from: '검토', to: '진행', reason: '검토 → 진행' },
+    expect(describeChanges(edited)).toEqual([
+      { field: 'verification_state', label: '검증 상태', from: '해당 없음', to: '검증 필요' },
+      { field: 'verification_note', label: '검증 메모', from: '없음', to: '스테이징 결제 화면 확인' },
     ])
+    expect(summarizeActivity(edited)).toBe('검증 상태: 해당 없음 → 검증 필요 · 검증 메모: 없음 → 스테이징 결제 화면 확인')
+  })
+  it('검증 완료에서 다시 검증 필요로 되돌린 기록을 보인다', () => {
+    const reverted = activity({ changes: { verification_state: { from: 'verified', to: 'pending' } } })
+    expect(describeChanges(reverted)).toEqual([{ field: 'verification_state', label: '검증 상태', from: '검증 완료', to: '검증 필요' }])
   })
 })
 

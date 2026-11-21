@@ -46,7 +46,7 @@ function overview(partial: Partial<Overview> = {}): Overview {
     blocked: section([]),
     decisions: section<DecisionItem>([]),
     next: section([]),
-    unacknowledged: section<IssueSummary>([]),
+    unverified: section<IssueSummary>([]),
     recent_activity: section([]),
     ...partial,
   }
@@ -62,7 +62,7 @@ function agendaOf(o: Overview, waitingSessions: Section<Session>): Agenda {
         user_turn: {
           review: o.review,
           decisions: o.decisions,
-          unacknowledged: o.unacknowledged,
+          unverified: o.unverified,
           tasks: section([]),
           waiting_sessions: waitingSessions,
         },
@@ -286,5 +286,41 @@ describe('현황의 대기 세션', () => {
   it('대기 세션이 0건이면 대기 세션 카드를 보이지 않는다', () => {
     const html = render(overview(), section([]))
     expect(html).not.toContain('>대기 세션</h3>')
+  })
+})
+
+describe('현황의 검증 필요', () => {
+  it('검증 필요 이슈와 검증 메모 미리보기, 릴리즈 차단 안내, 전체 보기 링크를 보인다', () => {
+    const pendingWithNote = issueSummary({
+      key: 'APP-21',
+      number: 21,
+      title: '결제 화면 개선',
+      status: 'done',
+      verification_state: 'pending',
+      verification_note: '스테이징 환경에서 카드 결제 확인',
+    })
+    const pendingNoNote = issueSummary({
+      key: 'APP-22',
+      number: 22,
+      title: '권한 검사 수정',
+      status: 'review',
+      verification_state: 'pending',
+      verification_note: null,
+    })
+    const html = render(overview({ unverified: section([pendingWithNote, pendingNoNote]) }))
+    const card = sectionOf(html, '검증 필요')
+    expect(card).toContain('APP-21')
+    expect(card).toContain('결제 화면 개선')
+    expect(card).toContain('스테이징 환경에서 카드 결제 확인')
+    expect(card).toContain('APP-22')
+    expect(card).toContain('릴리즈 차단')
+    expect(card).toContain('href="/issues?verification=pending&amp;status=backlog%2Cdoing%2Creview%2Cdone"')
+    expect(html).not.toContain('>미확인</h3>')
+  })
+
+  it('검증 필요 이슈가 없으면 비어 있다고 보이고 릴리즈 차단 배지를 숨긴다', () => {
+    const card = sectionOf(render(overview()), '검증 필요')
+    expect(card).toContain('없음')
+    expect(card).not.toContain('릴리즈 차단')
   })
 })
