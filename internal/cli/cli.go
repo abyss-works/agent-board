@@ -662,10 +662,11 @@ func (a *App) emitMany(g *globals, resps []*client.Response, render func(w io.Wr
 	return nil
 }
 
-// leafFlags builds a leaf command's flag set with the global flags added.
-func leafFlags(name string, g *globals) *flag.FlagSet {
+// leafFlags builds a leaf command's flag set with the global flags added,
+// skipping any flag names handled by the command itself.
+func leafFlags(name string, g *globals, skip ...string) *flag.FlagSet {
 	fs := newFlagSet(name)
-	g.addTo(fs)
+	g.addToExcept(fs, skip...)
 	return fs
 }
 

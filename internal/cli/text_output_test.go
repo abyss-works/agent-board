@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -240,5 +242,104 @@ func TestTextKeepsPositionsOfArraysFromTheSameParent(t *testing.T) {
 	got, err := textLines(body, "files.name,files.x,n")
 	if err != nil || got != "[\"a\",\"b\"]\t[1,null]\t1\n" {
 		t.Errorf("got %q err %v", got, err)
+	}
+}
+
+func TestActivityCommonFlagsAndTextOutput(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":501,"actor":"claude"}],"total":1,"limit":1,"offset":0}`})
+	h := newHarness(t, srv, true)
+	h.env["AGB_ACTOR"] = "owner"
+	got := textRun(t, h, 0, "--actor", "claude", "activity", "--limit", "1", "--fields", "id", "--text")
+	if got != "501\n" {
+		t.Errorf("case1 out=%q", got)
+	}
+	req := srv.last()
+	if req.Header.Get("X-Actor") != "claude" {
+		t.Errorf("case1 X-Actor=%q, want claude", req.Header.Get("X-Actor"))
+	}
+	if req.Query.Has("actor") {
+		t.Errorf("case1 unexpected actor query=%q", req.Query.Get("actor"))
+	}
+	if req.Query.Get("limit") != "1" {
+		t.Errorf("case1 limit query=%q, want 1", req.Query.Get("limit"))
+	}
+
+	srv.on("GET", "/v1/activity", canned{body: `{"items":[{"id":502,"actor":"codex"}],"total":1,"limit":50,"offset":0}`})
+	h.env["AGB_ACTOR"] = "claude"
+	h.env["AGB_CLIENT_HOST"] = "laptop"
+	got = textRun(t, h, 0, "activity", "--actor", "codex", "--client-host", "desk", "--fields", "id,actor", "--text")
+	if got != "502\tcodex\n" {
+		t.Errorf("case2 env out=%q", got)
+	}
+	req = srv.last()
+	if req.Query.Get("actor") != "codex" || req.Query.Get("client_host") != "desk" {
+		t.Errorf("case2 env query=%v", req.Query)
+	}
+	if req.Header.Get("X-Actor") != "claude" || req.Header.Get("X-Client-Host") != "laptop" {
+		t.Errorf("case2 env headers=%v", req.Header)
+	}
+
+	got = textRun(t, h, 0, "--actor", "owner", "--client-host", "tablet", "activity", "--actor", "codex", "--client-host", "desk", "--fields", "id,actor", "--text")
+	if got != "502\tcodex\n" {
+		t.Errorf("case2 prefix+suffix out=%q", got)
+	}
+	req = srv.last()
+	if req.Query.Get("actor") != "codex" || req.Query.Get("client_host") != "desk" {
+		t.Errorf("case2 prefix+suffix query=%v", req.Query)
+	}
+	if req.Header.Get("X-Actor") != "owner" || req.Header.Get("X-Client-Host") != "tablet" {
+		t.Errorf("case2 prefix+suffix headers=%v", req.Header)
+	}
+
+	h2 := newHarness(t, nil, false)
+	for k := range h2.env {
+		delete(h2.env, k)
+	}
+	if err := os.MkdirAll(filepath.Dir(h2.app.ConfigPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{
+  "current_context": "prod",
+  "client_host": "workstation",
+  "contexts": {
+    "prod": {
+      "url": "` + srv.srv.URL + `",
+      "actor": "owner",
+      "token": "prod-shared-token-0123456789abcdef0123"
+    }
+  }
+}`
+	if err := os.WriteFile(h2.app.ConfigPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = textRun(t, h2, 0, "activity", "--actor", "codex", "--client-host", "desk", "--fields", "id,actor", "--text")
+	if got != "502\tcodex\n" {
+		t.Errorf("case2 config out=%q", got)
+	}
+	req = srv.last()
+	if req.Query.Get("actor") != "codex" || req.Query.Get("client_host") != "desk" {
+		t.Errorf("case2 config query=%v", req.Query)
+	}
+	if req.Header.Get("X-Actor") != "owner" || req.Header.Get("X-Client-Host") != "workstation" {
+		t.Errorf("case2 config headers=%v", req.Header)
+	}
+}
+
+func TestActivityTextWithoutFieldsIsAUsageError(t *testing.T) {
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/activity", canned{body: `{"items":[],"total":0,"limit":50,"offset":0}`})
+	h := newHarness(t, srv, false)
+	for _, args := range [][]string{
+		{"activity", "--text"},
+		{"--text", "activity"},
+	} {
+		textRun(t, h, 2, args...)
+		if !strings.Contains(h.stderr.String(), "--text") || !strings.Contains(h.stderr.String(), "--fields") {
+			t.Errorf("%v: stderr=%s", args, h.stderr)
+		}
+	}
+	if len(srv.reqs) != 0 {
+		t.Errorf("usage errors must not reach the server: reqs=%v", srv.reqs)
 	}
 }

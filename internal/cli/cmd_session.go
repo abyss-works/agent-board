@@ -176,17 +176,8 @@ PROJECT 는 그 세션이 마지막으로 기록을 남긴 프로젝트입니다
 주의: --actor 는 이 명령 뒤에서는 필터입니다. 요청의 행위자는 명령 앞 --actor, AGB_ACTOR 또는 설정 파일로 정합니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		fs := newFlagSet("session list")
-		// --actor filters here, so register the other globals directly.
-		fs.BoolVar(&g.json, "json", g.json, "")
-		fs.BoolVar(&g.table, "table", g.table, "")
-		fs.StringVar(&g.context, "context", g.context, "")
-		fs.StringVar(&g.url, "url", g.url, "")
-		fs.StringVar(&g.sessionID, "session-id", g.sessionID, "")
-		fs.StringVar(&g.clientHost, "client-host", g.clientHost, "")
-		fs.StringVar(&g.config, "config", g.config, "")
-		fs.StringVar(&g.fields, "fields", g.fields, "")
-		fs.BoolVar(&g.text, "text", g.text, "")
+		// --actor filters here, so skip it from globals.
+		fs := leafFlags("session list", g, "actor")
 		var f client.SessionFilter
 		var active, stale, waiting bool
 		var named string

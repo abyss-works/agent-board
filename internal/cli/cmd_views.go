@@ -26,14 +26,8 @@ var activityCmd = &command{
 주의: --actor 와 --client-host 는 이 명령에서는 필터입니다. 요청 헤더의 행위자는 AGB_ACTOR 나 설정 파일로 정합니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		fs := newFlagSet("activity")
-		// --actor and --client-host filter here, so only the other globals
-		// are shared.
-		fs.BoolVar(&g.json, "json", g.json, "")
-		fs.BoolVar(&g.table, "table", g.table, "")
-		fs.StringVar(&g.url, "url", g.url, "")
-		fs.StringVar(&g.sessionID, "session-id", g.sessionID, "")
-		fs.StringVar(&g.config, "config", g.config, "")
+		// --actor and --client-host filter here, so skip them from globals.
+		fs := leafFlags("activity", g, "actor", "client-host")
 		var f client.ActivityFilter
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -33,16 +34,38 @@ type globals struct {
 }
 
 func (g *globals) addTo(fs *flag.FlagSet) {
-	fs.BoolVar(&g.json, "json", g.json, "")
-	fs.BoolVar(&g.table, "table", g.table, "")
-	fs.StringVar(&g.context, "context", g.context, "")
-	fs.StringVar(&g.url, "url", g.url, "")
-	fs.StringVar(&g.actor, "actor", g.actor, "")
-	fs.StringVar(&g.sessionID, "session-id", g.sessionID, "")
-	fs.StringVar(&g.clientHost, "client-host", g.clientHost, "")
-	fs.StringVar(&g.config, "config", g.config, "")
-	fs.StringVar(&g.fields, "fields", g.fields, "")
-	fs.BoolVar(&g.text, "text", g.text, "")
+	g.addToExcept(fs)
+}
+
+func (g *globals) addToExcept(fs *flag.FlagSet, skip ...string) {
+	for _, f := range []struct {
+		name string
+		ptr  *bool
+	}{
+		{"json", &g.json},
+		{"table", &g.table},
+		{"text", &g.text},
+	} {
+		if !slices.Contains(skip, f.name) {
+			fs.BoolVar(f.ptr, f.name, *f.ptr, "")
+		}
+	}
+	for _, f := range []struct {
+		name string
+		ptr  *string
+	}{
+		{"context", &g.context},
+		{"url", &g.url},
+		{"actor", &g.actor},
+		{"session-id", &g.sessionID},
+		{"client-host", &g.clientHost},
+		{"config", &g.config},
+		{"fields", &g.fields},
+	} {
+		if !slices.Contains(skip, f.name) {
+			fs.StringVar(f.ptr, f.name, *f.ptr, "")
+		}
+	}
 }
 
 // newFlagSet builds a silent flag set; usage and errors are reported by
