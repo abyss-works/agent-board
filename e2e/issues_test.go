@@ -387,7 +387,12 @@ func TestIssueStatusTransitions(t *testing.T) {
 				}
 				cur := getIssue(t, iss.Key)
 				if cur.Status != from {
-					cur = patchIssue(t, owner, iss.Key, statusPatch(from))
+					setupCaller := owner
+					if from == "doing" {
+						// Entering doing acquires a claim; acquire it as the agent that will run the transition.
+						setupCaller = as("hermes")
+					}
+					cur = patchIssue(t, setupCaller, iss.Key, statusPatch(from))
 				}
 				got := patchIssue(t, as("hermes"), iss.Key, statusPatch(to))
 				if got.Status != to {
