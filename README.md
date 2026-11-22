@@ -80,7 +80,7 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 
 ### 메시지
 
-- `--to`는 받는 쪽을 가리키는 자유 라벨 관례로, 에이전트 이름(`codex`), 역할·자리(`reviewer`, `desk`)처럼 공백 없는 1~64자 문자열을 씁니다.
+- `--to`는 받는 쪽을 가리키는 자유 라벨 관례로, 에이전트 이름(`codex`), 역할·자리(`reviewer`, `desk`)처럼 공백 없는 1~64자 문자열을 씁니다. `--to` 필터와 확인 표시(`agb msg ack`, `--unread`, `--as`)의 이름 비교는 영문 대소문자를 구분하지 않으며, 처음 저장한 원문 표기는 유지됩니다.
 - 특정 세션(`--to-session <행위자/세션>`), 대상 역할(`--to-role`: `main`, `subagent`, `runner`), 같은 프로젝트 이슈(`--issue <KEY>`), 같은 프로젝트 메시지에 대한 답장(`--reply-to <ID>`)을 지정할 수 있습니다. 대상 세션이 아직 서버에 등록되지 않았더라도 선언된 행위자이면 보낼 수 있고, 만료·삭제된 같은 프로젝트 메시지에도 답장할 수 있습니다.
 - `to_session`이 지정된 메시지는 해당 세션(`X-Actor`와 `X-Session-Id`)의 기본 목록과 `--unread` 목록(및 세션 시작 훅)에만 나오고 다른 세션에서는 가려집니다. `to_session`이 없는 브로드캐스트 메시지는 모든 세션에 나오며, `--all`이나 `--to-session` 필터로는 모든 대상을 조회할 수 있습니다.
 - `GET /v1/messages/{id}`와 `agb msg get <ID>`는 직계 답장을 시간 오름차순(`replies`)으로 함께 반환하고, 목록과 단건 응답 모두 `reply_count`를 포함합니다.
@@ -180,9 +180,9 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
 
 - 플러그인은 훅 설정만 담습니다. 스킬과 실행 파일은 담지 않으며, 훅은 `PATH`의 `agb`를 셸 없이 직접 실행합니다. Windows에서는 `agb.exe`가 `PATH`에 있어야 합니다.
 - 세션을 시작할 때(새 세션, 재개, `/clear`, 압축 뒤) `agb hook session-start --tool claude`를 부릅니다. 이 명령은 세션의 작업 폴더가 속한 저장소의 `.agb.json`에서 프로젝트를 찾아, 그 프로젝트 키가 확인하지 않은 메시지를 최대 20건 알립니다. `agb msg list --unread`와 같은 조회이고 확인 표시를 만들지 않습니다.
-- 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값, 설정 파일의 `actor` 순서로 정합니다. Claude Code가 훅을 직접 실행하므로 평소에는 `agb setup claude`가 저장한 훅 행위자로 조회합니다.
+- 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값(도구 이름 영문 대소문자 무시), 설정 파일의 `actor` 순서로 정합니다. Claude Code가 훅을 직접 실행하므로 평소에는 `agb setup claude`가 저장한 훅 행위자로 조회합니다.
 - 훅은 Claude Code가 표준 입력으로 준 `session_id`를 요청의 세션 ID로 씁니다. 세션 ID 형식(영숫자로 시작하는 영숫자, `.`, `_`, `-` 1~128자)에 맞지 않으면 `AGB_SESSION_ID`, 설정 파일의 `session_id`, 기본값 순서로 정합니다.
-- `.agb.json`이 없거나, 설정이나 행위자나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
+- `.agb.json`이 있는 저장소에서 서버 주소는 있으나 행위자가 비어 있으면(`hook_actors` 미설정 등), 미확인 메시지를 확인하지 못했다는 안내 1줄(`agb setup <도구> --actor <ID>` 안내 포함)을 출력합니다. `.agb.json`이 없거나, 서버 주소나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
 - 알림이 나오지 않으면 다음을 확인합니다.
   1. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 봅니다.
   2. `agb config show`의 `hook_actors`에 `claude=<ID>`가 있고 `actor_tokens`에 그 행위자가 있는지 봅니다.
