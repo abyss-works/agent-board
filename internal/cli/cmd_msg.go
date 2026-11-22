@@ -51,7 +51,11 @@ func repoProject() (string, error) {
 // the .agb.json above the working folder.
 func msgProject(project string) (string, error) {
 	if project != "" {
-		return project, nil
+		normalized := model.NormalizeProjectKey(project)
+		if !model.ValidProjectKey(normalized) {
+			return "", usageErrorf("프로젝트 키 형식이 맞지 않습니다: %q (영문으로 시작하는 대문자 영숫자 2~10자).", project)
+		}
+		return normalized, nil
 	}
 	project, err := repoProject()
 	if err != nil || project != "" {

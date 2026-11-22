@@ -484,3 +484,22 @@ func TestIssueCarriesVerificationFields(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeProjectKey(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"   ", ""},
+		{"app", "APP"},
+		{"  demo  ", "DEMO"},
+		{"App1", "APP1"},
+		{"APP", "APP"},
+		{" a! ", "A!"},
+	}
+	for _, c := range cases {
+		if got := NormalizeProjectKey(c.in); got != c.want {
+			t.Errorf("NormalizeProjectKey(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

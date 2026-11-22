@@ -344,6 +344,11 @@ var (
 	issueKeyRE   = regexp.MustCompile(`^([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)$`)
 )
 
+// NormalizeProjectKey trims whitespace and converts a project key to uppercase.
+func NormalizeProjectKey(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
+}
+
 // ValidProjectKey reports whether v is a well formed project key.
 func ValidProjectKey(v string) bool { return projectKeyRE.MatchString(v) }
 

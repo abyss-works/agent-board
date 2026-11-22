@@ -182,6 +182,7 @@ func getMessage(ctx context.Context, q querier, id int64, now model.Time) (*mode
 // ListMessages returns a page of the messages of a project, newest first,
 // without their bodies, and the number of messages that match the filter.
 func (s *Store) ListMessages(ctx context.Context, f MessageFilter) ([]model.Message, int, error) {
+	f.Project = model.NormalizeProjectKey(f.Project)
 	if _, err := getProject(ctx, s.db, f.Project); err != nil {
 		return nil, 0, err
 	}
@@ -189,7 +190,7 @@ func (s *Store) ListMessages(ctx context.Context, f MessageFilter) ([]model.Mess
 	cond := ` where p.key = ?`
 	args := []any{f.Project}
 	if f.To != "" {
-		cond += ` and m.to_label = ?`
+		cond += ` and lower(m.to_label) = lower(?)`
 		args = append(args, f.To)
 	}
 	if f.ToSession != nil {
@@ -216,7 +217,7 @@ func (s *Store) ListMessages(ctx context.Context, f MessageFilter) ([]model.Mess
 		args = append(args, now.String())
 	}
 	if f.UnreadBy != "" {
-		cond += ` and not exists (select 1 from message_read r where r.message_id = m.id and r.reader = ?)`
+		cond += ` and not exists (select 1 from message_read r where r.message_id = m.id and lower(r.reader) = lower(?))`
 		args = append(args, f.UnreadBy)
 	}
 	var total int
@@ -333,6 +334,7 @@ func validateMessageRouting(ctx context.Context, tx *sql.Tx, projectID int64, in
 // CreateMessage posts a message to a project. The actor, session and host of
 // the trace are kept with it.
 func (s *Store) CreateMessage(ctx context.Context, tr model.Trace, project string, in MessageInput) (*model.Message, error) {
+	project = model.NormalizeProjectKey(project)
 	verr := &model.ValidationError{}
 	verr.Fields = append(verr.Fields, in.ExtraErrors...)
 	if err := model.ValidateMessage(in.To, in.Title, in.Body, in.TTL); err != nil {
@@ -463,7 +465,7 @@ func scanMessageRead(sc rowScanner) (*model.MessageRead, error) {
 // first record. A project that is not active takes no new record, like any
 // other write.
 func (s *Store) AckMessage(ctx context.Context, tr model.Trace, id int64, reader string) (*model.MessageRead, error) {
-	const get = `select ` + messageReadCols + ` from message_read where message_id = ? and reader = ?`
+	const get = `select ` + messageReadCols + ` from message_read where message_id = ? and lower(reader) = lower(?) order by read_at asc, reader asc limit 1`
 	now := s.stamp()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var projectID int64

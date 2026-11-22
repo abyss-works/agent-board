@@ -420,3 +420,62 @@ func TestMessageCreateValidationMerging(t *testing.T) {
 		}
 	})
 }
+
+func TestMessageProjectKeyNormalizationAndToCaseInsensitive(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "sample-app")
+
+	// Lowercase project key in POST normalizes to uppercase and returns project: "APP".
+	rec := e.do(t, "POST", "/v1/projects/app/messages", `{"to":"Reviewer","title":"검토 요청"}`, nil)
+	if rec.Code != 201 {
+		t.Fatalf("POST lowercase project: %d %s", rec.Code, rec.Body.String())
+	}
+	var created model.Message
+	decodeJSON(t, rec, &created)
+	if created.Project != "APP" || created.To == nil || *created.To != "Reviewer" {
+		t.Errorf("created = %+v", created)
+	}
+
+	// Lowercase project key in GET lists APP messages, and ?to matches case-insensitively.
+	l := e.listMessages(t, "app", "?to=reviewer")
+	if l.Total != 1 || len(l.Items) != 1 || l.Items[0].Project != "APP" || *l.Items[0].To != "Reviewer" {
+		t.Errorf("GET app?to=reviewer = %+v", l)
+	}
+	if l := e.listMessages(t, "APP", "?to=REVIEWER"); l.Total != 1 {
+		t.Errorf("GET APP?to=REVIEWER = %+v", l)
+	}
+
+	// Whitespace-padded lowercase project key also normalizes.
+	e.putMessage(t, "%20app%20", `{"to":"app","title":"소문자"}`)
+	if l := e.listMessages(t, "APP", "?to=APP"); l.Total != 1 || *l.Items[0].To != "app" {
+		t.Errorf("GET APP?to=APP = %+v", l)
+	}
+
+	// Malformed project keys return 400 bad_request.
+	for _, bad := range []string{"a!", "1abc", "a", "abcdefghijk"} {
+		for _, method := range []string{"GET", "POST"} {
+			body := ""
+			if method == "POST" {
+				body = `{"title":"t"}`
+			}
+			rec := e.do(t, method, "/v1/projects/"+bad+"/messages", body, nil)
+			eb := decodeErr(t, rec)
+			if rec.Code != 400 || eb.Error.Code != "bad_request" {
+				t.Errorf("%s %s: code=%d err=%+v body=%s", method, bad, rec.Code, eb, rec.Body.String())
+			}
+		}
+	}
+
+	// Well-formed but nonexistent lowercase project key returns 404 not_found.
+	for _, method := range []string{"GET", "POST"} {
+		body := ""
+		if method == "POST" {
+			body = `{"title":"t"}`
+		}
+		rec := e.do(t, method, "/v1/projects/nope/messages", body, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 404 || eb.Error.Code != "not_found" {
+			t.Errorf("%s nope: code=%d err=%+v body=%s", method, rec.Code, eb, rec.Body.String())
+		}
+	}
+}

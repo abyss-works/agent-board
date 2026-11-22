@@ -623,3 +623,19 @@ func TestHookPreCommitChecksAllCommitsInCompoundCommand(t *testing.T) {
 		t.Errorf("expected denial for repoB (%s), got:\n%s", filepath.ToSlash(repoB), reason)
 	}
 }
+
+func TestHookPreCommitHookActorCaseInsensitiveAndEmptySilent(t *testing.T) {
+	// Case-insensitive lookup in hook_actors works for pre-commit server checks.
+	h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{"Claude": "reviewer"}})
+	root := relRepo(t)
+	reason := denyReason(t, runPreCommit(t, h, preCommitInput(t, root, "Bash", "git commit -m x"), "--tool", "claude"))
+	if !strings.Contains(reason, "supersedes 의 문서") || len(srv.reqs) == 0 || srv.last().Header.Get("X-Actor") != "reviewer" {
+		t.Errorf("reason=%q reqs=%+v", reason, srv.reqs)
+	}
+
+	// Empty hook_actors stays completely silent on stdout when passing a commit.
+	h2, srv2 := newHookActorHarness(t, Config{HookActors: map[string]string{}})
+	if out := runPreCommit(t, h2, preCommitInput(t, relRepo(t), "Bash", "git commit -m x"), "--tool", "claude"); out != "" || len(srv2.reqs) != 0 {
+		t.Errorf("empty hook_actors must stay silent on pass: stdout=%q reqs=%d", out, len(srv2.reqs))
+	}
+}

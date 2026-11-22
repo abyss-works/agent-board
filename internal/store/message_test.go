@@ -487,3 +487,47 @@ func TestCreateMessageRoutingValidationErrors(t *testing.T) {
 		t.Errorf("combined fields = %v, want %v (%v)", got, want, err)
 	}
 }
+
+func TestMessageProjectNormalizationAndToCaseInsensitive(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+
+	m1 := putMessage(t, s, "app", "Reviewer", "첫 번째", "")
+	if m1.Project != "APP" || m1.To == nil || *m1.To != "Reviewer" {
+		t.Fatalf("m1 = %+v, want project APP and preserved To Reviewer", m1)
+	}
+	m2 := putMessage(t, s, "  app ", "APP", "둘 번째", "")
+	if m2.Project != "APP" || m2.To == nil || *m2.To != "APP" {
+		t.Fatalf("m2 = %+v, want project APP and preserved To APP", m2)
+	}
+
+	// Event emitted with normalized project key.
+	evts, _, err := s.ListEvents(ctx, EventFilter{Project: "APP", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgEvents := 0
+	for _, ev := range evts {
+		if ev.Kind == model.EventMessageCreated && ev.Project != nil && *ev.Project == "APP" {
+			msgEvents++
+		}
+	}
+	if msgEvents != 2 {
+		t.Errorf("message.created events for APP = %d, want 2 (%+v)", msgEvents, evts)
+	}
+
+	// ListMessages normalizes project key and matches `to` case-insensitively.
+	items, total, err := s.ListMessages(ctx, MessageFilter{Project: " app ", Limit: 10})
+	if err != nil || total != 2 || len(items) != 2 {
+		t.Fatalf("list normalized = %+v total=%d err=%v", items, total, err)
+	}
+	if items, total, err := s.ListMessages(ctx, MessageFilter{Project: "app", To: "reviewer", Limit: 10}); err != nil || total != 1 || *items[0].To != "Reviewer" {
+		t.Errorf("to=reviewer: items=%+v total=%d err=%v", items, total, err)
+	}
+	if items, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", To: "app", Limit: 10}); err != nil || total != 1 || *items[0].To != "APP" {
+		t.Errorf("to=app: items=%+v total=%d err=%v", items, total, err)
+	}
+	if items, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", To: "REVIEWER", Limit: 10}); err != nil || total != 1 || items[0].ID != m1.ID {
+		t.Errorf("to=REVIEWER: items=%+v total=%d err=%v", items, total, err)
+	}
+}
