@@ -26,11 +26,25 @@ func messageID(r *http.Request) (int64, *apiError) {
 	return id, nil
 }
 
+// messageProjectKey reads, normalizes and validates the {key} path value.
+func messageProjectKey(r *http.Request) (string, *apiError) {
+	key := model.NormalizeProjectKey(r.PathValue("key"))
+	if !model.ValidProjectKey(key) {
+		return "", badRequest("프로젝트 키 형식이 아닙니다.", Detail{Field: "key", Reason: "invalid", Message: "프로젝트 키는 영문으로 시작하는 대문자 영숫자 2~10자여야 합니다."})
+	}
+	return key, nil
+}
+
 func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
+	projectKey, aerr := messageProjectKey(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
 	q := newQuery(r)
 	tr := TraceFrom(r.Context())
 	f := store.MessageFilter{
-		Project:  r.PathValue("key"),
+		Project:  projectKey,
 		To:       q.one("to"),
 		UnreadBy: q.one("unread_by"),
 		Viewer:   &model.SessionRef{Actor: tr.Actor, SessionID: tr.SessionID},
@@ -84,6 +98,11 @@ func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) createMessage(w http.ResponseWriter, r *http.Request) {
+	projectKey, aerr := messageProjectKey(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
 	b, aerr := readBody(w, r, map[string]bool{
 		"to": true, "to_session": true, "to_role": true, "issue": true, "reply_to": true,
 		"title": true, "body": true, "ttl": true,
@@ -127,7 +146,7 @@ func (h *handler) createMessage(w http.ResponseWriter, r *http.Request) {
 			in.ReplyTo = &id
 		}
 	}
-	m, err := h.store.CreateMessage(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), in)
+	m, err := h.store.CreateMessage(r.Context(), TraceFrom(r.Context()), projectKey, in)
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return

@@ -134,3 +134,44 @@ func TestAckMessageErrors(t *testing.T) {
 		t.Errorf("ack in an archived project: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestAckAndUnreadByCaseInsensitive(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "sample-app")
+	m := e.putMessage(t, "APP", `{"to":"app","title":"t"}`)
+	ackPath := fmt.Sprintf("/v1/messages/%d/ack", m.ID)
+
+	rec := e.do(t, "POST", ackPath, `{"reader":"app"}`, map[string]string{"X-Actor": "owner"})
+	if rec.Code != 200 {
+		t.Fatalf("first ack: %d %s", rec.Code, rec.Body.String())
+	}
+	var first model.MessageRead
+	decodeJSON(t, rec, &first)
+	if first.Reader != "app" {
+		t.Fatalf("first reader = %q, want app", first.Reader)
+	}
+
+	// ?unread_by=APP matches the "app" read mark.
+	if l := e.listMessages(t, "app", "?unread_by=APP"); l.Total != 0 || len(l.Items) != 0 {
+		t.Errorf("unread_by=APP = %+v, want empty", l)
+	}
+
+	// Re-acking with "APP" returns 200 and the original "app" record.
+	rec = e.do(t, "POST", ackPath, `{"reader":"APP"}`, map[string]string{"X-Actor": "claude"})
+	if rec.Code != 200 {
+		t.Fatalf("second ack: %d %s", rec.Code, rec.Body.String())
+	}
+	var again model.MessageRead
+	decodeJSON(t, rec, &again)
+	if again != first || again.Reader != "app" {
+		t.Errorf("again = %+v, want %+v", again, first)
+	}
+
+	// Only one read record exists on the message.
+	rec = e.do(t, "GET", fmt.Sprintf("/v1/messages/%d", m.ID), "", nil)
+	var got model.Message
+	decodeJSON(t, rec, &got)
+	if len(got.Reads) != 1 || got.Reads[0] != first {
+		t.Errorf("reads = %+v, want [%+v]", got.Reads, first)
+	}
+}

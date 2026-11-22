@@ -195,3 +195,46 @@ func TestMigration19AddsMessageReadAndKeepsMessages(t *testing.T) {
 		t.Errorf("foreign_key_check = %v", fk)
 	}
 }
+
+func TestAckMessageAndUnreadCaseInsensitive(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	advance := msgClock(s, time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC))
+	m1 := putMessage(t, s, "APP", "app", "첫 메시지", "")
+	advance(time.Minute)
+	m2 := putMessage(t, s, "APP", "Reviewer", "둘째 메시지", "")
+	advance(time.Minute)
+
+	first, err := s.AckMessage(ctx, trOwner, m1.ID, "app")
+	if err != nil || first.Reader != "app" {
+		t.Fatalf("first ack = %+v, %v", first, err)
+	}
+
+	// UnreadBy matches case-insensitively.
+	items, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", UnreadBy: "APP", Limit: 50})
+	if err != nil || total != 1 || titles(items) != "둘째 메시지" {
+		t.Errorf("unread_by=APP: %s total=%d err=%v", titles(items), total, err)
+	}
+
+	// Re-acking with different case returns the original record without inserting a second row.
+	advance(time.Hour)
+	again, err := s.AckMessage(ctx, trClaude, m1.ID, "APP")
+	if err != nil || *again != *first || again.Reader != "app" {
+		t.Errorf("second ack = %+v, %v; want %+v", again, err, first)
+	}
+	if n := queryStrings(t, s, `select count(*) from message_read where message_id = `+strconv.FormatInt(m1.ID, 10)); n[0] != "1" {
+		t.Errorf("message_read rows = %v, want 1", n)
+	}
+
+	// Archived project still allows re-ack with different case, returning the original record without 409.
+	st := model.ProjectArchived
+	if _, err := s.UpdateProject(ctx, trOwner, "APP", ProjectPatch{Status: &st}); err != nil {
+		t.Fatal(err)
+	}
+	if archivedAgain, err := s.AckMessage(ctx, trClaude, m1.ID, "App"); err != nil || *archivedAgain != *first {
+		t.Errorf("archived re-ack = %+v, %v; want %+v", archivedAgain, err, first)
+	}
+	if _, err := s.AckMessage(ctx, trClaude, m2.ID, "APP"); !errors.Is(err, ErrProjectNotActive) {
+		t.Errorf("new ack in archived project err = %v, want ErrProjectNotActive", err)
+	}
+}
