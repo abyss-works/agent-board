@@ -188,3 +188,19 @@ func TestMsgReadHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestMsgReadPreservesAsCaseWhileNormalizingProject(t *testing.T) {
+	h, srv := newMsgReadHarness(t, false)
+	if code := h.run("msg", "list", "-p", "cli", "--unread", "--as", "App"); code != 0 {
+		t.Fatalf("list: code=%d stderr=%s", code, h.stderr)
+	}
+	if req := srv.last(); req.Path != "/v1/projects/CLI/messages" || req.Query.Get("unread_by") != "App" {
+		t.Errorf("request = %s ?%s", req.Path, req.Query.Encode())
+	}
+	if code := h.run("msg", "ack", "3", "--as", "App"); code != 0 {
+		t.Fatalf("ack: code=%d stderr=%s", code, h.stderr)
+	}
+	if req := srv.last(); req.Path != "/v1/messages/3/ack" || strings.TrimSpace(req.Body) != `{"reader":"App"}` {
+		t.Errorf("ack request = %s %s", req.Path, req.Body)
+	}
+}

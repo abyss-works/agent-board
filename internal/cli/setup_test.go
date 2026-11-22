@@ -489,3 +489,22 @@ func TestSetupClaudeRefusesAnotherConfigFile(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupClaudeStoresLowercaseHookActorKey(t *testing.T) {
+	h, _ := newSetupHarness(t)
+	if code := h.run("setup", "claude", "--actor", "claude"); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, h.stderr)
+	}
+	cfg, err := loadConfig(h.app.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.HookActors["claude"]; got != "claude" {
+		t.Errorf("HookActors[claude] = %q, want claude (%+v)", got, cfg.HookActors)
+	}
+	for k := range cfg.HookActors {
+		if k != strings.ToLower(k) {
+			t.Errorf("non-lowercase hook_actors key stored: %q", k)
+		}
+	}
+}

@@ -414,3 +414,42 @@ func TestMsgRoutingHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestMsgProjectKeyNormalizationAndValidation(t *testing.T) {
+	h, srv := newMsgHarness(t, false)
+
+	// Lowercase and whitespace-padded -p normalizes to uppercase CLI.
+	if code := h.run("msg", "put", "-p", "cli", "--title", "소문자 키"); code != 0 {
+		t.Fatalf("put -p cli: code=%d stderr=%s", code, h.stderr)
+	}
+	if req := srv.last(); req.Method != "POST" || req.Path != "/v1/projects/CLI/messages" {
+		t.Errorf("put -p cli request = %s %s", req.Method, req.Path)
+	}
+	if code := h.run("msg", "list", "-p", " cli "); code != 0 {
+		t.Fatalf("list -p ' cli ': code=%d stderr=%s", code, h.stderr)
+	}
+	if req := srv.last(); req.Method != "GET" || req.Path != "/v1/projects/CLI/messages" {
+		t.Errorf("list -p ' cli ' request = %s %s", req.Method, req.Path)
+	}
+
+	// Malformed project keys fail locally with exit code 2 and never hit the server.
+	before := len(srv.reqs)
+	for _, args := range [][]string{
+		{"msg", "list", "-p", "bad!key"},
+		{"msg", "list", "-p", "1abc"},
+		{"msg", "list", "-p", "a"},
+		{"msg", "list", "-p", "   "},
+		{"msg", "put", "-p", "bad!key", "--title", "t"},
+		{"msg", "put", "-p", "1abc", "--title", "t"},
+	} {
+		if code := h.run(args...); code != 2 {
+			t.Errorf("%v: code=%d stderr=%s, want 2", args, code, h.stderr)
+		}
+		if !strings.Contains(h.stderr.String(), "대문자 영숫자 2~10자") {
+			t.Errorf("%v: stderr=%q, want format guidance", args, h.stderr.String())
+		}
+	}
+	if len(srv.reqs) != before {
+		t.Errorf("invalid -p must not reach server: %d requests", len(srv.reqs)-before)
+	}
+}

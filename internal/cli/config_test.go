@@ -243,3 +243,30 @@ func TestDefaultSessionIDUsesLocalDate(t *testing.T) {
 		t.Errorf("session id = %q", got)
 	}
 }
+
+func TestLookupHookActor(t *testing.T) {
+	cases := []struct {
+		name string
+		m    map[string]string
+		tool string
+		want string
+	}{
+		{"nil map", nil, "claude", ""},
+		{"empty map", map[string]string{}, "claude", ""},
+		{"blank tool", map[string]string{"claude": "reviewer"}, "  ", ""},
+		{"exact match", map[string]string{"claude": "reviewer", "Claude": "other"}, "claude", "reviewer"},
+		{"empty exact falls back to fold", map[string]string{"claude": "", "Claude": "reviewer"}, "claude", "reviewer"},
+		{"case-insensitive lookup", map[string]string{"Claude": "reviewer"}, "claude", "reviewer"},
+		{"uppercase tool lookup", map[string]string{"claude": "reviewer"}, "CLAUDE", "reviewer"},
+		{"trimmed tool", map[string]string{"claude": "reviewer"}, " Claude ", "reviewer"},
+		{"deterministic sorted fold tie-break", map[string]string{"CLAUDE": "first", "Claude": "second"}, "claude", "first"},
+		{"ignores empty values", map[string]string{"claude": "", "CLAUDE": ""}, "claude", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := lookupHookActor(c.m, c.tool); got != c.want {
+				t.Errorf("lookupHookActor(%v, %q) = %q, want %q", c.m, c.tool, got, c.want)
+			}
+		})
+	}
+}

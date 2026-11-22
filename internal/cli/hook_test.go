@@ -350,18 +350,25 @@ func TestHookSessionStartActsAsTheHookActorOfTheTool(t *testing.T) {
 func TestHookSessionStartActorOrder(t *testing.T) {
 	both := Config{Actor: "base", HookActors: map[string]string{"claude": "reviewer"}}
 	cases := map[string]struct {
-		cfg  Config
-		env  string
-		args []string
-		want string // the actor of the request; "" when the hook stays silent
+		cfg        Config
+		env        string
+		args       []string
+		want       string // the actor of the request; "" when no request is made
+		wantNotice string
 	}{
 		"the flag comes first":                     {cfg: both, env: "fromenv", args: []string{"--tool", "claude", "--actor", "fromflag"}, want: "fromflag"},
 		"AGB_ACTOR comes before the hook actor":    {cfg: both, env: "fromenv", args: []string{"--tool", "claude"}, want: "fromenv"},
 		"the hook actor comes before the default":  {cfg: both, args: []string{"--tool", "claude"}, want: "reviewer"},
 		"without --tool the default actor is used": {cfg: both, args: nil, want: "base"},
 		"a tool without a hook actor":              {cfg: both, args: []string{"--tool", "other"}, want: "base"},
-		"without --tool and without a default":     {cfg: Config{HookActors: map[string]string{"claude": "reviewer"}}},
-		"no actor anywhere":                        {args: []string{"--tool", "claude"}},
+		"without --tool and without a default": {
+			cfg:        Config{HookActors: map[string]string{"claude": "reviewer"}},
+			wantNotice: "agb: 프로젝트 CLI의 미확인 메시지를 확인하지 못했습니다(행위자 미설정). --actor 또는 `agb setup <도구> --actor <ID>`로 설정하세요.\n",
+		},
+		"no actor anywhere": {
+			args:       []string{"--tool", "claude"},
+			wantNotice: "agb: 프로젝트 CLI의 미확인 메시지를 확인하지 못했습니다(훅 행위자 미설정). `agb setup claude --actor <ID>`로 설정하세요.\n",
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -371,8 +378,8 @@ func TestHookSessionStartActorOrder(t *testing.T) {
 			}
 			out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), c.args...)
 			if c.want == "" {
-				if out != "" || len(srv.reqs) != 0 {
-					t.Errorf("stdout = %q, requests = %+v", out, srv.reqs)
+				if out != c.wantNotice || len(srv.reqs) != 0 {
+					t.Errorf("stdout = %q (want %q), requests = %+v", out, c.wantNotice, srv.reqs)
 				}
 				return
 			}
@@ -381,6 +388,116 @@ func TestHookSessionStartActorOrder(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHookSessionStartHookActorCaseAndEmptyConfig(t *testing.T) {
+	t.Run("case-insensitive hook_actors lookup", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			stored string
+			tool   string
+		}{
+			{"capitalized key in config", "Claude", "claude"},
+			{"uppercase tool flag", "claude", "CLAUDE"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{tc.stored: "reviewer"}})
+				out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", tc.tool)
+				if !strings.HasPrefix(out, "확인하지 않은 메시지 2건 (프로젝트 CLI)\n") {
+					t.Errorf("stdout = %q", out)
+				}
+				if got := srv.last().Header.Get("X-Actor"); got != "reviewer" {
+					t.Errorf("X-Actor = %q, want reviewer", got)
+				}
+			})
+		}
+	})
+
+	t.Run("empty hook_actors emits one-line notice regardless of token", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			hasToken bool
+			args     []string
+			want     string
+		}{
+			{
+				name:     "without token and with tool",
+				hasToken: false,
+				args:     []string{"--tool", "Claude"},
+				want:     "agb: 프로젝트 CLI의 미확인 메시지를 확인하지 못했습니다(훅 행위자 미설정). `agb setup claude --actor <ID>`로 설정하세요.\n",
+			},
+			{
+				name:     "with shared token and with tool",
+				hasToken: true,
+				args:     []string{"--tool", "claude"},
+				want:     "agb: 프로젝트 CLI의 미확인 메시지를 확인하지 못했습니다(훅 행위자 미설정). `agb setup claude --actor <ID>`로 설정하세요.\n",
+			},
+			{
+				name:     "without token and without tool",
+				hasToken: false,
+				args:     nil,
+				want:     "agb: 프로젝트 CLI의 미확인 메시지를 확인하지 못했습니다(행위자 미설정). --actor 또는 `agb setup <도구> --actor <ID>`로 설정하세요.\n",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{}})
+				if !tc.hasToken {
+					delete(h.env, "AGB_TOKEN")
+				}
+				out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), tc.args...)
+				if out != tc.want || len(srv.reqs) != 0 {
+					t.Errorf("stdout = %q (want %q), reqs=%d", out, tc.want, len(srv.reqs))
+				}
+			})
+		}
+	})
+
+	t.Run("empty hook_actors stays silent when repo config or url is missing", func(t *testing.T) {
+		h, _ := newHookActorHarness(t, Config{HookActors: map[string]string{}})
+		delete(h.env, "AGB_TOKEN")
+		if out := runHook(t, h, hookInput(t, t.TempDir()), "--tool", "claude"); out != "" {
+			t.Errorf("without .agb.json: stdout = %q", out)
+		}
+		delete(h.env, "AGB_URL")
+		if out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", "claude"); out != "" {
+			t.Errorf("without url: stdout = %q", out)
+		}
+	})
+
+	t.Run("actor present without token stays silent", func(t *testing.T) {
+		h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{"claude": "reviewer"}})
+		delete(h.env, "AGB_TOKEN")
+		if out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", "claude"); out != "" || len(srv.reqs) != 0 {
+			t.Errorf("stdout = %q, reqs = %d", out, len(srv.reqs))
+		}
+	})
+
+	t.Run("local context defaults actor to owner without missing-actor notice", func(t *testing.T) {
+		h, srv := newHookActorHarness(t, Config{
+			CurrentContext: "local",
+			Contexts:       map[string]ContextConfig{"local": {URL: srvURLPlaceholder(t), Token: "local-shared"}},
+			HookActors:     map[string]string{},
+		})
+		delete(h.env, "AGB_URL")
+		delete(h.env, "AGB_TOKEN")
+		// Point local context at fakeServer URL.
+		if err := saveConfig(h.app.ConfigPath, Config{
+			CurrentContext: "local",
+			Contexts:       map[string]ContextConfig{"local": {URL: srv.srv.URL, Token: "local-shared"}},
+			HookActors:     map[string]string{},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", "claude")
+		if !strings.HasPrefix(out, "확인하지 않은 메시지 2건 (프로젝트 CLI)\n") || srv.last().Header.Get("X-Actor") != "owner" {
+			t.Errorf("local context: stdout=%q reqs=%+v", out, srv.reqs)
+		}
+	})
+}
+
+func srvURLPlaceholder(t *testing.T) string {
+	t.Helper()
+	return "http://127.0.0.1:1"
 }
 
 // The hook actor is for the hook alone: another command without an actor

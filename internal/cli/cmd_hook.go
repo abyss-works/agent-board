@@ -80,14 +80,15 @@ var hookSessionStartCmd = &command{
 옵션:
   --tool <이름>   훅을 부르는 에이전트 도구의 이름 (agb setup <대상> 의 대상 이름. 예: claude)
 
-행위자는 --actor, AGB_ACTOR, 설정 파일에 --tool 의 도구 이름으로 저장된 훅 행위자(hook_actors), 설정 파일의 actor
-순서로 정합니다. 훅 행위자는 agb setup <대상> 이 저장하고 이 명령만 씁니다. --tool 이 없으면 훅 행위자를 건너뜁니다.
-세션 ID 는 --session-id, 표준 입력 JSON 의 session_id(세션 ID 형식에 맞을 때), AGB_SESSION_ID, 설정 파일의
-session_id, 기본값 순서로 정합니다.
+행위자는 --actor, AGB_ACTOR, 설정 파일에 --tool 의 도구 이름(영문 대소문자 무시)으로 저장된 훅 행위자(hook_actors),
+설정 파일의 actor 순서로 정합니다. 훅 행위자는 agb setup <대상> 이 저장하고 이 명령만 씁니다. --tool 이 없으면 훅
+행위자를 건너뜁니다. 세션 ID 는 --session-id, 표준 입력 JSON 의 session_id(세션 ID 형식에 맞을 때), AGB_SESSION_ID,
+설정 파일의 session_id, 기본값 순서로 정합니다.
 
-.agb.json 이 없거나, 설정이나 행위자나 토큰이 없거나, 서버에 닿지 않거나, 서버가 오류를 돌려주거나, 확인하지 않은
-메시지가 없으면 아무것도 출력하지 않습니다. 모르는 옵션과 남는 인자는 무시합니다. 어떤 경우에도 종료 코드는 0 이고
-표준 오류에 쓰지 않습니다.
+.agb.json 이 있는 저장소에서 서버 주소는 있으나 행위자가 비어 있으면, 미확인 메시지를 확인하지 못했다는 안내 1줄을
+표준 출력에 적습니다. .agb.json 이 없거나, 서버 주소나 토큰이 없거나, 서버에 닿지 않거나, 서버가 오류를 돌려주거나,
+확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 모르는 옵션과 남는 인자는 무시합니다. 어떤 경우에도
+종료 코드는 0 이고 표준 오류에 쓰지 않습니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("hook session-start", g)
@@ -174,7 +175,7 @@ func (a *App) hookGlobals(g *globals, tool string, in hookStdin) *globals {
 	if hg.actor == "" && a.Getenv("AGB_ACTOR") == "" {
 		if path, err := a.configPath(g); err == nil {
 			if file, err := loadConfig(path); err == nil {
-				hg.actor = file.HookActors[tool]
+				hg.actor = lookupHookActor(file.HookActors, tool)
 			}
 		}
 	}
@@ -187,7 +188,9 @@ func (a *App) hookGlobals(g *globals, tool string, in hookStdin) *globals {
 // unreadNotice is the text of the session start hook, the messages that the
 // project of the session's folder has not acknowledged, and one line that
 // says what the session gets: how many messages, or why there is no text.
-// notice is "" when there are no messages and when anything on the way fails.
+// notice is "" when there are no messages and when anything on the way fails,
+// except when a repository .agb.json and server URL are present but no actor
+// is configured, in which case it emits a one-line setup hint.
 // The request is made with the actor and the session ID of hookGlobals.
 func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hookStdin) (notice, summary string) {
 	dir := in.Cwd
@@ -201,10 +204,24 @@ func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hook
 	if err != nil || cfg == nil {
 		return "", "이 폴더에서는 프로젝트를 판정할 수 없습니다"
 	}
-	c, err := a.client(a.hookGlobals(g, tool, in), true)
+	hg := a.hookGlobals(g, tool, in)
+	_, s, err := a.settings(hg)
 	if err != nil {
 		return "", err.Error()
 	}
+	if s.URL != "" && s.Actor == "" {
+		toolName := strings.ToLower(strings.TrimSpace(tool))
+		if toolName != "" {
+			notice = fmt.Sprintf("agb: 프로젝트 %s의 미확인 메시지를 확인하지 못했습니다(훅 행위자 미설정). `agb setup %s --actor <ID>`로 설정하세요.\n", cfg.Project, toolName)
+		} else {
+			notice = fmt.Sprintf("agb: 프로젝트 %s의 미확인 메시지를 확인하지 못했습니다(행위자 미설정). --actor 또는 `agb setup <도구> --actor <ID>`로 설정하세요.\n", cfg.Project)
+		}
+		return notice, s.requireActor().Error()
+	}
+	if err := s.requireAuth(); err != nil {
+		return "", err.Error()
+	}
+	c := a.newClient(s)
 	ctx, cancel := context.WithTimeout(ctx, hookQueryTimeout)
 	defer cancel()
 	resp, err := c.ListMessages(ctx, cfg.Project, client.MessageFilter{UnreadBy: cfg.Project, Page: client.Page{Limit: hookListMax}})
