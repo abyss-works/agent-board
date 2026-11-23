@@ -466,18 +466,18 @@ func (s *Store) waitingSessionsSection(ctx context.Context, project string, limi
 		from (
 			select s.*, ` + sessionEffectiveIssueExpr + ` as effective_issue_id
 			from session s
-			where s.state is not null
+			where s.state is not null and s.state_at is not null and s.state_at >= ?
 		) s
 		left join issue i on i.id = s.effective_issue_id
 		left join project ip on ip.id = i.project_id
 	) x where coalesce(x.issue_project, x.last_project) = ?`
 	var total int
-	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, staleCutoff, waitCutoff, project).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, staleCutoff, waitCutoff, waitCutoff, project).Scan(&total); err != nil {
 		return Section[model.Session]{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `select x.actor_id, x.session_id, x.first_seen_at, x.last_seen_at, x.last_host, x.parent_actor_id, x.parent_session_id,
 		x.role, x.issue_key, x.location, x.state, x.state_reason, x.state_at, x.updated_at, x.last_project`+from+
-		` order by x.state_at asc, x.actor_id asc, x.session_id asc limit ?`, staleCutoff, waitCutoff, project, limit)
+		` order by x.state_at asc, x.actor_id asc, x.session_id asc limit ?`, staleCutoff, waitCutoff, waitCutoff, project, limit)
 	if err != nil {
 		return Section[model.Session]{}, err
 	}

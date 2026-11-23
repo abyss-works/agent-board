@@ -74,6 +74,8 @@ func TestCleanSessionStateReason(t *testing.T) {
 		"탭\t포함",
 		"제어\x1f문자",
 		"삭제\x7f문자",
+		"씨원\u0085문자",
+		"시퀀스\u009b문자",
 	} {
 		if _, _, ok := CleanSessionStateReason(bad); ok {
 			t.Errorf("CleanSessionStateReason(%q) accepted", bad)
@@ -118,8 +120,11 @@ func TestNormalizeRepoRemote(t *testing.T) {
 		{"user:tok@GitLab.Example.com:/team/sub/repo.git/", "gitlab.example.com/team/sub/repo"},
 		{"ssh://git@github.com:22/acme/app.git", "github.com/acme/app"},
 		{"ssh://user:pass@Example.COM:2222/acme/app/", "example.com/acme/app"},
+		{"git@[2001:db8::1]:acme/app.git", "2001:db8::1/acme/app"},
+		{"[2001:DB8::1]:/acme/app/", "2001:db8::1/acme/app"},
+		{"ssh://git@[2001:db8::1]:22/acme/app.git", "2001:db8::1/acme/app"},
 		{"/srv/repos/app/", "/srv/repos/app"},
-		{`C:\work\repos\app\`, "C:/work/repos/app"},
+		{`C:\work\repos\app\`, "c:/work/repos/app"},
 		{"  /var/git/app.git/  ", "/var/git/app.git"},
 		{"my-local-repo/", "my-local-repo"},
 		{"", ""},
@@ -128,6 +133,27 @@ func TestNormalizeRepoRemote(t *testing.T) {
 	for _, c := range cases {
 		if got := NormalizeRepoRemote(c.raw); got != c.want {
 			t.Errorf("NormalizeRepoRemote(%q) = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
+func TestStripRemoteUserinfo(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"  https://user:tok@example.com/acme/app.git  ", "https://example.com/acme/app.git"},
+		{"https://example.com/acme/app.git ", "https://example.com/acme/app.git"},
+		{"  user:tok@example.com:acme/app.git  ", "example.com:acme/app.git"},
+		{"git@example.com:acme/app.git", "example.com:acme/app.git"},
+		{"  git@[2001:db8::1]:acme/app.git  ", "[2001:db8::1]:acme/app.git"},
+		{"ssh://git@[2001:db8::1]:22/acme/app.git", "ssh://[2001:db8::1]:22/acme/app.git"},
+		{`  C:\work\repos\app  `, `C:\work\repos\app`},
+		{"  /srv/repos/app  ", "/srv/repos/app"},
+	}
+	for _, c := range cases {
+		if got := StripRemoteUserinfo(c.raw); got != c.want {
+			t.Errorf("StripRemoteUserinfo(%q) = %q, want %q", c.raw, got, c.want)
 		}
 	}
 }
@@ -148,6 +174,7 @@ func TestSessionLocationKey(t *testing.T) {
 		{"detached HEAD trimmed", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git"), Branch: str(" HEAD ")}, "", false},
 		{"https remote", "desk", &SessionLocation{RepoRemote: str("https://example.com/acme/app.git"), Branch: str("feat/x"), Worktree: str("/work/app")}, "remote:example.com/acme/app#feat/x", true},
 		{"scp remote", "laptop", &SessionLocation{RepoRemote: str("git@example.com:acme/app.git"), Branch: str("feat/x"), Worktree: str(`C:\Users\dev\app`)}, "remote:example.com/acme/app#feat/x", true},
+		{"ipv6 scp remote", "laptop", &SessionLocation{RepoRemote: str("git@[2001:db8::1]:acme/app.git"), Branch: str("feat/x")}, "remote:2001:db8::1/acme/app#feat/x", true},
 		{"ssh remote", "box", &SessionLocation{RepoRemote: str("ssh://git@example.com:22/acme/app.git"), Branch: str("feat/x")}, "remote:example.com/acme/app#feat/x", true},
 		{"local fallback windows", "desk", &SessionLocation{Worktree: str(`C:\Work\App\`), Branch: str("feat/x")}, "local:desk:c:/Work/App#feat/x", true},
 		{"local fallback blank remote", "desk", &SessionLocation{RepoRemote: str("  "), Worktree: str("c:/Work/App/"), Branch: str("feat/x")}, "local:desk:c:/Work/App#feat/x", true},

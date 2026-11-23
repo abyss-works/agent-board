@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -39,12 +40,12 @@ func ValidSessionState(s string) bool {
 }
 
 // CleanSessionStateReason checks a waiting state reason and returns it with
-// surrounding whitespace trimmed. Control characters (0x00..0x1f, 0x7f) are
+// surrounding whitespace trimmed. Control characters (unicode.IsControl) are
 // rejected before trimming; the trimmed string must be 1..MaxSessionStateReasonRunes
 // runes.
 func CleanSessionStateReason(raw string) (string, string, bool) {
 	for _, r := range raw {
-		if r <= 0x1f || r == 0x7f {
+		if unicode.IsControl(r) {
 			return "", "제어 문자를 넣을 수 없습니다.", false
 		}
 	}
@@ -149,6 +150,9 @@ func normalizeLocalPath(raw string) string {
 	if s == "" {
 		return ""
 	}
+	if len(s) >= 2 && s[1] == ':' && s[0] >= 'A' && s[0] <= 'Z' {
+		s = strings.ToLower(s[:1]) + s[1:]
+	}
 	if s != "/" {
 		s = strings.TrimRight(s, "/")
 	}
@@ -159,28 +163,57 @@ func isASCIILetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
-func parseSCPRemote(s string) (host, path string, ok bool) {
+func parseSCPRemote(s string) (host, path, stripped string, ok bool) {
 	slashIdx := strings.IndexAny(s, "/\\")
 	cand := s
 	if atIdx := strings.IndexByte(s, '@'); atIdx >= 0 && (slashIdx < 0 || atIdx < slashIdx) {
 		cand = s[atIdx+1:]
 	}
 	slashInCand := strings.IndexAny(cand, "/\\")
+	if strings.HasPrefix(cand, "[") {
+		end := strings.IndexByte(cand, ']')
+		if end <= 1 || end+1 >= len(cand) || cand[end+1] != ':' {
+			return "", "", "", false
+		}
+		if slashInCand >= 0 && end+1 > slashInCand {
+			return "", "", "", false
+		}
+		return cand[1:end], cand[end+2:], cand, true
+	}
 	colonIdx := strings.IndexByte(cand, ':')
 	if colonIdx <= 0 || (slashInCand >= 0 && colonIdx > slashInCand) {
-		return "", "", false
+		return "", "", "", false
 	}
 	host = cand[:colonIdx]
 	if len(host) == 1 && isASCIILetter(host[0]) {
-		return "", "", false
+		return "", "", "", false
 	}
-	return host, cand[colonIdx+1:], true
+	return host, cand[colonIdx+1:], cand, true
+}
+
+// StripRemoteUserinfo trims whitespace and removes any userinfo (user:pass@ or
+// user@) from a URL or SCP-style repository remote. Other values stay trimmed.
+func StripRemoteUserinfo(raw string) string {
+	s := strings.TrimSpace(raw)
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil {
+			if u.User != nil {
+				u.User = nil
+				return u.String()
+			}
+			return s
+		}
+	}
+	if _, _, stripped, ok := parseSCPRemote(s); ok {
+		return stripped
+	}
+	return s
 }
 
 // NormalizeRepoRemote normalizes SCP and URL repository remotes to
 // "<lowercase host>/<path without trailing .git or />" with userinfo removed.
-// Non-URL local paths or strings have slashes normalized and trailing '/'
-// removed.
+// Non-URL local paths or strings have slashes normalized, Windows drive
+// letters lowercased, and trailing '/' removed.
 func NormalizeRepoRemote(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -197,7 +230,7 @@ func NormalizeRepoRemote(raw string) string {
 		}
 		return normalizeLocalPath(s)
 	}
-	if host, p, ok := parseSCPRemote(s); ok {
+	if host, p, _, ok := parseSCPRemote(s); ok {
 		host = strings.ToLower(host)
 		p = cleanRemotePath(p)
 		if p == "" {
@@ -224,9 +257,6 @@ func SessionLocationKey(host string, loc *SessionLocation) (string, bool) {
 	}
 	if loc.Worktree != nil && strings.TrimSpace(*loc.Worktree) != "" {
 		wt := normalizeLocalPath(*loc.Worktree)
-		if len(wt) >= 2 && wt[1] == ':' && wt[0] >= 'A' && wt[0] <= 'Z' {
-			wt = strings.ToLower(wt[:1]) + wt[1:]
-		}
 		return "local:" + host + ":" + wt + "#" + branch, true
 	}
 	return "", false
