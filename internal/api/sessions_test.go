@@ -89,14 +89,14 @@ func TestAuthenticatedRequestRegistersTheSession(t *testing.T) {
 		t.Fatalf("me: %d %s", rec.Code, rec.Body)
 	}
 	got := e.session(t, "claude", "claude-abc")
-	if got.FirstSeenAt != model.NewTime(start) || got.LastSeenAt != got.FirstSeenAt || got.UpdatedAt != got.FirstSeenAt || got.LastHost != "desk-win10" {
+	if got.FirstSeenAt != model.NewTime(start) || got.LastSeenAt != got.FirstSeenAt || got.UpdatedAt != got.FirstSeenAt || got.LastHost != "test-host" {
 		t.Errorf("registered = %+v", got)
 	}
 
 	// A call within a minute of the last write is not written.
 	clock.add(30 * time.Second)
 	e.do(t, "GET", "/v1/actors/me", "", map[string]string{"X-Session-Id": "claude-abc", "X-Client-Host": "laptop"})
-	if got := e.session(t, "claude", "claude-abc"); got.LastSeenAt != model.NewTime(start) || got.LastHost != "desk-win10" {
+	if got := e.session(t, "claude", "claude-abc"); got.LastSeenAt != model.NewTime(start) || got.LastHost != "test-host" {
 		t.Errorf("within a minute: %+v", got)
 	}
 	clock.add(31 * time.Second)
@@ -162,6 +162,14 @@ func TestSessionWriteFailureLeavesTheRequestAlone(t *testing.T) {
 func TestConcurrentFirstRequestsDoNotRaceSessionRegistration(t *testing.T) {
 	e, _ := newSessionEnv(t)
 	tok := e.bearer(t, "claude")
+	// Warm up the token so last_used_at is populated and concurrent requests
+	// reach TouchSession under the write lock instead of serializing in AuthenticateToken.
+	if rec := e.do(t, "GET", "/v1/actors/me", "", map[string]string{
+		"Authorization": "Bearer " + tok,
+		"X-Session-Id":  "warmup-sess",
+	}); rec.Code != 200 {
+		t.Fatalf("warmup request: %d %s", rec.Code, rec.Body)
+	}
 	tx, err := e.st.DB().Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -272,11 +280,11 @@ func TestPatchSession(t *testing.T) {
 		t.Errorf("empty patch moved updated_at: %s -> %s", before.UpdatedAt, got.UpdatedAt)
 	}
 
-	rec = e.do(t, "PATCH", path, `{"issue":"APP-1","location":{"repo_remote":"https://user:tok@github.com/a/b.git","dirty_count":2}}`, nil)
+	rec = e.do(t, "PATCH", path, `{"issue":"APP-1","location":{"repo_remote":"https://user:tok@example.com/a/b.git","dirty_count":2}}`, nil)
 	wantStatus(t, rec, 200, "issue and location")
 	var got model.Session
 	decodeJSON(t, rec, &got)
-	if got.Issue == nil || *got.Issue != "APP-1" || got.Location == nil || *got.Location.RepoRemote != "https://github.com/a/b.git" ||
+	if got.Issue == nil || *got.Issue != "APP-1" || got.Location == nil || *got.Location.RepoRemote != "https://example.com/a/b.git" ||
 		got.Location.ReportedAt != model.NewTime(clock.Now()) || got.Location.Branch != nil || got.Role == nil || *got.Role != "runner" {
 		t.Errorf("patched = %s", rec.Body)
 	}
@@ -310,7 +318,7 @@ func TestStartChildSession(t *testing.T) {
 	var child model.Session
 	decodeJSON(t, rec, &child)
 	if !childIDRE.MatchString(child.SessionID) || child.Actor != "claude" || child.Role == nil || *child.Role != "subagent" ||
-		child.Parent == nil || *child.Parent != (model.SessionRef{Actor: "claude", SessionID: "sess-1"}) || child.LastHost != "desk-win10" {
+		child.Parent == nil || *child.Parent != (model.SessionRef{Actor: "claude", SessionID: "sess-1"}) || child.LastHost != "test-host" {
 		t.Errorf("child = %s", rec.Body)
 	}
 	if strings.Contains(rec.Body.String(), `"children"`) {
@@ -328,6 +336,9 @@ func TestStartChildSession(t *testing.T) {
 	wantStatus(t, rec, 201, "named child")
 	rec = e.do(t, "POST", "/v1/sessions", `{"session_id":"sess-1.named"}`, nil)
 	wantStatus(t, rec, 409, "same id")
+	wantDetail(t, decodeErr(t, rec), "", "exists")
+	rec = e.do(t, "POST", "/v1/sessions", `{"session_id":"fresh-self"}`, sess("fresh-self"))
+	wantStatus(t, rec, 409, "self id with missing parent")
 	wantDetail(t, decodeErr(t, rec), "", "exists")
 	rec = e.do(t, "POST", "/v1/sessions", `{"session_id":"bad id"}`, nil)
 	wantStatus(t, rec, 422, "bad id")
@@ -412,8 +423,25 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 	wantStatus(t, rec, 422, "null state with reason")
 	wantDetail(t, decodeErr(t, rec), "state_reason", "requires_state")
 
-	// Invalid state strings and non-string -> 422 field state.
-	for _, body := range []string{`{"state":"paused"}`, `{"state":""}`, `{"state":123}`, `{"state":true}`} {
+	// Non-string state or state_reason -> 400 bad_request type_mismatch (consistent with role/issue).
+	for _, tc := range []struct {
+		body, field string
+	}{
+		{`{"state":123}`, "state"},
+		{`{"state":true}`, "state"},
+		{`{"state":"waiting_input","state_reason":42}`, "state_reason"},
+	} {
+		rec = e.do(t, "PATCH", path, tc.body, nil)
+		wantStatus(t, rec, 400, tc.body)
+		eb := decodeErr(t, rec)
+		if eb.Error.Code != "bad_request" {
+			t.Errorf("%s: code = %s, want bad_request", tc.body, eb.Error.Code)
+		}
+		wantDetail(t, eb, tc.field, "type_mismatch")
+	}
+
+	// Invalid state strings -> 422 field state.
+	for _, body := range []string{`{"state":"paused"}`, `{"state":""}`} {
 		rec = e.do(t, "PATCH", path, body, nil)
 		wantStatus(t, rec, 422, body)
 		wantDetail(t, decodeErr(t, rec), "state", "")
@@ -426,7 +454,7 @@ func TestPatchSessionWaitingStateRules(t *testing.T) {
 		`{"state":"waiting_input","state_reason":"` + strings.Repeat("가", 201) + `"}`,
 		`{"state":"waiting_input","state_reason":"줄바꿈\n포함"}`,
 		`{"state":"waiting_input","state_reason":"널\u0000포함"}`,
-		`{"state":"waiting_input","state_reason":42}`,
+		`{"state":"waiting_input","state_reason":"씨원\u0085문자"}`,
 	} {
 		rec = e.do(t, "PATCH", path, body, nil)
 		wantStatus(t, rec, 422, body)
@@ -577,6 +605,77 @@ func TestSessionWaitingAutoClearAndFilter(t *testing.T) {
 	}
 	if persisted := e.session(t, "claude", "sess-1"); persisted.State != nil || persisted.StateReason != nil || persisted.StateAt != nil {
 		t.Errorf("patch role persisted = %+v", persisted)
+	}
+}
+
+func TestCrossActorPatchClearsOnlyCallerWaitingState(t *testing.T) {
+	e, clock := newSessionEnv(t)
+	ownerHdr := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"}
+	claudeHdr := map[string]string{"X-Actor": "claude", "X-Session-Id": "sess-1"}
+
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", ownerHdr), 200, "register owner")
+	wantStatus(t, e.do(t, "GET", "/v1/actors/me", "", claudeHdr), 200, "register claude")
+
+	clock.add(time.Minute)
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/owner/owner-1", `{"state":"waiting_input","state_reason":"사용자 확인 대기"}`, ownerHdr), 200, "set owner waiting")
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"state":"waiting_approval","state_reason":"승인 대기"}`, claudeHdr), 200, "set claude waiting")
+
+	// Waiting owner PATCHes claude's role -> owner's waiting state clears, claude keeps patched role AND its waiting state.
+	clock.add(time.Minute)
+	rec := e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"role":"runner"}`, ownerHdr)
+	wantStatus(t, rec, 200, "owner patches claude role")
+	var patched model.Session
+	decodeJSON(t, rec, &patched)
+	if patched.Role == nil || *patched.Role != "runner" || patched.State == nil || *patched.State != "waiting_approval" {
+		t.Errorf("target session after cross-actor patch = %+v", patched)
+	}
+	if ownerSess := e.session(t, "owner", "owner-1"); ownerSess.State != nil || ownerSess.StateReason != nil || ownerSess.StateAt != nil {
+		t.Errorf("caller owner waiting state was not cleared: %+v", ownerSess)
+	}
+
+	// Waiting owner PATCHes claude's waiting state -> owner's waiting state clears, claude keeps new waiting state.
+	clock.add(time.Minute)
+	wantStatus(t, e.do(t, "PATCH", "/v1/sessions/owner/owner-1", `{"state":"waiting_input","state_reason":"재대기"}`, ownerHdr), 200, "re-set owner waiting")
+	clock.add(time.Minute)
+	rec = e.do(t, "PATCH", "/v1/sessions/claude/sess-1", `{"state":"waiting_external","state_reason":"외부 응답 대기"}`, ownerHdr)
+	wantStatus(t, rec, 200, "owner patches claude waiting state")
+	decodeJSON(t, rec, &patched)
+	if patched.State == nil || *patched.State != "waiting_external" || patched.StateReason == nil || *patched.StateReason != "외부 응답 대기" {
+		t.Errorf("target session after cross-actor state patch = %+v", patched)
+	}
+	if ownerSess := e.session(t, "owner", "owner-1"); ownerSess.State != nil || ownerSess.StateReason != nil || ownerSess.StateAt != nil {
+		t.Errorf("caller owner waiting state was not cleared on state patch: %+v", ownerSess)
+	}
+}
+
+func TestSessionClaimSetsLastProjectForSessionFilter(t *testing.T) {
+	e, _ := newSessionEnv(t)
+	ownerHdr := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-1"}
+	wantStatus(t, e.do(t, "POST", "/v1/projects", `{"key":"APP","name":"app"}`, ownerHdr), 201, "create project")
+	wantStatus(t, e.do(t, "POST", "/v1/issues", `{"project":"APP","title":"점유 대상"}`, ownerHdr), 201, "create issue")
+
+	// Fresh session only calls POST /v1/issues/APP-1/claim (no issue PATCH/comment).
+	claimHdr := map[string]string{"X-Actor": "claude", "X-Session-Id": "claim-only-1"}
+	wantStatus(t, e.do(t, "POST", "/v1/issues/APP-1/claim", "", claimHdr), 201, "claim issue")
+
+	rec := e.do(t, "GET", "/v1/sessions?project=APP", "", ownerHdr)
+	wantStatus(t, rec, 200, "list sessions by project")
+	var list struct {
+		Items []model.Session `json:"items"`
+		Total int             `json:"total"`
+	}
+	decodeJSON(t, rec, &list)
+	var found bool
+	for _, it := range list.Items {
+		if it.Actor == "claude" && it.SessionID == "claim-only-1" {
+			found = true
+			if it.LastProject == nil || *it.LastProject != "APP" {
+				t.Errorf("claim-only session last_project = %v, want APP", it.LastProject)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("claim-only session missing from GET /v1/sessions?project=APP: %+v", list.Items)
 	}
 }
 

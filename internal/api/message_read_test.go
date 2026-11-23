@@ -18,10 +18,10 @@ func TestAckMessageAndUnreadList(t *testing.T) {
 	rec := e.do(t, "POST", ack, `{"reader":"alpha"}`, map[string]string{"X-Actor": "owner"})
 	var first model.MessageRead
 	decodeJSON(t, rec, &first)
-	if rec.Code != 200 || first.MessageID != a.ID || first.Reader != "alpha" || first.ReadBy != "owner" || first.ReadSession != "sess-1" || first.ReadHost != "desk-win10" || first.ReadAt.Time().IsZero() {
+	if rec.Code != 200 || first.MessageID != a.ID || first.Reader != "alpha" || first.ReadBy != "owner" || first.ReadSession != "sess-1" || first.ReadHost != "test-host" || first.ReadAt.Time().IsZero() {
 		t.Fatalf("ack: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"message_id":`, `"reader":"alpha"`, `"read_at":"`, `"read_by":"owner"`, `"read_session":"sess-1"`, `"read_host":"desk-win10"`} {
+	for _, want := range []string{`"message_id":`, `"reader":"alpha"`, `"read_at":"`, `"read_by":"owner"`, `"read_session":"sess-1"`, `"read_host":"test-host"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("JSON shape lacks %s: %s", want, rec.Body.String())
 		}

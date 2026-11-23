@@ -219,6 +219,75 @@ func TestReleaseClaimEndpointPermissionsAndValidation(t *testing.T) {
 	}
 }
 
+func TestClaimMethodNotAllowedBadJSONAndIfMatch(t *testing.T) {
+	e, _ := newSessionEnv(t)
+	setupClaimProject(t, e)
+	hdrA := map[string]string{"X-Actor": "claude", "X-Session-Id": "sess-a"}
+	hdrB := map[string]string{"X-Actor": "codex", "X-Session-Id": "sess-b"}
+	hdrOwner := map[string]string{"X-Actor": "owner", "X-Session-Id": "owner-s"}
+	issue := createClaimIssue(t, e, `{"project":"AGB","title":"경합과 메서드"}`, hdrOwner)
+
+	// 1. 405 Method Not Allowed + Allow header on /claim and /claims.
+	for _, method := range []string{"GET", "PUT", "PATCH"} {
+		rec := e.do(t, method, "/v1/issues/"+issue.Key+"/claim", "", hdrA)
+		if rec.Code != 405 || rec.Header().Get("Allow") != "DELETE, POST" || decodeErr(t, rec).Error.Code != "method_not_allowed" {
+			t.Errorf("%s /claim: code=%d allow=%q body=%s", method, rec.Code, rec.Header().Get("Allow"), rec.Body)
+		}
+	}
+	for _, method := range []string{"POST", "DELETE", "PATCH"} {
+		rec := e.do(t, method, "/v1/issues/"+issue.Key+"/claims", "", hdrA)
+		if rec.Code != 405 || rec.Header().Get("Allow") != "GET" || decodeErr(t, rec).Error.Code != "method_not_allowed" {
+			t.Errorf("%s /claims: code=%d allow=%q body=%s", method, rec.Code, rec.Header().Get("Allow"), rec.Body)
+		}
+	}
+
+	// 2. DELETE /claim with malformed JSON returns 400 bad_request, and reason:null is accepted.
+	if rec := e.do(t, "POST", "/v1/issues/"+issue.Key+"/claim", "", hdrA); rec.Code != 201 {
+		t.Fatalf("claim: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.do(t, "DELETE", "/v1/issues/"+issue.Key+"/claim", `{bad`, hdrA); rec.Code != 400 || decodeErr(t, rec).Error.Code != "bad_request" {
+		t.Errorf("malformed JSON delete: %d %s", rec.Code, rec.Body)
+	}
+	rec := e.do(t, "DELETE", "/v1/issues/"+issue.Key+"/claim", `{"outcome":"done","reason":null}`, hdrA)
+	if rec.Code != 200 {
+		t.Fatalf("reason:null delete: %d %s", rec.Code, rec.Body)
+	}
+	var rel model.IssueClaim
+	decodeJSON(t, rec, &rel)
+	if rel.Active || rel.Outcome == nil || *rel.Outcome != model.ClaimOutcomeDone || rel.Reason != nil {
+		t.Errorf("reason:null released = %+v", rel)
+	}
+
+	// 3. If-Match mismatch (412) vs other-session claim contention (409) on PATCH /v1/issues/{key}.
+	if rec := e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, hdrA); rec.Code != 200 {
+		t.Fatalf("hdrA doing: %d %s", rec.Code, rec.Body)
+	}
+	var cur model.Issue
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key, "", hdrA), &cur)
+
+	rec = e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"done"}`, map[string]string{
+		"X-Actor":      "codex",
+		"X-Session-Id": "sess-b",
+		"If-Match":     `"1"`,
+	})
+	if rec.Code != 412 || decodeErr(t, rec).Error.Code != "precondition_failed" {
+		t.Errorf("stale If-Match during claim contention: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"done"}`, map[string]string{
+		"X-Actor":      "codex",
+		"X-Session-Id": "sess-b",
+		"If-Match":     etag(cur.Version),
+	})
+	if rec.Code != 409 || decodeErr(t, rec).Error.Code != "claimed" {
+		t.Errorf("matching If-Match during other claim: %d %s", rec.Code, rec.Body)
+	}
+	var after model.Issue
+	decodeJSON(t, e.do(t, "GET", "/v1/issues/"+issue.Key, "", hdrB), &after)
+	if after.Status != model.StatusDoing || after.Version != cur.Version {
+		t.Errorf("issue mutated after 412/409: status=%s version=%d (want doing/%d)", after.Status, after.Version, cur.Version)
+	}
+}
+
 func TestIssueStatusPatchAndCreateClaimsIntegration(t *testing.T) {
 	e, clock := newSessionEnv(t)
 	setupClaimProject(t, e)

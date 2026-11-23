@@ -58,7 +58,7 @@ func TestCreateGetAndDeleteMessage(t *testing.T) {
 		t.Fatalf("create: %d %s %q", rec.Code, rec.Body.String(), rec.Header().Get("Location"))
 	}
 	if m.Project != "AGB" || m.To == nil || *m.To != "reviewer" || m.Title != "배포 끝" || m.Body == nil || *m.Body != "본문" || m.State != "active" ||
-		m.CreatedBy != "claude" || m.CreatedSession != "sess-1" || m.CreatedHost != "desk-win10" || m.DeletedAt != nil {
+		m.CreatedBy != "claude" || m.CreatedSession != "sess-1" || m.CreatedHost != "test-host" || m.DeletedAt != nil {
 		t.Errorf("message = %+v", m)
 	}
 	if d := m.ExpiresAt.Time().Sub(m.CreatedAt.Time()).Hours(); d != 72 {
@@ -318,6 +318,8 @@ func TestMessageRoutingErrors(t *testing.T) {
 		{"to_session missing key", `{"title":"t","to_session":{"actor":"claude"}}`, "to_session", "invalid"},
 		{"to_session unknown actor", `{"title":"t","to_session":{"actor":"gemini","session_id":"s1"}}`, "to_session", "unknown_actor"},
 		{"to_role invalid", `{"title":"t","to_role":"boss"}`, "to_role", "invalid"},
+		{"to_role empty", `{"title":"t","to_role":""}`, "to_role", "invalid"},
+		{"issue empty", `{"title":"t","issue":""}`, "issue", "unknown_issue"},
 		{"issue unknown", `{"title":"t","issue":"AGB-999"}`, "issue", "unknown_issue"},
 		{"issue mismatch", `{"title":"t","issue":"OTH-1"}`, "issue", "project_mismatch"},
 		{"reply_to zero", `{"title":"t","reply_to":0}`, "reply_to", "invalid"},
@@ -350,6 +352,33 @@ func TestMessageRoutingErrors(t *testing.T) {
 		eb := decodeErr(t, rec)
 		if rec.Code != 400 || len(eb.Error.Details) == 0 || eb.Error.Details[0].Field != c.field {
 			t.Errorf("%s: code=%d body=%s", c.query, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Null routing fields behave as omitted (stored as null).
+	rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"title":"널 라우팅","to_role":null,"issue":null}`, nil)
+	if rec.Code != 201 {
+		t.Fatalf("null routing create: %d %s", rec.Code, rec.Body.String())
+	}
+	var nullMsg model.Message
+	decodeJSON(t, rec, &nullMsg)
+	if nullMsg.ToRole != nil || nullMsg.Issue != nil {
+		t.Errorf("null routing stored = %+v", nullMsg)
+	}
+
+	// Deterministic type_mismatch ordering when multiple string fields have wrong types.
+	for i := 0; i < 10; i++ {
+		rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"to":1,"to_role":2,"issue":3,"title":"t"}`, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 400 || eb.Error.Code != "bad_request" || len(eb.Error.Details) == 0 ||
+			eb.Error.Details[0].Field != "to" || eb.Error.Details[0].Reason != "type_mismatch" {
+			t.Fatalf("iter %d (to first): %d %s", i, rec.Code, rec.Body.String())
+		}
+		rec = e.do(t, "POST", "/v1/projects/AGB/messages", `{"to_role":2,"issue":3,"title":"t"}`, nil)
+		eb = decodeErr(t, rec)
+		if rec.Code != 400 || eb.Error.Code != "bad_request" || len(eb.Error.Details) == 0 ||
+			eb.Error.Details[0].Field != "to_role" || eb.Error.Details[0].Reason != "type_mismatch" {
+			t.Fatalf("iter %d (to_role first): %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
 }

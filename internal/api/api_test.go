@@ -92,7 +92,7 @@ func (e *env) do(t *testing.T, method, target string, body string, headers map[s
 	good := map[string]string{
 		"X-Actor":       "claude",
 		"X-Session-Id":  "sess-1",
-		"X-Client-Host": "desk-win10",
+		"X-Client-Host": "test-host",
 	}
 	for k, v := range headers {
 		good[k] = v
