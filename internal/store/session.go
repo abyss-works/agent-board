@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -52,7 +51,7 @@ type SessionFilter struct {
 }
 
 // sessionLastProject is the project of the newest record the session left:
-// an issue activity, a resource activity or a document activity.
+// an issue activity, a resource activity, a document activity, or an issue claim.
 const sessionLastProject = `(select lp.key from (
 		select p.key as key, a.at as at from activity a join issue ai on ai.id = a.issue_id join project p on p.id = ai.project_id
 			where a.actor_id = s.actor_id and a.session_id = s.session_id
@@ -62,6 +61,9 @@ const sessionLastProject = `(select lp.key from (
 		union all
 		select p.key, d.at from document_activity d join document dd on dd.id = d.document_id join project p on p.id = dd.project_id
 			where d.actor_id = s.actor_id and d.session_id = s.session_id
+		union all
+		select p.key, ic.claimed_at from issue_claim ic join issue ci on ci.id = ic.issue_id join project p on p.id = ci.project_id
+			where ic.actor_id = s.actor_id and ic.session_id = s.session_id
 	) lp order by lp.at desc limit 1)`
 
 func sessionCutoffs(now model.Time) (staleCutoff, waitCutoff string) {
@@ -138,6 +140,7 @@ func scanSession(sc rowScanner, now model.Time) (*model.Session, error) {
 	}
 	x.Named = model.SessionNamed(x.SessionID)
 	x.Stale = model.SessionStale(x.LastSeenAt, now)
+	x.LocationConflicts = []model.SessionRef{}
 	return &x, nil
 }
 
@@ -201,12 +204,21 @@ func (s *Store) readSession(ctx context.Context, actor, id string) (*model.Sessi
 // attachLocationConflicts populates LocationConflicts on each session using
 // all active (non-stale or WaitingValid) sessions in the database.
 func (s *Store) attachLocationConflicts(ctx context.Context, now model.Time, sessions ...*model.Session) error {
+	nowTime := now.Time()
+	needLookup := false
 	for _, sess := range sessions {
-		if sess != nil {
-			sess.LocationConflicts = []model.SessionRef{}
+		if sess == nil {
+			continue
+		}
+		sess.LocationConflicts = []model.SessionRef{}
+		if sess.Stale && !sess.WaitingValid(nowTime) {
+			continue
+		}
+		if _, ok := model.SessionLocationKey(sess.LastHost, sess.Location); ok {
+			needLookup = true
 		}
 	}
-	if len(sessions) == 0 {
+	if !needLookup {
 		return nil
 	}
 	staleCutoff, waitCutoff := sessionCutoffs(now)
@@ -246,7 +258,6 @@ func (s *Store) attachLocationConflicts(ctx context.Context, now model.Time, ses
 		})
 		bucket[k] = refs
 	}
-	nowTime := now.Time()
 	for _, sess := range sessions {
 		if sess == nil || (sess.Stale && !sess.WaitingValid(nowTime)) {
 			continue
@@ -319,27 +330,26 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]model.Sess
 	now := s.stamp()
 	staleCutoff, waitCutoff := sessionCutoffs(now)
 	var where []string
-	args := []any{staleCutoff, waitCutoff}
+	var filterArgs []any
 	if f.Project != "" {
 		where = append(where, "x.last_project = ?")
-		args = append(args, f.Project)
+		filterArgs = append(filterArgs, f.Project)
 	}
 	if f.Actor != "" {
 		where = append(where, "x.actor_id = ?")
-		args = append(args, f.Actor)
+		filterArgs = append(filterArgs, f.Actor)
 	}
 	if f.Parent != nil {
 		where = append(where, "x.parent_actor_id = ? and x.parent_session_id = ?")
-		args = append(args, f.Parent.Actor, f.Parent.SessionID)
+		filterArgs = append(filterArgs, f.Parent.Actor, f.Parent.SessionID)
 	}
 	if f.Active != nil {
-		cutoff := model.NewTime(now.Time().Add(-model.SessionStaleAfter)).String()
 		if *f.Active {
 			where = append(where, "x.last_seen_at >= ?")
 		} else {
 			where = append(where, "x.last_seen_at < ?")
 		}
-		args = append(args, cutoff)
+		filterArgs = append(filterArgs, staleCutoff)
 	}
 	if f.Named != nil {
 		const cli = "x.session_id glob 'cli-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'"
@@ -356,16 +366,27 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]model.Sess
 			where = append(where, "x.state is null")
 		}
 	}
-	from := ` from (` + sessionSelect + `) x`
+	whereClause := ""
 	if len(where) > 0 {
-		from += ` where ` + strings.Join(where, " and ")
+		whereClause = ` where ` + strings.Join(where, " and ")
 	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, args...).Scan(&total); err != nil {
+	var countQuery string
+	var countArgs []any
+	if f.Project != "" {
+		countQuery = `select count(*) from (` + sessionSelect + `) x` + whereClause
+		countArgs = append([]any{staleCutoff, waitCutoff}, filterArgs...)
+	} else {
+		countQuery = `select count(*) from session x` + whereClause
+		countArgs = filterArgs
+	}
+	if err := s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	from := ` from (` + sessionSelect + `) x` + whereClause
+	selectArgs := append([]any{staleCutoff, waitCutoff}, filterArgs...)
 	rows, err := s.db.QueryContext(ctx, `select x.*`+from+` order by x.last_seen_at desc, x.actor_id, x.session_id limit ? offset ?`,
-		append(args, f.Limit, f.Offset)...)
+		append(selectArgs, f.Limit, f.Offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -464,16 +485,6 @@ func checkSessionParent(ctx context.Context, q querier, self, ref model.SessionR
 	}
 }
 
-// stripUserinfo removes the user name and password from a URL, such as the
-// token of an https remote. Anything that is not such a URL stays as it is.
-func stripUserinfo(raw string) string {
-	if u, err := url.Parse(raw); err == nil && u.User != nil {
-		u.User = nil
-		return u.String()
-	}
-	return raw
-}
-
 // UpdateSession applies a merge patch to a session. Only the fields whose
 // value changes are written; updated_at moves when one does. A location is
 // replaced as a whole and stamped with the time it is reported.
@@ -555,7 +566,7 @@ func (s *Store) UpdateSession(ctx context.Context, tr model.Trace, actor, id str
 			} else {
 				loc := *p.Location.Value
 				if loc.RepoRemote != nil {
-					remote := stripUserinfo(*loc.RepoRemote)
+					remote := model.StripRemoteUserinfo(*loc.RepoRemote)
 					loc.RepoRemote = &remote
 				}
 				loc.ReportedAt = now
@@ -723,6 +734,9 @@ func (s *Store) CreateChildSession(ctx context.Context, tr model.Trace, in Child
 		}
 		if len(verr.Fields) > 0 {
 			return verr
+		}
+		if in.SessionID == tr.SessionID {
+			return ErrSessionExists
 		}
 		if _, err := getSessionRow(ctx, tx, tr.Actor, in.SessionID); err == nil {
 			return ErrSessionExists

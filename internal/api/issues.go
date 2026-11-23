@@ -611,8 +611,16 @@ func (h *handler) listIssueClaims(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) listActivity(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
+	projects := q.csv("project")
+	for i, p := range projects {
+		p = model.NormalizeProjectKey(p)
+		projects[i] = p
+		if !model.ValidProjectKey(p) {
+			q.add("project", "프로젝트 키 형식이 아닙니다.")
+		}
+	}
 	f := store.ActivityFilter{
-		Projects:     q.csv("project"),
+		Projects:     projects,
 		Issues:       q.csv("issue"),
 		Actors:       q.csv("actor"),
 		Sessions:     q.csv("session"),

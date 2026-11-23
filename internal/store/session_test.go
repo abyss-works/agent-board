@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,8 @@ func TestSessionLastProjectIsTheLatestRecord(t *testing.T) {
 	fixClock(s, t0)
 	mustProject(t, s, ctx, "AAA")
 	mustProject(t, s, ctx, "BBB")
+	mustProject(t, s, ctx, "CCC")
+	mustProject(t, s, ctx, "DDD")
 	mustTouch(t, s, trSess, t0)
 	if got := mustSession(t, s, "claude", "claude-abc"); got.LastProject != nil {
 		t.Errorf("last_project without records = %v", *got.LastProject)
@@ -112,6 +115,54 @@ func TestSessionLastProjectIsTheLatestRecord(t *testing.T) {
 	}
 	if got := mustSession(t, s, "claude", "claude-abc"); got.LastProject == nil || *got.LastProject != "BBB" {
 		t.Errorf("last_project after a milestone write = %v", got.LastProject)
+	}
+	fixClock(s, t0.Add(3*time.Minute))
+	docName := "2026-10-17-0003-report-test.md"
+	docTitle := "문서 활동"
+	if _, _, err := s.PutDocument(ctx, trOwner, "CCC", docName, DocumentInput{
+		Content: "본문\n",
+		Args:    model.DocumentArgs{Title: &docTitle},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetDocumentArchived(ctx, trSess, "CCC", docName, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustSession(t, s, "claude", "claude-abc"); got.LastProject == nil || *got.LastProject != "CCC" {
+		t.Errorf("last_project after document_activity = %v", got.LastProject)
+	}
+	fixClock(s, t0.Add(4*time.Minute))
+	issD := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "DDD", Title: "d"})
+	if _, _, err := s.ClaimIssue(ctx, trSess, issD.Key); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustSession(t, s, "claude", "claude-abc"); got.LastProject == nil || *got.LastProject != "DDD" {
+		t.Errorf("last_project after issue_claim = %v", got.LastProject)
+	}
+}
+
+func TestSessionLastProjectAndListFilterWithOnlyClaim(t *testing.T) {
+	s, ctx := seeded(t)
+	t0 := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
+	mustProject(t, s, ctx, "APP")
+	iss := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "APP", Title: "점유 전용"})
+
+	trClaimOnly := model.Trace{Actor: "claude", SessionID: "claim-only", ClientHost: "desk"}
+	mustTouch(t, s, trClaimOnly, t0)
+	if _, _, err := s.ClaimIssue(ctx, trClaimOnly, iss.Key); err != nil {
+		t.Fatal(err)
+	}
+	got := mustSession(t, s, "claude", "claim-only")
+	if got.LastProject == nil || *got.LastProject != "APP" {
+		t.Fatalf("last_project = %v, want APP", got.LastProject)
+	}
+	items, total, err := s.ListSessions(ctx, SessionFilter{Project: "APP", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || items[0].SessionID != "claim-only" {
+		t.Errorf("ListSessions(project=APP) = %+v (total=%d), want claim-only", items, total)
 	}
 }
 
@@ -146,7 +197,7 @@ func TestUpdateSession(t *testing.T) {
 	validationField(t, err, "issue", "unknown_issue")
 
 	role, key := "runner", i.Key
-	remote, dirty := "https://user:tok@github.com/a/b.git", 3
+	remote, dirty := "https://user:tok@example.com/a/b.git", 3
 	got, err = s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
 		Parent:   Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "owner", SessionID: "s-owner"}},
 		Role:     Optional[string]{Set: true, Value: &role},
@@ -159,9 +210,28 @@ func TestUpdateSession(t *testing.T) {
 	if got.Parent == nil || *got.Parent != (model.SessionRef{Actor: "owner", SessionID: "s-owner"}) || deref(got.Role) != "runner" || deref(got.Issue) != i.Key {
 		t.Errorf("patched = %+v", got)
 	}
-	if got.Location == nil || deref(got.Location.RepoRemote) != "https://github.com/a/b.git" || got.Location.DirtyCount == nil || *got.Location.DirtyCount != 3 ||
+	if got.Location == nil || deref(got.Location.RepoRemote) != "https://example.com/a/b.git" || got.Location.DirtyCount == nil || *got.Location.DirtyCount != 3 ||
 		got.Location.ReportedAt != model.NewTime(at.Add(time.Minute)) || got.Location.Branch != nil {
 		t.Errorf("location = %+v", got.Location)
+	}
+	// Strip userinfo and trim spaces for SCP remotes (including IPv6) and padded URLs.
+	for _, tc := range []struct {
+		raw, want string
+	}{
+		{"  https://user:tok@example.com/a/b.git  ", "https://example.com/a/b.git"},
+		{"  user:tok@example.com:acme/app.git  ", "example.com:acme/app.git"},
+		{"  git@[2001:db8::1]:acme/app.git  ", "[2001:db8::1]:acme/app.git"},
+	} {
+		r := tc.raw
+		res, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
+			Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: &r}},
+		})
+		if err != nil {
+			t.Fatalf("UpdateSession(%q): %v", tc.raw, err)
+		}
+		if res.Location == nil || deref(res.Location.RepoRemote) != tc.want {
+			t.Errorf("UpdateSession(%q) stored %v, want %q", tc.raw, deref(res.Location.RepoRemote), tc.want)
+		}
 	}
 	if got.UpdatedAt != model.NewTime(at.Add(time.Minute)) || got.Children != nil {
 		t.Errorf("updated_at = %s children = %v", got.UpdatedAt, got.Children)
@@ -269,6 +339,20 @@ func TestCreateChildSessionWritesAMissingParent(t *testing.T) {
 	}
 }
 
+func TestCreateChildSessionRejectsSelfIDWhenParentMissing(t *testing.T) {
+	s, ctx := seeded(t)
+	if _, err := s.CreateChildSession(ctx, trSess, ChildSessionInput{SessionID: trSess.SessionID}); !errors.Is(err, ErrSessionExists) {
+		t.Fatalf("self id with missing parent = %v, want ErrSessionExists", err)
+	}
+	var count int
+	if err := s.db.QueryRow(`select count(*) from session`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("session count = %d, want 0 after rejected self-id child create", count)
+	}
+}
+
 func TestListSessions(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "APP")
@@ -302,7 +386,9 @@ func TestListSessions(t *testing.T) {
 		for n, it := range items {
 			out[n] = it.Actor + "/" + it.SessionID
 		}
-		if total < len(out) {
+		if f.Limit == 50 && total != len(out) {
+			t.Errorf("total %d != len(out) %d for %+v", total, len(out), f)
+		} else if total < len(out) {
 			t.Errorf("total %d < %d", total, len(out))
 		}
 		return out
@@ -418,6 +504,53 @@ func TestSessionLookupPropagatesContextAndDBErrors(t *testing.T) {
 	}
 	if _, err := s.GetSession(ctx, "claude", "claude-abc.c"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("child session exists after canceled create: %v", err)
+	}
+
+	// Deterministic in-transaction DB error paths (after BeginTx succeeds).
+	rawDB, err := sql.Open("sqlite", "file:"+filepath.ToSlash(s.path)+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	// Corrupt owner/s-owner's issue_id type so getSessionRow inside checkSessionParent
+	// (and CreateChildSession's getSessionRow) fails inside the write transaction.
+	if _, err := rawDB.Exec(`update session set issue_id = 'bad-int' where actor_id = 'owner' and session_id = 's-owner'`); err != nil {
+		t.Fatal(err)
+	}
+	var ve *model.ValidationError
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
+		Parent: Optional[model.SessionRef]{Set: true, Value: &model.SessionRef{Actor: "owner", SessionID: "s-owner"}},
+		Role:   Optional[string]{Set: true, Value: &role},
+	}); err == nil || errors.As(err, &ve) {
+		t.Errorf("UpdateSession(parent db scan error) = %v, want non-ValidationError DB error", err)
+	}
+	if got := mustSession(t, s, "claude", "claude-abc"); got.Parent != nil || got.Role != nil {
+		t.Errorf("session changed after in-tx parent error: %+v", got)
+	}
+	if _, err := s.CreateChildSession(ctx, model.Trace{Actor: "owner", SessionID: "other-owner", ClientHost: "desk"}, ChildSessionInput{SessionID: "s-owner"}); err == nil || errors.Is(err, ErrSessionExists) {
+		t.Errorf("CreateChildSession(existing row scan error) = %v, want non-ErrSessionExists DB error", err)
+	}
+
+	// Drop issue table so sessionIssueID inside s.write fails with a DB error.
+	if _, err := rawDB.Exec(`drop table issue`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trSess, "claude", "claude-abc", SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &key},
+		Role:  Optional[string]{Set: true, Value: &role},
+	}); err == nil || errors.As(err, &ve) {
+		t.Errorf("UpdateSession(issue table missing) = %v, want non-ValidationError DB error", err)
+	}
+	if _, err := s.CreateChildSession(ctx, trSess, ChildSessionInput{SessionID: "claude-abc.c", Issue: &key}); err == nil || errors.As(err, &ve) {
+		t.Errorf("CreateChildSession(issue table missing) = %v, want non-ValidationError DB error", err)
+	}
+	var childCount int
+	if err := s.db.QueryRow(`select count(*) from session where actor_id = 'claude' and session_id = 'claude-abc.c'`).Scan(&childCount); err != nil {
+		t.Fatal(err)
+	}
+	if childCount != 0 {
+		t.Errorf("child session count = %d, want 0 after in-tx issue error", childCount)
 	}
 }
 
@@ -774,5 +907,56 @@ func TestSessionLocationConflicts(t *testing.T) {
 	loc3 := mustSession(t, s, trLocalOtherHost.Actor, trLocalOtherHost.SessionID)
 	if loc3.LocationConflicts == nil || len(loc3.LocationConflicts) != 0 {
 		t.Errorf("other host local conflicts = %#v, want empty", loc3.LocationConflicts)
+	}
+
+	// Clearing location to null excludes the session from others' conflicts and clears its own.
+	clearedLoc2, err := s.UpdateSession(ctx, trLocal2, trLocal2.Actor, trLocal2.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: nil},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clearedLoc2.Location != nil || clearedLoc2.LocationConflicts == nil || len(clearedLoc2.LocationConflicts) != 0 {
+		t.Errorf("cleared location session = %+v", clearedLoc2)
+	}
+	loc1After := mustSession(t, s, trLocal1.Actor, trLocal1.SessionID)
+	if len(loc1After.LocationConflicts) != 0 {
+		t.Errorf("loc1 still sees cleared loc2: %+v", loc1After.LocationConflicts)
+	}
+
+	// Advancing clock past 24h (>SessionWaitingHold) expires s-wait's waiting hold so it drops out of conflicts.
+	later := now.Add(23 * time.Hour)
+	fixClock(s, later)
+	mustTouch(t, s, tr1, later)
+	mustTouch(t, s, model.Trace{Actor: "claude", SessionID: "s1.kid", ClientHost: "desk"}, later)
+	mustTouch(t, s, tr2, later)
+	u1AfterExp := mustSession(t, s, tr1.Actor, tr1.SessionID)
+	wantAfterExp := []model.SessionRef{{Actor: "claude", SessionID: "s1.kid"}, {Actor: "codex", SessionID: "s2"}}
+	if !sameRefs(u1AfterExp.LocationConflicts, wantAfterExp) {
+		t.Errorf("u1 conflicts after s-wait >24h = %+v, want %+v", u1AfterExp.LocationConflicts, wantAfterExp)
+	}
+	waitExpired := mustSession(t, s, trWait.Actor, trWait.SessionID)
+	if len(waitExpired.LocationConflicts) != 0 {
+		t.Errorf("expired waiting session conflicts = %+v, want empty", waitExpired.LocationConflicts)
+	}
+
+	// scanSession initializes LocationConflicts to non-nil empty slice, and
+	// attachLocationConflicts skips DB query when no input session needs lookup.
+	staleCutoff, waitCutoff := sessionCutoffs(model.NewTime(later))
+	scanned, err := scanSession(s.db.QueryRowContext(ctx, sessionSelect+` where s.actor_id = ? and s.session_id = ?`, staleCutoff, waitCutoff, tr1.Actor, tr1.SessionID), model.NewTime(later))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned.LocationConflicts == nil || len(scanned.LocationConflicts) != 0 {
+		t.Errorf("scanSession LocationConflicts = %#v, want non-nil empty slice", scanned.LocationConflicts)
+	}
+	if _, err := s.db.Exec(`drop table session`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.attachLocationConflicts(ctx, model.NewTime(later), staleSess, clearedLoc2, waitExpired); err != nil {
+		t.Errorf("attachLocationConflicts should early-return without querying DB, got: %v", err)
+	}
+	if err := s.attachLocationConflicts(ctx, model.NewTime(later), u1AfterExp); err == nil {
+		t.Errorf("expected DB error when active session with location triggers lookup on dropped table")
 	}
 }

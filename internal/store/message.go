@@ -18,7 +18,9 @@ type MessageInput struct {
 	To          string
 	ToSession   *model.SessionRef
 	ToRole      string
+	ToRoleSet   bool
 	Issue       string
+	IssueSet    bool
 	ReplyTo     *int64
 	Title       string
 	Body        string
@@ -273,7 +275,7 @@ func validateMessageRouting(ctx context.Context, tx *sql.Tx, projectID int64, in
 			}
 		}
 	}
-	if in.ToRole != "" {
+	if in.ToRoleSet || in.ToRole != "" {
 		if _, ok := model.ParseSessionRole(in.ToRole); !ok {
 			verr.Fields = append(verr.Fields, model.FieldError{
 				Field: "to_role", Reason: "invalid",
@@ -283,7 +285,7 @@ func validateMessageRouting(ctx context.Context, tx *sql.Tx, projectID int64, in
 			rt.toRole = in.ToRole
 		}
 	}
-	if in.Issue != "" {
+	if in.IssueSet || in.Issue != "" {
 		var issID, issProjID int64
 		err := tx.QueryRowContext(ctx, `select id, project_id from issue where key = ?`, in.Issue).Scan(&issID, &issProjID)
 		if errors.Is(err, sql.ErrNoRows) {

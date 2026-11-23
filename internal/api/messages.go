@@ -114,13 +114,25 @@ func (h *handler) createMessage(w http.ResponseWriter, r *http.Request) {
 	// A null is left at the zero value: no addressee, and validation reports
 	// an empty title.
 	var in store.MessageInput
-	for name, dst := range map[string]*string{
-		"to": &in.To, "to_role": &in.ToRole, "issue": &in.Issue,
-		"title": &in.Title, "body": &in.Body, "ttl": &in.TTL,
+	for _, f := range []struct {
+		name string
+		dst  *string
+		set  *bool
+	}{
+		{"to", &in.To, nil},
+		{"to_role", &in.ToRole, &in.ToRoleSet},
+		{"issue", &in.Issue, &in.IssueSet},
+		{"title", &in.Title, nil},
+		{"body", &in.Body, nil},
+		{"ttl", &in.TTL, nil},
 	} {
-		if _, _, aerr := field(b, name, dst); aerr != nil {
+		present, null, aerr := field(b, f.name, f.dst)
+		if aerr != nil {
 			writeError(w, aerr)
 			return
+		}
+		if f.set != nil && present && !null {
+			*f.set = true
 		}
 	}
 	if raw, ok := b["to_session"]; ok && !isNull(raw) {

@@ -334,9 +334,10 @@ func TestOverviewAndAgendaDecisionWaitingSessionsEndpoint(t *testing.T) {
 		t.Fatalf("agenda projects = %d", len(a.Projects))
 	}
 	verifyDecisions("agenda", agRec.Body.String(), a.Projects[0].UserTurn.Decisions)
-	// UserTurn.WaitingSessions remains intact alongside Decisions.
-	if a.Projects[0].UserTurn.WaitingSessions.Total < 2 {
-		t.Errorf("agenda user_turn.waiting_sessions = %+v", a.Projects[0].UserTurn.WaitingSessions)
+	// UserTurn.WaitingSessions excludes expired (>24h) s4 and keeps only s1 and s2.
+	ws := a.Projects[0].UserTurn.WaitingSessions
+	if ws.Total != 2 || len(ws.Items) != 2 || ws.Items[0].SessionID != "s1" || ws.Items[1].SessionID != "s2" {
+		t.Errorf("agenda user_turn.waiting_sessions = %+v, want [s1, s2]", ws)
 	}
 }
 

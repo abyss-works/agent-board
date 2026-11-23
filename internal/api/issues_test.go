@@ -388,9 +388,19 @@ func TestCommentsAndActivity(t *testing.T) {
 	if l := get("until=" + since); l.Total != 2 {
 		t.Errorf("until = %d", l.Total)
 	}
-	for _, q := range []string{"kind=bogus", "field=nope", "since=yesterday", "sort=-id", "project=AGB&project=X"} {
+	if l := get("project=agb"); l.Total != 4 {
+		t.Errorf("lowercase project = %+v", l)
+	}
+	if l := get("project=%20agb%20,oth"); l.Total != 4 {
+		t.Errorf("padded lowercase project csv = %+v", l)
+	}
+	for _, q := range []string{"kind=bogus", "field=nope", "since=yesterday", "sort=-id", "project=AGB&project=X", "project=bad!", "project=a", "project=AGB,bad!"} {
 		if rec := e.do(t, "GET", "/v1/activity?"+q, "", nil); rec.Code != 400 {
 			t.Errorf("%s: %d", q, rec.Code)
+		} else if strings.HasPrefix(q, "project=bad") || q == "project=a" || strings.HasPrefix(q, "project=AGB,bad") {
+			if eb := decodeErr(t, rec); eb.Error.Code != "bad_request" || len(eb.Error.Details) == 0 || eb.Error.Details[0].Field != "project" {
+				t.Errorf("%s err = %+v", q, eb)
+			}
 		}
 	}
 	e.createProject(t, "ARC", "archived")

@@ -197,8 +197,8 @@ func TestEventStreamValidationAndAuth(t *testing.T) {
 	if rec := e.do(t, "GET", "/v1/events/stream", "", map[string]string{"X-Session-Id": "-"}); rec.Code != 400 {
 		t.Errorf("missing session = %d, want 400", rec.Code)
 	}
-	wantErr(t, e.do(t, "GET", "/v1/events/stream", "", map[string]string{"Last-Event-ID": "-1"}), 400, "bad_request", "invalid_query")
-	wantErr(t, e.do(t, "GET", "/v1/events/stream", "", map[string]string{"Last-Event-ID": "notanint"}), 400, "bad_request", "invalid_query")
+	wantErr(t, e.do(t, "GET", "/v1/events/stream", "", map[string]string{"Last-Event-ID": "-1"}), 400, "bad_request", "invalid_header")
+	wantErr(t, e.do(t, "GET", "/v1/events/stream", "", map[string]string{"Last-Event-ID": "notanint"}), 400, "bad_request", "invalid_header")
 	wantErr(t, e.do(t, "GET", "/v1/events/stream?after=-5", "", nil), 400, "bad_request", "invalid_query")
 	wantErr(t, e.do(t, "GET", "/v1/events/stream?after=abc", "", nil), 400, "bad_request", "invalid_query")
 }
@@ -329,5 +329,29 @@ func TestEventStreamReplayPrecedenceAndLive(t *testing.T) {
 	}
 	if !foundStream {
 		t.Errorf("/v1/events/stream missing from streams: %+v", st.Streams)
+	}
+}
+
+func TestEventStreamInitialReadFailureReturnsJSONError(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.st.DB().Exec(`drop table event`); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "GET", "/v1/events/stream?after=0", "", nil)
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if eb := decodeErr(t, rec); eb.Error.Code != "internal" {
+		t.Errorf("error code = %q, want internal", eb.Error.Code)
+	}
+	var st struct {
+		Streams []StreamStats `json:"streams"`
+	}
+	decodeJSON(t, e.do(t, "GET", "/v1/stats", "", nil), &st)
+	if len(st.Streams) != 1 || st.Streams[0].Requests != 1 || st.Streams[0].Errors != 1 || st.Streams[0].Active != 0 {
+		t.Errorf("failed stream stats = %+v, want Requests=1 Errors=1 Active=0", st.Streams)
 	}
 }

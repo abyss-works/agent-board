@@ -632,6 +632,75 @@ func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
 	}
 }
 
+func TestAgendaWaitingSessionsCutoffAndTieOrder(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}, {ID: "codex", Kind: model.ActorAgent}}); err != nil {
+		t.Fatal(err)
+	}
+	mustProject(t, s, ctx, "AAA")
+	iss := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "대기 이슈"})
+
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	st := model.SessionStateWaitingInput
+
+	// Session over 24h (> SessionWaitingHold) must be excluded.
+	trOld := model.Trace{Actor: "claude", SessionID: "s-expired", ClientHost: "desk"}
+	fixClock(s, now.Add(-24*time.Hour-time.Minute))
+	mustTouch(t, s, trOld, now.Add(-24*time.Hour-time.Minute))
+	if _, err := s.UpdateSession(ctx, trOld, trOld.Actor, trOld.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &iss.Key},
+		State: Optional[string]{Set: true, Value: &st},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session at exact 24h boundary must be included and appear before tied later sessions.
+	trExact := model.Trace{Actor: "owner", SessionID: "s-boundary", ClientHost: "desk"}
+	fixClock(s, now.Add(-24*time.Hour))
+	mustTouch(t, s, trExact, now.Add(-24*time.Hour))
+	if _, err := s.UpdateSession(ctx, trExact, trExact.Actor, trExact.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &iss.Key},
+		State: Optional[string]{Set: true, Value: &st},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three sessions sharing identical state_at tie-break by actor asc, session_id asc.
+	tieAt := now.Add(-time.Hour)
+	fixClock(s, tieAt)
+	for _, tr := range []model.Trace{
+		{Actor: "codex", SessionID: "s-a", ClientHost: "desk"},
+		{Actor: "claude", SessionID: "s-b", ClientHost: "desk"},
+		{Actor: "claude", SessionID: "s-a", ClientHost: "desk"},
+	} {
+		mustTouch(t, s, tr, tieAt)
+		if _, err := s.UpdateSession(ctx, tr, tr.Actor, tr.SessionID, SessionPatch{
+			Issue: Optional[string]{Set: true, Value: &iss.Key},
+			State: Optional[string]{Set: true, Value: &st},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fixClock(s, now)
+	a, err := s.Agenda(ctx, []string{"AAA"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := a.Projects[0].UserTurn.WaitingSessions
+	if ws.Total != 4 || len(ws.Items) != 4 {
+		t.Fatalf("waiting_sessions = %+v, want 4 items", ws)
+	}
+	got := make([]string, len(ws.Items))
+	for i, it := range ws.Items {
+		got[i] = it.Actor + "/" + it.SessionID
+	}
+	want := []string{"owner/s-boundary", "claude/s-a", "claude/s-b", "codex/s-a"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("waiting_sessions order = %v, want %v", got, want)
+	}
+}
+
 func TestAgendaWaitingSessionsLocationConflicts(t *testing.T) {
 	s, ctx := seeded(t)
 	if err := s.EnsureActors(ctx, []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}, {ID: "codex", Kind: model.ActorAgent}}); err != nil {

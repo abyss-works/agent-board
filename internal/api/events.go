@@ -164,7 +164,7 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 	if lastEventIDRaw != "" {
 		n, ok := parseNonNegativeInt64(lastEventIDRaw)
 		if !ok {
-			q.add("Last-Event-ID", "0 이상의 정수여야 합니다.")
+			q.details = append(q.details, Detail{Field: "Last-Event-ID", Reason: "invalid_header", Message: "0 이상의 정수여야 합니다."})
 		} else {
 			cursor = n
 			hasCursor = true
@@ -197,6 +197,19 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 		cursor = latest
 	}
 
+	// Fetch the first batch before writing 200 headers so an initial DB read
+	// failure returns a JSON error instead of closing an empty stream.
+	initialItems, initialNextAfter, err := h.store.ListEvents(r.Context(), store.EventFilter{
+		After:   cursor,
+		Project: project,
+		Kinds:   kinds,
+		Limit:   500,
+	})
+	if err != nil {
+		writeError(w, h.storeError(r, err))
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -208,6 +221,25 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 	h.stats.streamOpened(r.Method, streamEventsPattern)
 	defer h.stats.streamClosed(r.Method, streamEventsPattern)
+
+	writeBatch := func(items []model.Event, nextAfter int64) error {
+		if len(items) == 0 {
+			return nil
+		}
+		for _, ev := range items {
+			if err := writeSSEEvent(w, ev); err != nil {
+				return err
+			}
+			cursor = ev.ID
+		}
+		if err := rc.Flush(); err != nil {
+			return err
+		}
+		if nextAfter > cursor {
+			cursor = nextAfter
+		}
+		return nil
+	}
 
 	drain := func() error {
 		for {
@@ -223,17 +255,8 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 			if len(items) == 0 {
 				return nil
 			}
-			for _, ev := range items {
-				if err := writeSSEEvent(w, ev); err != nil {
-					return err
-				}
-				cursor = ev.ID
-			}
-			if err := rc.Flush(); err != nil {
+			if err := writeBatch(items, nextAfter); err != nil {
 				return err
-			}
-			if nextAfter > cursor {
-				cursor = nextAfter
 			}
 			if len(items) < 500 {
 				return nil
@@ -241,8 +264,13 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := drain(); err != nil {
+	if err := writeBatch(initialItems, initialNextAfter); err != nil {
 		return
+	}
+	if len(initialItems) == 500 {
+		if err := drain(); err != nil {
+			return
+		}
 	}
 
 	pingEvery := h.opts.SSEPingInterval
