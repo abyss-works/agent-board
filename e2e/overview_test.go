@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -188,6 +189,45 @@ func TestOverview(t *testing.T) {
 		}
 		if o.Doing.Items == nil || o.Blocked.Items == nil || o.Next.Items == nil || o.RecentActivity.Items == nil {
 			t.Errorf("empty sections must be [] not null")
+		}
+	})
+	t.Run("decision waiting_sessions", func(t *testing.T) {
+		dp := createProject(t, "OVW")
+		dNoWait := newIssue(t, dp.Key, "D1 no waiting", map[string]any{"priority": "P0", "decision_needed": "방식을 정해 주세요"})
+		dWithWait := newIssue(t, dp.Key, "D2 with waiting", map[string]any{"priority": "P1", "decision_needed": "배포를 승인해 주세요"})
+
+		w := caller{actor: "claude", session: "e2e-ovw-" + runID, host: defaultHost}
+		expect(t, w.do(t, "GET", "/v1/actors/me", nil), 200)
+		expect(t, w.do(t, "PATCH", "/v1/sessions/claude/"+w.session, map[string]any{
+			"issue":        dWithWait.Key,
+			"state":        "waiting_approval",
+			"state_reason": "배포 승인 대기",
+		}), 200)
+		t.Cleanup(func() {
+			w.do(t, "PATCH", "/v1/sessions/claude/"+w.session, map[string]any{"state": nil, "issue": nil})
+		})
+
+		res := expect(t, owner.do(t, "GET", "/v1/projects/"+dp.Key+"/overview", nil), 200)
+		raw := string(res.body)
+		if strings.Contains(raw, `"waiting_sessions":null`) || strings.Contains(raw, `"location_conflicts":null`) {
+			t.Errorf("overview JSON contains null array: %s", raw)
+		}
+		o := decode[overview](t, res)
+		if o.Decisions.Total != 2 || len(o.Decisions.Items) != 2 {
+			t.Fatalf("decisions = %+v", o.Decisions)
+		}
+		if o.Decisions.Items[0].Key != dNoWait.Key || o.Decisions.Items[0].WaitingSessions == nil || len(o.Decisions.Items[0].WaitingSessions) != 0 {
+			t.Errorf("dNoWait waiting_sessions = %#v, want non-nil empty", o.Decisions.Items[0].WaitingSessions)
+		}
+		ws := o.Decisions.Items[1].WaitingSessions
+		if o.Decisions.Items[1].Key != dWithWait.Key || len(ws) != 1 {
+			t.Fatalf("dWithWait waiting_sessions = %+v", ws)
+		}
+		if ws[0].Actor != "claude" || ws[0].SessionID != w.session || ws[0].State == nil || *ws[0].State != "waiting_approval" || ws[0].StateReason == nil || *ws[0].StateReason != "배포 승인 대기" {
+			t.Errorf("waiting session = %+v", ws[0])
+		}
+		if ws[0].LocationConflicts == nil {
+			t.Errorf("location_conflicts must be [] not nil")
 		}
 	})
 }
