@@ -217,20 +217,59 @@ func TestSkillShowIndexFitsInFirstCharacters(t *testing.T) {
 	}
 }
 
+func skillSection(skill, heading string) (string, bool) {
+	start := strings.Index(skill, heading)
+	if start < 0 {
+		return "", false
+	}
+	rest := skill[start+len(heading):]
+	end := -1
+	for _, sep := range []string{"\n## ", "\n### "} {
+		if i := strings.Index(rest, sep); i >= 0 && (end < 0 || i < end) {
+			end = i
+		}
+	}
+	if end >= 0 {
+		return skill[start : start+len(heading)+end], true
+	}
+	return skill[start:], true
+}
+
 func TestSkillDocumentsSemanticField(t *testing.T) {
 	skill := embeddedSkill(t, "SKILL.md")
 	const heading = "### 작업 전에 과거 기록을 찾을 때\n"
-	start := strings.Index(skill, heading)
-	if start < 0 {
+	section, ok := skillSection(skill, heading)
+	if !ok {
 		t.Fatalf("SKILL.md lacks the %q section", heading)
 	}
-	section := skill[start:]
-	if end := strings.Index(section[len(heading):], "\n## "); end >= 0 {
-		section = section[:len(heading)+end]
-	}
-	for _, want := range []string{"`semantic`", "`ok`", "`disabled`", "`failed`"} {
+	for _, want := range []string{"`semantic`", "`ok`", "`disabled`", "`failed`", "의미 검색이 정상 반영된 결과"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("past-records search section lacks %s", want)
+		}
+	}
+}
+
+func TestSkillSectionBoundaryAndWaitingHeading(t *testing.T) {
+	sample := "## 상위\n\n### 첫째\n본문 1\n\n### 둘째\n본문 2 `semantic` `ok`\n\n## 다음\n"
+	sec, ok := skillSection(sample, "### 첫째\n")
+	if !ok {
+		t.Fatal("sample lacks ### 첫째")
+	}
+	if strings.Contains(sec, "본문 2") || strings.Contains(sec, "### 둘째") {
+		t.Errorf("skillSection crossed sibling ### boundary:\n%s", sec)
+	}
+
+	skill := embeddedSkill(t, "SKILL.md")
+	if strings.Contains(skill, "### 서브에이전트 세션\n") {
+		t.Error("SKILL.md still uses subagent-only heading for shared session/waiting section")
+	}
+	waitingSec, ok := skillSection(skill, "### 세션과 대기 상태\n")
+	if !ok {
+		t.Fatal("SKILL.md lacks ### 세션과 대기 상태")
+	}
+	for _, want := range []string{"agb session start", "waiting_approval", "waiting_input", "waiting_external", "--state none", "--reason none"} {
+		if !strings.Contains(waitingSec, want) {
+			t.Errorf("session and waiting section lacks %q", want)
 		}
 	}
 }
