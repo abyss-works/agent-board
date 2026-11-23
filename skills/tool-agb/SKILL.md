@@ -24,7 +24,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 | 값 뽑기 | `--fields a,b --text`. JSON은 스크립트로 가공하지 않는다 ("출력과 종료 코드") |
 | 메시지 | `agb msg put -p <KEY> --title "<제목>" --body "<내용>"`, `agb msg list -p <KEY> --unread`, `agb msg ack <ID>` ("메시지 공간") |
 | 이벤트 구독 | `agb watch [-p <KEY>] [--kind <접두사>] [--after <id>] [--timeout <기간>]` ("이벤트 스트림") |
-| 서브에이전트 세션 | `agb session start --role subagent --issue <KEY>` ("서브에이전트 세션") |
+| 세션과 대기 상태 | `agb session start --role subagent --issue <KEY>`, `agb session set --state <상태>` ("세션과 대기 상태") |
 
 `agb`가 설치되어 있지 않거나, 서버 주소가 설정되어 있지 않거나, CLI·스킬을 새 릴리즈로 바꿀 때는 `references/setup.md`를 따른다.
 
@@ -347,7 +347,7 @@ agb milestone list -p <KEY>
    - 기다리는 이슈는 현황의 막힘 칸에 보인다. `external` 이슈는 우선순위 큐와 다음 할 일에 나오지 않는다.
 3. 세션을 시작하거나 막힌 이슈를 다시 볼 때 대상의 상태를 확인한다. 끝났으면 `external` 이슈를 `done`으로 옮긴다. 막혔던 이슈가 다음 할 일로 돌아온다.
 
-### 서브에이전트 세션
+### 세션과 대기 상태
 
 세션은 `agb`를 부르기만 하면 서버에 자동 등록되고, 마지막 호출에서 30분이 지나면 멈춤으로 보인다.
 
@@ -357,7 +357,7 @@ agb milestone list -p <KEY>
   ```
   agb session set --state waiting_input --reason "<사유>"
   ```
-  - 승인 대기는 `waiting_approval`, 사용자 입력 대기는 `waiting_input`, 외부 대기는 `waiting_external`을 쓴다. 직접 해제할 때는 `--state none`을 준다.
+  - 승인 대기는 `waiting_approval`, 사용자 입력 대기는 `waiting_input`, 외부 대기는 `waiting_external`을 쓴다. 직접 해제할 때는 `--state none`을 주고, 사유만 지울 때는 `--reason none`을 준다.
 
 ## 5. 마칠 때
 
@@ -568,7 +568,7 @@ agb doc activity <PROJECT> <이름>
    ```
    - `find`는 지금 유효한 것(열린 이슈와 유효한 문서)만 찾는다. 닫힌 이슈와 대체됨·아카이브 문서까지 넓히는 옵션은 `agb find --help`.
    - `recall`과 `find`의 JSON 응답에는 의미 검색 상태를 나타내는 `semantic` 필드가 들어 있다.
-     - `ok`: 키워드 검색과 의미 검색을 함께 반영한 결과다.
+     - `ok`: 의미 검색이 정상 반영된 결과다(질문이 10항 이하이면 키워드 검색과 함께, 10항을 넘으면 의미 검색만 반영된다).
      - `disabled`: 서버에서 의미 검색이 꺼져 있어 키워드 검색만 수행한 결과다.
      - `failed`: 의미 검색 호출이 실패해 키워드 검색 결과만 돌려준 상태다(CLI 출력 끝에 알림이 붙는다). 결과가 적거나 없어도 기록이 없다는 뜻이 아니므로 잠시 뒤 다시 찾는다.
    - `graph`는 대체됨·아카이브 문서를 접는다. 깊이와 상태 옵션은 `agb graph --help`.
@@ -597,7 +597,7 @@ agb doc activity <PROJECT> <이름>
   - `--to-session`이 지정된 메시지는 해당 세션의 기본 목록과 `--unread` 목록(및 세션 시작 훅)에만 나오고, 다른 세션의 기본·`--unread` 목록에서는 가려진다. `--to-session`이 없는 브로드캐스트 메시지는 모든 세션에 나온다.
   - `agb msg list -p <KEY> --all`을 쓰거나 `--to-session <행위자/세션>`으로 대상을 직접 지정하면 다른 세션에 보낸 메시지도 조회할 수 있다.
   - `agb msg list`는 `--to`, `--to-session`, `--to-role`, `--issue`, `--reply-to`로 걸러 볼 수 있다.
-- 읽는 쪽은 자기가 확인하지 않은 메시지를 받아 처리한 뒤 확인 표시를 한다: `agb msg list -p <KEY> --unread`, `agb msg get <ID> --fields body --text`, `agb msg ack <ID>...`. 자기 일이면 이슈로 등록한 뒤에, 자기 일이 아니면 넘기면서 표시한다.
+- 읽는 쪽은 자기가 확인하지 않은 메시지를 받아 처리한 뒤 확인 표시를 한다: `agb msg list -p <KEY> --unread`, `agb msg get <ID> --fields body --text`, `agb msg ack <ID>...`. 처리는 쓰는 쪽의 방식에 따르고, 자기 일이 아닌 메시지도 확인 표시로 다음 `--unread` 목록에서 넘길 수 있다.
 - 읽은 쪽 이름은 명령을 실행한 저장소 `.agb.json`의 프로젝트 키다. `-p`로 다른 프로젝트의 메시지 공간을 읽어도 같다. `.agb.json`이 없는 곳에서는 `--as <이름>`을 준다. `agb msg ack`와 `--unread`의 읽은 쪽 이름 비교는 영문 대소문자를 구분하지 않으며, 처음 기록한 원문이 유지된다.
 - 확인 표시는 읽은 쪽마다 따로 남고 메시지를 지우지 않으므로, 다른 읽는 쪽은 그 메시지를 계속 본다. 처리했다는 이유로 `agb msg rm`을 쓰지 않는다. `agb msg rm <ID>`는 잘못 넣은 메시지처럼 모든 읽는 쪽의 목록에서 빼야 할 때만 쓴다. 확인 표시를 되돌릴 수 없다.
 - 기간이 지난 메시지와 지운 메시지도 서버에 남는다. `agb msg list --all`, `agb msg get <ID>`로 읽는다. 지운 메시지를 되돌릴 수 없다.

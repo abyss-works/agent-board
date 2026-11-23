@@ -99,6 +99,21 @@ func TestMsgAckUsageErrors(t *testing.T) {
 	if len(srv.reqs) != n {
 		t.Errorf("a usage error must not reach the server")
 	}
+
+	// Inside a repository with .agb.json, an explicit empty --as "" must still fail with exit 2
+	// instead of silently falling back to the repository project.
+	chdirRepo(t, "CLI")
+	for _, args := range [][]string{
+		{"msg", "ack", "3", "--as", ""},
+		{"msg", "list", "--unread", "--as", ""},
+	} {
+		if code := h.run(args...); code != 2 {
+			t.Errorf("in repo %v: code=%d stderr=%s, want 2", args, code, h.stderr)
+		}
+	}
+	if len(srv.reqs) != n {
+		t.Errorf("empty --as in repo must not reach the server")
+	}
 }
 
 func TestMsgReaderDefaultsToTheRepositoryProject(t *testing.T) {
@@ -135,6 +150,21 @@ func TestMsgListRejectsAsWithoutUnread(t *testing.T) {
 	}
 	if len(srv.reqs) != n {
 		t.Errorf("a usage error must not reach the server")
+	}
+
+	// Inside a repository with .agb.json, an explicit empty --as "" must still fail with exit 2
+	// instead of silently falling back to the repository project.
+	chdirRepo(t, "CLI")
+	for _, args := range [][]string{
+		{"msg", "ack", "3", "--as", ""},
+		{"msg", "list", "--unread", "--as", ""},
+	} {
+		if code := h.run(args...); code != 2 {
+			t.Errorf("in repo %v: code=%d stderr=%s, want 2", args, code, h.stderr)
+		}
+	}
+	if len(srv.reqs) != n {
+		t.Errorf("empty --as in repo must not reach the server")
 	}
 }
 

@@ -152,6 +152,11 @@ claude 실행 파일이 PATH 에 없으면 아무것도 하지 않습니다.
 			if c.HookActors == nil {
 				c.HookActors = map[string]string{}
 			}
+			for k := range c.HookActors {
+				if strings.EqualFold(k, claudeTool) {
+					delete(c.HookActors, k)
+				}
+			}
 			c.HookActors[strings.ToLower(claudeTool)] = actor
 			return nil
 		}, "훅 행위자 저장: "+claudeTool+" → "+actor); err != nil {

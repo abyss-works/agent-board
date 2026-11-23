@@ -25,11 +25,15 @@ type sessionList struct {
 	Offset int             `json:"offset"`
 }
 
-// parseSessionArg reads "<actor>/<session ID>".
+// parseSessionArg reads "<actor>/<session ID>" and validates both segments so
+// path segments like ".." or extra slashes are rejected before reaching URLs.
 func parseSessionArg(v, what string) (model.SessionRef, error) {
 	actor, id, ok := strings.Cut(v, "/")
 	if !ok || actor == "" || id == "" {
 		return model.SessionRef{}, usageErrorf("%s는 <행위자>/<세션 ID> 형식이어야 합니다: %q", what, v)
+	}
+	if !model.ValidActorID(actor) || !model.ValidSessionID(id) {
+		return model.SessionRef{}, usageErrorf("%s의 행위자 또는 세션 ID 형식이 맞지 않습니다: %q", what, v)
 	}
 	return model.SessionRef{Actor: actor, SessionID: id}, nil
 }
@@ -60,6 +64,13 @@ func staleText(stale bool) string {
 	return "-"
 }
 
+func conflictCountText(conflicts []model.SessionRef) string {
+	if len(conflicts) == 0 {
+		return "-"
+	}
+	return strconv.Itoa(len(conflicts))
+}
+
 func formatSessionRefs(refs []model.SessionRef) string {
 	parts := make([]string, len(refs))
 	for i, r := range refs {
@@ -87,12 +98,8 @@ func (a *App) renderSessionList(w io.Writer, resp *client.Response) error {
 	}
 	tb := &table{header: []string{"ACTOR", "SESSION", "ROLE", "STATE", "PARENT", "ISSUE", "HOST", "PROJECT", "LAST_SEEN", "STALE", "CONFLICTS"}}
 	for _, s := range l.Items {
-		conflicts := "-"
-		if len(s.LocationConflicts) > 0 {
-			conflicts = strconv.Itoa(len(s.LocationConflicts))
-		}
 		tb.add(s.Actor, s.SessionID, deref(s.Role, "-"), deref(s.State, "-"), sessionRefText(s.Parent), deref(s.Issue, "-"), s.LastHost,
-			deref(s.LastProject, "-"), formatTime(s.LastSeenAt, a.Location), staleText(s.Stale), conflicts)
+			deref(s.LastProject, "-"), formatTime(s.LastSeenAt, a.Location), staleText(s.Stale), conflictCountText(s.LocationConflicts))
 	}
 	tb.write(w, a.TermWidth)
 	footer(w, len(l.Items), l.Total, l.Offset)
@@ -145,9 +152,9 @@ func (a *App) renderSession(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "자식 세션이 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"SESSION", "ROLE", "ISSUE", "HOST", "LAST_SEEN", "STALE"}}
+	tb := &table{header: []string{"ACTOR", "SESSION", "ROLE", "STATE", "ISSUE", "HOST", "LAST_SEEN", "STALE", "CONFLICTS"}}
 	for _, c := range *s.Children {
-		tb.add(c.SessionID, deref(c.Role, "-"), deref(c.Issue, "-"), c.LastHost, formatTime(c.LastSeenAt, a.Location), staleText(c.Stale))
+		tb.add(c.Actor, c.SessionID, deref(c.Role, "-"), deref(c.State, "-"), deref(c.Issue, "-"), c.LastHost, formatTime(c.LastSeenAt, a.Location), staleText(c.Stale), conflictCountText(c.LocationConflicts))
 	}
 	tb.write(w, a.TermWidth)
 	return nil
@@ -271,7 +278,7 @@ var sessionGetCmd = &command{
 
 var sessionSetCmd = &command{
 	name: "set", summary: "세션의 부모·역할·이슈·대기 상태·작업 위치 수정",
-	usage: `사용법: agb session set [<행위자/세션>] [--parent <행위자/세션>|none] [--role <역할>|none] [--issue <KEY>|none] [--state <상태>|none] [--reason <사유>] [--location [--repo <폴더>] | --clear-location]
+	usage: `사용법: agb session set [<행위자/세션>] [--parent <행위자/세션>|none] [--role <역할>|none] [--issue <KEY>|none] [--state <상태>|none] [--reason <사유>|none] [--location [--repo <폴더>] | --clear-location]
 
 세션의 부모 세션, 역할, 맡은 이슈, 대기 상태, 작업 위치를 고칩니다. 준 옵션만 바꾸고 none 은 그 값을 지웁니다.
 인자를 생략하면 이 명령의 행위자와 세션 ID로 정해진 세션입니다. 다른 행위자의 세션은 사용자 행위자만 고칩니다.
@@ -281,7 +288,7 @@ var sessionSetCmd = &command{
   --role <역할>|none           main, subagent, runner 중 하나
   --issue <KEY>|none           맡은 이슈 키
   --state <상태>|none          대기 상태: waiting_approval, waiting_input, waiting_external, none(해제)
-  --reason <사유>              대기 사유 (1~200자, 제어 문자 불가)
+  --reason <사유>|none         대기 사유 (1~200자, 제어 문자 불가, none 이면 사유만 지움)
   --location                   --repo 폴더의 git 정보(원격 주소, 브랜치, 저장소 최상위 경로, HEAD,
                                커밋하지 않은 파일 수)로 작업 위치를 통째로 바꿈. 파일 내용은 읽지 않음
   --repo <폴더>                --location 이 읽을 저장소. 생략하면 현재 폴더
@@ -329,18 +336,22 @@ var sessionSetCmd = &command{
 				patch["parent"] = map[string]any{"actor": ref.Actor, "session_id": ref.SessionID}
 			}
 		}
-		for name, v := range map[string]string{"role": role, "issue": issue, "state": state} {
-			if !isSet(fs, name) {
+		for _, opt := range []struct {
+			flag, field, val string
+		}{
+			{"role", "role", role},
+			{"issue", "issue", issue},
+			{"state", "state", state},
+			{"reason", "state_reason", reason},
+		} {
+			if !isSet(fs, opt.flag) {
 				continue
 			}
-			if v == "none" {
-				patch[name] = nil
+			if opt.val == "none" {
+				patch[opt.field] = nil
 			} else {
-				patch[name] = v
+				patch[opt.field] = opt.val
 			}
-		}
-		if isSet(fs, "reason") {
-			patch["state_reason"] = reason
 		}
 		if clearLocation {
 			patch["location"] = nil

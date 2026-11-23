@@ -452,6 +452,32 @@ func TestHookSessionStartHookActorCaseAndEmptyConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("missing-actor notice sanitizes control characters in --tool", func(t *testing.T) {
+		h, srv := newHookActorHarness(t, Config{HookActors: map[string]string{}})
+		delete(h.env, "AGB_TOKEN")
+		out := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", "Claude\nfake\x1b[2J\u2028z")
+		if len(srv.reqs) != 0 {
+			t.Fatalf("unexpected requests: %+v", srv.reqs)
+		}
+		if strings.Count(out, "\n") != 1 {
+			t.Errorf("notice must remain a single line: %q", out)
+		}
+		for _, r := range strings.TrimSuffix(out, "\n") {
+			if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+				t.Errorf("notice contains control character %U: %q", r, out)
+				break
+			}
+		}
+		if !strings.Contains(out, "agb setup claude fake") {
+			t.Errorf("sanitized tool name missing from notice: %q", out)
+		}
+		// Control-only --tool becomes empty and falls back to the generic notice.
+		outOnlyCtrl := runHook(t, h, hookInput(t, hookRepo(t, "CLI")), "--tool", "\n\x1b\u2028")
+		if !strings.Contains(outOnlyCtrl, "`agb setup <도구> --actor <ID>`") {
+			t.Errorf("control-only --tool = %q, want generic notice", outOnlyCtrl)
+		}
+	})
+
 	t.Run("empty hook_actors stays silent when repo config or url is missing", func(t *testing.T) {
 		h, _ := newHookActorHarness(t, Config{HookActors: map[string]string{}})
 		delete(h.env, "AGB_TOKEN")

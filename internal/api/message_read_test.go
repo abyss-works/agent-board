@@ -175,3 +175,20 @@ func TestAckAndUnreadByCaseInsensitive(t *testing.T) {
 		t.Errorf("reads = %+v, want [%+v]", got.Reads, first)
 	}
 }
+
+func TestListMessagesEmptyUnreadByActsAsOmitted(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "sample-app")
+	a := e.putMessage(t, "APP", `{"title":"첫째"}`)
+	e.putMessage(t, "APP", `{"title":"둘째"}`)
+	if rec := e.do(t, "POST", fmt.Sprintf("/v1/messages/%d/ack", a.ID), `{"reader":"alpha"}`, nil); rec.Code != 200 {
+		t.Fatalf("ack: %d %s", rec.Code, rec.Body.String())
+	}
+	// Empty unread_by= behaves like omitted (consistent with to= and documented API contract).
+	if l := e.listMessages(t, "APP", "?unread_by="); messageTitles(l.Items) != "둘째,첫째" || l.Total != 2 {
+		t.Errorf("unread_by= = %+v, want both messages", l)
+	}
+	if l := e.listMessages(t, "APP", "?unread_by=alpha"); messageTitles(l.Items) != "둘째" || l.Total != 1 {
+		t.Errorf("unread_by=alpha = %+v, want 둘째 only", l)
+	}
+}

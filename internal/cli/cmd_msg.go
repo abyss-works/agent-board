@@ -66,8 +66,13 @@ func msgProject(project string) (string, error) {
 
 // msgReader is the reader name of a read mark: --as, else the project in the
 // .agb.json above the working folder, whatever message space --project names.
-func msgReader(as string) (string, error) {
-	if as != "" {
+// An explicit empty --as "" is rejected so it does not silently fall back to
+// the repository project.
+func msgReader(fs *flag.FlagSet, as string) (string, error) {
+	if isSet(fs, "as") {
+		if as == "" {
+			return "", usageErrorf("--as 값이 비어 있습니다. 읽은 쪽 이름을 주거나 옵션을 생략하세요.")
+		}
 		return as, nil
 	}
 	reader, err := repoProject()
@@ -124,13 +129,17 @@ func (a *App) renderMsgList(showState bool) func(w io.Writer, resp *client.Respo
 		if showState {
 			tb.header = append(tb.header, "STATE")
 		}
-		tb.header = append(tb.header, "TO", "AGE", "BY", "TITLE")
+		tb.header = append(tb.header, "TO", "REPLIES", "AGE", "BY", "TITLE")
 		for _, m := range l.Items {
 			row := []string{strconv.FormatInt(m.ID, 10)}
 			if showState {
 				row = append(row, m.State)
 			}
-			tb.add(append(row, msgTargetText(m), m.Age, m.CreatedBy, m.Title)...)
+			replies := "-"
+			if m.ReplyCount > 0 {
+				replies = strconv.Itoa(m.ReplyCount)
+			}
+			tb.add(append(row, msgTargetText(m), replies, m.Age, m.CreatedBy, m.Title)...)
 		}
 		tb.write(w, a.TermWidth)
 		footer(w, len(l.Items), l.Total, l.Offset)
@@ -181,7 +190,11 @@ func (a *App) renderMsg(w io.Writer, resp *client.Response) error {
 	if m.Replies != nil && len(*m.Replies) > 0 {
 		fmt.Fprintf(w, "\n== 답장 (%d) ==\n", len(*m.Replies))
 		for _, r := range *m.Replies {
-			fmt.Fprintf(w, "\n#%d  %s  %s  %s\n", r.ID, formatTime(r.CreatedAt, a.Location), r.CreatedBy, r.Title)
+			state := ""
+			if r.State != "" && r.State != model.MessageActive {
+				state = "[" + r.State + "]  "
+			}
+			fmt.Fprintf(w, "\n#%d  %s  %s  %s%s\n", r.ID, formatTime(r.CreatedAt, a.Location), r.CreatedBy, state, r.Title)
 			if r.Body != nil && strings.TrimSpace(*r.Body) != "" {
 				fmt.Fprintln(w, strings.TrimRight(*r.Body, "\n"))
 			}
@@ -228,9 +241,6 @@ func (r msgRoutingFlags) validate(fs *flag.FlagSet) (*model.SessionRef, error) {
 		parsed, err := parseSessionArg(r.toSession, "--to-session")
 		if err != nil {
 			return nil, err
-		}
-		if !model.ValidActorID(parsed.Actor) || !model.ValidSessionID(parsed.SessionID) {
-			return nil, usageErrorf("--to-session 의 행위자 또는 세션 ID 형식이 맞지 않습니다: %q", r.toSession)
 		}
 		ref = &parsed
 	}
@@ -386,7 +396,7 @@ AGE 는 넣은 지 얼마나 지났는지입니다. 예: agb msg list -p AGB --f
 		f.Issue = routing.issue
 		f.ReplyTo = routing.replyTo
 		if unread {
-			if f.UnreadBy, err = msgReader(as); err != nil {
+			if f.UnreadBy, err = msgReader(fs, as); err != nil {
 				return err
 			}
 		} else if isSet(fs, "as") {
@@ -437,7 +447,7 @@ var msgAckCmd = &command{
 	name: "ack", summary: "읽은 쪽의 확인 표시 (여러 개 가능)",
 	usage: `사용법: agb msg ack <ID>... [--as <이름>]
 
-메시지를 처리한 뒤 확인 표시를 합니다. 자기 일이면 할 일로 옮긴 뒤에, 자기 일이 아니면 넘기면서 표시합니다.
+메시지를 처리한 뒤 확인 표시를 합니다. 처리 방식은 쓰는 쪽이 정하며, 자기 일이 아닌 메시지도 넘기면서 표시할 수 있습니다.
 확인 표시는 읽은 쪽 이름마다 따로 남고 메시지는 그대로 있어, 다른 읽는 쪽의 목록에는 계속 보입니다.
 표시한 메시지는 같은 이름의 agb msg list --unread 에서 빠집니다. 이미 표시한 메시지를 다시 표시하면
 처음 기록이 그대로 남습니다. 확인 표시를 되돌릴 수 없습니다. 기간이 지났거나 지운 메시지에도 표시할 수 있습니다.
@@ -466,7 +476,7 @@ ID 를 여러 개 주면 차례로 처리하고, 처음 실패하는 ID 에서 �
 			}
 			ids[n] = id
 		}
-		reader, err := msgReader(as)
+		reader, err := msgReader(fs, as)
 		if err != nil {
 			return err
 		}

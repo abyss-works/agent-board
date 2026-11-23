@@ -14,9 +14,9 @@ import (
 	"github.com/wsk0715/agent-board/skills"
 )
 
-// errCheckMismatch is returned by skill check when the CLI or the skill is
-// not the release it should be. The report is already printed, so the exit
-// path prints nothing more and exits with code 1.
+// errCheckMismatch is returned by check commands (such as skill check and
+// release check) when the check finds a mismatch or blocking items. The report
+// is already printed, so the exit path prints nothing more and exits with code 1.
 var errCheckMismatch = errors.New("판이 맞지 않습니다")
 
 var releasePattern = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)

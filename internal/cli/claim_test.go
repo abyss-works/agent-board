@@ -79,7 +79,7 @@ func TestIssueClaimCommands(t *testing.T) {
 	if q := srv.last().Query; q.Get("limit") != "10" || q.Get("offset") != "1" {
 		t.Errorf("claims query = %v", q)
 	}
-	for _, want := range []string{"ID", "ACTOR", "SESSION", "CLAIMED_AT", "RELEASED_AT", "OUTCOME", "REASON", "claude", "sess-1", "codex", "sess-0", "expired"} {
+	for _, want := range []string{"ID", "ACTOR", "SESSION", "ACTIVE", "CLAIMED_AT", "RELEASED_AT", "OUTCOME", "REASON", "claude", "sess-1", "true", "false", "codex", "sess-0", "expired"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Errorf("claims table lacks %q:\n%s", want, h.stdout)
 		}

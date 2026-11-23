@@ -210,7 +210,7 @@ func (a *App) unreadNotice(ctx context.Context, g *globals, tool string, in hook
 		return "", err.Error()
 	}
 	if s.URL != "" && s.Actor == "" {
-		toolName := strings.ToLower(strings.TrimSpace(tool))
+		toolName := strings.TrimSpace(hookText(strings.ToLower(tool), hookToMax))
 		if toolName != "" {
 			notice = fmt.Sprintf("agb: 프로젝트 %s의 미확인 메시지를 확인하지 못했습니다(훅 행위자 미설정). `agb setup %s --actor <ID>`로 설정하세요.\n", cfg.Project, toolName)
 		} else {
