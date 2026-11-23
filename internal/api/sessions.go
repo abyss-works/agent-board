@@ -205,7 +205,7 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 	var patch store.SessionPatch
 	var details []Detail
 	var parent, location map[string]json.RawMessage
-	var role, issue string
+	var role, issue, state, stateReason string
 	steps := []func() *apiError{
 		func() *apiError {
 			present, null, e := field(b, "parent", &parent)
@@ -252,36 +252,20 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		func() *apiError {
-			raw, ok := b["state"]
-			if !ok {
-				return nil
+			present, null, e := field(b, "state", &state)
+			patch.State.Set = present
+			if present && !null {
+				patch.State.Value = &state
 			}
-			patch.State.Set = true
-			if !isNull(raw) {
-				var v string
-				if json.Unmarshal(raw, &v) != nil {
-					details = append(details, Detail{Field: "state", Reason: "invalid", Message: "문자열이어야 합니다."})
-					return nil
-				}
-				patch.State.Value = &v
-			}
-			return nil
+			return e
 		},
 		func() *apiError {
-			raw, ok := b["state_reason"]
-			if !ok {
-				return nil
+			present, null, e := field(b, "state_reason", &stateReason)
+			patch.StateReason.Set = present
+			if present && !null {
+				patch.StateReason.Value = &stateReason
 			}
-			patch.StateReason.Set = true
-			if !isNull(raw) {
-				var v string
-				if json.Unmarshal(raw, &v) != nil {
-					details = append(details, Detail{Field: "state_reason", Reason: "invalid", Message: "문자열이어야 합니다."})
-					return nil
-				}
-				patch.StateReason.Value = &v
-			}
-			return nil
+			return e
 		},
 	}
 	for _, step := range steps {
