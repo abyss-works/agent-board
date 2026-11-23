@@ -1,13 +1,14 @@
-import { ClockIcon, HelpCircleIcon, ShieldAlertIcon } from 'lucide-react'
-import type { Session, SessionRole, SessionState } from '@/api/types'
+import { AlertTriangleIcon, ClockIcon, HelpCircleIcon, ShieldAlertIcon } from 'lucide-react'
+import type { Session, SessionRef, SessionRole, SessionState } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { SESSION_ROLE_LABEL, SESSION_STATE_LABEL } from '@/lib/labels'
+import { sessionRefLabel } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 
 const WAITING_STYLE: Record<SessionState, { variant: 'warning' | 'destructive' | 'info'; className: string }> = {
   waiting_approval: {
     variant: 'destructive',
-    className: 'border-amber-500/50 bg-amber-500/20 text-amber-300',
+    className: 'border-rose-500/40 bg-rose-500/15 text-rose-300',
   },
   waiting_input: {
     variant: 'warning',
@@ -64,6 +65,24 @@ export function SessionRoleBadge({ role, className }: { role: SessionRole; class
   return (
     <Badge variant={variant} className={cn('font-mono', className)}>
       {SESSION_ROLE_LABEL[role]}
+    </Badge>
+  )
+}
+
+/** 작업 위치 충돌 배지. 충돌이 없거나 누락·null이면 그리지 않는다. */
+export function LocationConflictBadge({
+  conflicts,
+  className,
+}: {
+  conflicts: readonly SessionRef[] | null | undefined
+  className?: string
+}) {
+  const list = conflicts ?? []
+  if (list.length === 0) return null
+  return (
+    <Badge variant="destructive" title={list.map(sessionRefLabel).join(', ')} className={className}>
+      <AlertTriangleIcon className="size-3" />
+      위치 충돌 {list.length}
     </Badge>
   )
 }

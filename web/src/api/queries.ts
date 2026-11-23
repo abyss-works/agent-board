@@ -28,7 +28,6 @@ import type {
   ProjectPatch,
   QueueItem,
   Session,
-  SessionListResponse,
   Template,
   Topic,
   TopicCreate,
@@ -149,7 +148,7 @@ export function sessionsQueryKey(params?: SessionListParams) {
 /** 세션 목록 조회. 기본 갱신 정책을 상속한다. */
 export function useSessions(params?: SessionListParams, options?: { enabled?: boolean }) {
   const api = useApi()
-  return useQuery<SessionListResponse>({
+  return useQuery<Page<Session>>({
     queryKey: sessionsQueryKey(params),
     queryFn: ({ signal }) => api.listSessions(params, signal),
     placeholderData: keepPreviousData,

@@ -101,11 +101,14 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const handleUnverify = () =>
     unverify.mutate({ key: issue.key, version: issue.version }, { onError: (err) => toastError(err, '검증 상태를 되돌리지 못했습니다') })
 
-  const handleRequestPending = (note: string) => {
+  const handleRequestPending = (note: string, options?: { onSuccess?: () => void }) => {
     patch.mutate(
       { key: issue.key, patch: requestVerificationPatch(note), version: issue.version },
       {
-        onSuccess: () => setRequestingVerification(false),
+        onSuccess: () => {
+          options?.onSuccess?.()
+          setRequestingVerification(false)
+        },
         onError: (err) => toastError(err, '검증 필요를 지정하지 못했습니다'),
       },
     )

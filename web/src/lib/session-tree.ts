@@ -106,16 +106,17 @@ export function summarizeSessions(sessions: readonly Session[]): SessionSummaryC
   return { total: sessions.length, active, waiting, stale }
 }
 
-export function filterSessionsByStatus(sessions: readonly Session[], filter: SessionStatusFilter): Session[] {
-  switch (filter) {
-    case 'active':
-      return sessions.filter((s) => !s.stale)
-    case 'waiting':
-      return sessions.filter((s) => s.state !== null)
-    case 'stale':
-      return sessions.filter((s) => s.stale)
-    default:
-      return [...sessions]
+/** 요약 카드용 보조 쿼리(`limit=1`)를 실행할지 계산한다. 전체 목록을 이미 모두 받았으면 중복 폴링을 끈다. */
+export function sessionSummaryEnabled(opts: {
+  status: SessionStatusFilter
+  completeAllLoaded: boolean
+  listPending: boolean
+}): { all: boolean; active: boolean; waiting: boolean } {
+  const waitingForAll = opts.status === 'all' && (opts.listPending || opts.completeAllLoaded)
+  return {
+    all: opts.status !== 'all',
+    active: opts.status !== 'active' && !waitingForAll,
+    waiting: opts.status !== 'waiting' && !waitingForAll,
   }
 }
 
@@ -201,7 +202,7 @@ export function buildHostSessionTrees(sessions: readonly Session[]): HostSession
     if (node.session.state !== null) acc.waiting += 1
     if (node.session.stale) acc.stale += 1
     else acc.active += 1
-    if (node.session.location_conflicts.length > 0) acc.conflict += 1
+    if ((node.session.location_conflicts?.length ?? 0) > 0) acc.conflict += 1
     for (const c of node.children) countSubtree(c, acc)
   }
 
