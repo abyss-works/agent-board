@@ -261,8 +261,11 @@ export function useActors() {
   })
 }
 
+/** 기기 승인 단건 조회 쿼리 키 앞부분. 재연결 일괄 무효화에서 제외할 때 쓴다. */
+export const DEVICE_AUTHORIZATION_KEY = [QUERY_ROOT, 'device-authorization'] as const
+
 function deviceAuthorizationKey(userCode: string | null) {
-  return [QUERY_ROOT, 'device-authorization', userCode]
+  return [...DEVICE_AUTHORIZATION_KEY, userCode] as const
 }
 
 /**

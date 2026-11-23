@@ -1,9 +1,10 @@
 import { environmentManager, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, NetworkError, ServerUnavailableError } from '@/api/client'
+import { DEVICE_AUTHORIZATION_KEY } from '@/api/queries'
 import { AppStorage, memoryStore, type KeyValueStore } from '@/lib/storage'
 import { connection } from './connection'
-import { createQueryClient, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
+import { createQueryClient, invalidateOnReconnect, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
 import { FALLBACK_POLL_MS } from './state'
 
 const rejected = (status: number, reason: string) => new ApiError(status, 'error', '거절', [{ reason }])
@@ -104,6 +105,39 @@ describe('refreshForActor', () => {
   })
 })
 
+describe('invalidateOnReconnect', () => {
+  it('커서 없는 재연결 시 일반 활성 쿼리는 무효화하지만 device-authorization 쿼리는 재조회하지 않는다', async () => {
+    const { client } = setup()
+    const issuesFn = vi.fn(() => Promise.resolve('issues'))
+    const deviceFn = vi.fn(() => Promise.resolve('device'))
+    const issuesObs = new QueryObserver(client, { queryKey: ['agb', 'issues'], queryFn: issuesFn, retry: false })
+    const deviceObs = new QueryObserver(client, {
+      queryKey: [...DEVICE_AUTHORIZATION_KEY, 'ABCD-1234'],
+      queryFn: deviceFn,
+      retry: false,
+      refetchOnReconnect: false,
+    })
+    const unsubIssues = issuesObs.subscribe(() => {})
+    const unsubDevice = deviceObs.subscribe(() => {})
+    try {
+      await vi.waitFor(() => {
+        expect(issuesObs.getCurrentResult().isSuccess).toBe(true)
+        expect(deviceObs.getCurrentResult().isSuccess).toBe(true)
+      })
+      expect(issuesFn).toHaveBeenCalledTimes(1)
+      expect(deviceFn).toHaveBeenCalledTimes(1)
+
+      invalidateOnReconnect(client)
+      await vi.waitFor(() => expect(issuesFn).toHaveBeenCalledTimes(2))
+      await new Promise((r) => setTimeout(r, 20))
+      expect(deviceFn).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubIssues()
+      unsubDevice()
+    }
+  })
+})
+
 describe('createQueryClient 폴백 폴링과 스트림 연결 상태', () => {
   it('stream이 connected면 refetchInterval이 false를, 그 외에는 FALLBACK_POLL_MS를 돌려준다', () => {
     connection.reset()
@@ -142,8 +176,6 @@ describe('createQueryClient 폴백 폴링과 스트림 연결 상태', () => {
 })
 
 describe('createQueryClient 스트림 상태 전환에 따른 폴백 폴링 동기화', () => {
-  const defaultIsServer = environmentManager.isServer()
-
   beforeEach(() => {
     environmentManager.setIsServer(() => false)
     connection.reset()
@@ -153,7 +185,7 @@ describe('createQueryClient 스트림 상태 전환에 따른 폴백 폴링 동�
   afterEach(() => {
     vi.useRealTimers()
     connection.reset()
-    environmentManager.setIsServer(() => defaultIsServer)
+    environmentManager.setIsServer(() => typeof window === 'undefined' || 'Deno' in globalThis)
   })
 
   async function observeQuery(
@@ -261,6 +293,19 @@ describe('createQueryClient 스트림 상태 전환에 따른 폴백 폴링 동�
       expect(queryFn).toHaveBeenCalledTimes(2)
     } finally {
       unsubscribe()
+      client.unmount()
+    }
+  })
+
+  it('여러 번 mount된 경우 마지막 unmount 전까지 connection 구독을 유지한다', async () => {
+    const { client } = setup()
+    client.mount()
+    client.mount()
+    client.unmount()
+
+    try {
+      await assertReconnectingPollingLifecycle(client, ['agb', 'multi-mount'])
+    } finally {
       client.unmount()
     }
   })

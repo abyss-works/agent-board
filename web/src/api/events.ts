@@ -225,6 +225,8 @@ export function queryKeysForEvent(ev: EventItem): readonly (readonly unknown[])[
         [QUERY_ROOT, 'overview'],
         [QUERY_ROOT, 'agenda'],
         [QUERY_ROOT, 'board'],
+        [QUERY_ROOT, 'sessions'],
+        [QUERY_ROOT, 'session'],
       ]
     case 'topic':
       return [
@@ -233,6 +235,10 @@ export function queryKeysForEvent(ev: EventItem): readonly (readonly unknown[])[
         [QUERY_ROOT, 'issue'],
         [QUERY_ROOT, 'overview'],
         [QUERY_ROOT, 'board'],
+        [QUERY_ROOT, 'agenda'],
+        [QUERY_ROOT, 'queue'],
+        [QUERY_ROOT, 'sessions'],
+        [QUERY_ROOT, 'session'],
       ]
     case 'milestone':
       return [
@@ -242,6 +248,9 @@ export function queryKeysForEvent(ev: EventItem): readonly (readonly unknown[])[
         [QUERY_ROOT, 'overview'],
         [QUERY_ROOT, 'board'],
         [QUERY_ROOT, 'queue'],
+        [QUERY_ROOT, 'agenda'],
+        [QUERY_ROOT, 'sessions'],
+        [QUERY_ROOT, 'session'],
       ]
     case 'document':
       return [
