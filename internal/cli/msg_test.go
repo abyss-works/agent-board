@@ -135,10 +135,10 @@ func TestMsgListTable(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("table:\n%s", h.stdout)
 	}
-	if got := strings.Fields(lines[0]); !equalStrings(got, []string{"ID", "TO", "AGE", "BY", "TITLE"}) {
+	if got := strings.Fields(lines[0]); !equalStrings(got, []string{"ID", "TO", "REPLIES", "AGE", "BY", "TITLE"}) {
 		t.Errorf("header = %v", got)
 	}
-	if got := strings.Fields(lines[1]); !equalStrings(got, []string{"5", "-", "5m", "codex", "수신자", "없음"}) {
+	if got := strings.Fields(lines[1]); !equalStrings(got, []string{"5", "-", "-", "5m", "codex", "수신자", "없음"}) {
 		t.Errorf("row 1 = %v", got)
 	}
 
@@ -149,7 +149,7 @@ func TestMsgListTable(t *testing.T) {
 		t.Errorf("query = %v", q)
 	}
 	lines = strings.Split(strings.TrimRight(h.stdout.String(), "\n"), "\n")
-	if got := strings.Fields(lines[0]); !equalStrings(got, []string{"ID", "STATE", "TO", "AGE", "BY", "TITLE"}) {
+	if got := strings.Fields(lines[0]); !equalStrings(got, []string{"ID", "STATE", "TO", "REPLIES", "AGE", "BY", "TITLE"}) {
 		t.Errorf("header with --all = %v", got)
 	}
 	if got := strings.Fields(lines[2]); len(got) < 3 || got[1] != "expired" {
@@ -334,6 +334,7 @@ func TestMsgListRoutingFiltersAndToColumn(t *testing.T) {
 	}
 	out := h.stdout.String()
 	for _, want := range []string{
+		"REPLIES",
 		"desk,claude/sess-2,role:subagent,CLI-1",
 		"codex/s2,CLI-2",
 		"reviewer",
@@ -342,6 +343,10 @@ func TestMsgListRoutingFiltersAndToColumn(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("table lacks %q:\n%s", want, out)
 		}
+	}
+	outLines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(outLines) < 3 || !strings.Contains(outLines[1], " 1 ") {
+		t.Errorf("row 1 should show reply count 1:\n%s", out)
 	}
 
 	n := len(srv.reqs)
@@ -362,11 +367,12 @@ func TestMsgListRoutingFiltersAndToColumn(t *testing.T) {
 
 func TestMsgGetShowsRoutingAndReplies(t *testing.T) {
 	h, srv := newMsgHarness(t, true)
-	withRouting := `{"id":3,"project":"CLI","to":"reviewer","to_session":{"actor":"claude","session_id":"sess-2"},"to_role":"subagent","issue":"CLI-1","reply_to":1,"reply_count":2,` +
+	withRouting := `{"id":3,"project":"CLI","to":"reviewer","to_session":{"actor":"claude","session_id":"sess-2"},"to_role":"subagent","issue":"CLI-1","reply_to":1,"reply_count":3,` +
 		`"title":"배포 끝","body":"원본 본문\n","state":"active","age":"2h","created_at":"2026-10-18T09:00:00.000Z","created_by":"claude","created_session":"sess-1","created_host":"desk","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":null,"deleted_by":null,` +
 		`"replies":[` +
 		`{"id":10,"project":"CLI","to":null,"to_session":null,"to_role":null,"issue":null,"reply_to":3,"reply_count":0,"title":"첫 답장","body":"확인했습니다.\n","state":"active","age":"1h","created_at":"2026-10-18T10:00:00.000Z","created_by":"codex","created_session":"s2","created_host":"h2","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":null,"deleted_by":null},` +
-		`{"id":11,"project":"CLI","to":null,"to_session":null,"to_role":null,"issue":null,"reply_to":3,"reply_count":0,"title":"둘째 답장","body":"완료","state":"active","age":"30m","created_at":"2026-10-18T10:30:00.000Z","created_by":"owner","created_session":"s3","created_host":"h3","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":null,"deleted_by":null}` +
+		`{"id":11,"project":"CLI","to":null,"to_session":null,"to_role":null,"issue":null,"reply_to":3,"reply_count":0,"title":"둘째 답장","body":"완료","state":"expired","age":"30m","created_at":"2026-10-18T10:30:00.000Z","created_by":"owner","created_session":"s3","created_host":"h3","expires_at":"2026-10-18T11:00:00.000Z","deleted_at":null,"deleted_by":null},` +
+		`{"id":12,"project":"CLI","to":null,"to_session":null,"to_role":null,"issue":null,"reply_to":3,"reply_count":0,"title":"셋째 답장","body":"취소됨","state":"deleted","age":"15m","created_at":"2026-10-18T10:45:00.000Z","created_by":"claude","created_session":"s4","created_host":"h4","expires_at":"2026-10-25T09:00:00.000Z","deleted_at":"2026-10-18T10:50:00.000Z","deleted_by":"claude"}` +
 		`]}`
 	srv.on("GET", "/v1/messages/3", canned{body: withRouting})
 	if code := h.run("msg", "get", "3"); code != 0 {
@@ -378,13 +384,17 @@ func TestMsgGetShowsRoutingAndReplies(t *testing.T) {
 		"to_role:", "subagent",
 		"issue:", "CLI-1",
 		"reply_to:", "1",
-		"== 답장 (2) ==",
+		"== 답장 (3) ==",
 		"#10", "2026-10-18 19:00", "codex", "첫 답장", "확인했습니다.",
-		"#11", "2026-10-18 19:30", "owner", "둘째 답장", "완료",
+		"#11", "2026-10-18 19:30", "owner", "[expired]", "둘째 답장", "완료",
+		"#12", "2026-10-18 19:45", "claude", "[deleted]", "셋째 답장", "취소됨",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("msg get lacks %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "[active]") {
+		t.Errorf("active reply should not print [active]:\n%s", out)
 	}
 
 	// Empty replies array hides the reply section.
