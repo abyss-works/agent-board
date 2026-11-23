@@ -40,11 +40,16 @@ func TestSessionUsageErrors(t *testing.T) {
 		{"session", "list", "--active", "--stale"},
 		{"session", "list", "--named", "maybe"},
 		{"session", "list", "--parent", "claude"},
+		{"session", "list", "--parent", "Claude/s1"},
 		{"session", "set"},
 		{"session", "set", "--location", "--clear-location"},
 		{"session", "set", "--repo", "."},
 		{"session", "set", "--parent", "nobody"},
+		{"session", "set", "--parent", "claude/..", "--role", "main"},
 		{"session", "get", "claude"},
+		{"session", "get", "claude/.."},
+		{"session", "get", "../projects"},
+		{"session", "get", "claude/a/b"},
 		{"session", "get", "a/b", "c/d"},
 		{"session", "start", "extra"},
 	} {
@@ -238,6 +243,14 @@ func TestSessionWaitingFlagsAndAgendaTable(t *testing.T) {
 		t.Errorf("reason only body = %s", got)
 	}
 
+	// session set --reason none clears only state_reason via null
+	if code := h.run("session", "set", "--reason", "none"); code != 0 {
+		t.Fatalf("clear reason: code=%d stderr=%s", code, h.stderr)
+	}
+	if got := strings.TrimSpace(srv.last().Body); got != `{"state_reason":null}` {
+		t.Errorf("clear reason body = %s", got)
+	}
+
 	// session list --waiting --table
 	if code := h.run("session", "list", "--waiting", "--table"); code != 0 {
 		t.Fatalf("list --waiting: code=%d stderr=%s", code, h.stderr)
@@ -266,7 +279,7 @@ func TestSessionWaitingFlagsAndAgendaTable(t *testing.T) {
 		t.Fatalf("agenda --table: code=%d stderr=%s", code, h.stderr)
 	}
 	out := h.stdout.String()
-	for _, want := range []string{"대기 세션 1", "ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "REASON", "claude", "sess-1", "waiting_input", "APP-12", "2026-11-20 10:30", "확인 필요"} {
+	for _, want := range []string{"대기 세션 1", "ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "CONFLICTS", "REASON", "claude", "sess-1", "waiting_input", "APP-12", "2026-11-20 10:30", "확인 필요"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("agenda table lacks %q:\n%s", want, out)
 		}
@@ -325,5 +338,44 @@ func TestSessionLocationConflictsCLI(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "s-clean") || !strings.HasSuffix(strings.TrimSpace(lines[2]), "-") {
 		t.Errorf("row 2 = %q, want '-'", lines[2])
+	}
+
+	// Child session table renders ACTOR, STATE, and CONFLICTS columns, and agenda waiting table renders CONFLICTS.
+	parentWithChildrenJSON := `{"actor":"claude","session_id":"sess-1","named":true,"first_seen_at":"2026-11-20T00:00:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":null,"role":"main","issue":"APP-12","location":null,"location_conflicts":[],"stale":false,"updated_at":"2026-11-20T01:00:00.000Z","children":[` +
+		`{"actor":"codex","session_id":"child-wait","named":true,"first_seen_at":"2026-11-20T00:10:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":{"actor":"claude","session_id":"sess-1"},"role":"subagent","issue":"APP-12","location":null,"location_conflicts":[{"actor":"owner","session_id":"s9"}],"state":"waiting_approval","state_reason":"승인 대기","state_at":"2026-11-20T01:00:00.000Z","stale":false,"updated_at":"2026-11-20T01:00:00.000Z"},` +
+		`{"actor":"claude","session_id":"child-clean","named":true,"first_seen_at":"2026-11-20T00:20:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":{"actor":"claude","session_id":"sess-1"},"role":"runner","issue":null,"location":null,"location_conflicts":[],"state":null,"state_reason":null,"state_at":null,"stale":false,"updated_at":"2026-11-20T01:00:00.000Z"}` +
+		`]}`
+	agendaConflictJSON := `{"generated_at":"2026-11-20T02:00:00.000Z","projects":[{"project":{"key":"APP","name":"예제 앱"},"dormant":0,"user_turn":{"review":{"total":0,"items":[]},"decisions":{"total":0,"items":[]},"unverified":{"total":0,"items":[]},"tasks":{"total":0,"items":[]},"waiting_sessions":{"total":1,"items":[{"actor":"codex","session_id":"child-wait","named":true,"first_seen_at":"2026-11-20T00:10:00.000Z","last_seen_at":"2026-11-20T01:00:00.000Z","last_host":"desk","last_project":"APP","parent":null,"role":"subagent","issue":"APP-12","location":null,"location_conflicts":[{"actor":"owner","session_id":"s9"},{"actor":"claude","session_id":"s8"}],"state":"waiting_approval","state_reason":"승인 대기","state_at":"2026-11-20T01:00:00.000Z","stale":false,"updated_at":"2026-11-20T01:00:00.000Z"}]}},"agent":{"doing":{"total":0,"items":[]},"next":{"total":0,"items":[]}},"waiting":{"blocked":{"total":0,"items":[]},"external":{"total":0,"items":[]}}}]}`
+	srv.on("GET", "/v1/sessions/claude/sess-1", canned{body: parentWithChildrenJSON})
+	srv.on("GET", "/v1/agenda", canned{body: agendaConflictJSON})
+
+	if code := h.run("session", "get"); code != 0 {
+		t.Fatalf("session get children: code=%d stderr=%s", code, h.stderr)
+	}
+	getOut := h.stdout.String()
+	idx := strings.Index(getOut, "== 자식 세션 ==")
+	if idx < 0 {
+		t.Fatalf("missing child section:\n%s", getOut)
+	}
+	childLines := strings.Split(strings.TrimSpace(getOut[idx:]), "\n")
+	if len(childLines) < 4 {
+		t.Fatalf("unexpected child table:\n%s", getOut[idx:])
+	}
+	if got := strings.Fields(childLines[1]); !equalStrings(got, []string{"ACTOR", "SESSION", "ROLE", "STATE", "ISSUE", "HOST", "LAST_SEEN", "STALE", "CONFLICTS"}) {
+		t.Errorf("child header = %v", got)
+	}
+	if !strings.Contains(childLines[2], "codex") || !strings.Contains(childLines[2], "waiting_approval") || !strings.HasSuffix(strings.TrimSpace(childLines[2]), "1") {
+		t.Errorf("child row 1 = %q", childLines[2])
+	}
+	if !strings.Contains(childLines[3], "claude") || !strings.HasSuffix(strings.TrimSpace(childLines[3]), "-") {
+		t.Errorf("child row 2 = %q", childLines[3])
+	}
+
+	if code := h.run("agenda", "--table"); code != 0 {
+		t.Fatalf("agenda --table: code=%d stderr=%s", code, h.stderr)
+	}
+	agOut := h.stdout.String()
+	if !strings.Contains(agOut, "CONFLICTS") || !strings.Contains(agOut, " 2 ") {
+		t.Errorf("agenda waiting table lacks CONFLICTS count 2:\n%s", agOut)
 	}
 }

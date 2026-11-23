@@ -329,12 +329,13 @@ func (a *App) renderIssueClaimList(w io.Writer, resp *client.Response) error {
 		fmt.Fprintln(w, "점유 이력이 없습니다.")
 		return nil
 	}
-	tb := &table{header: []string{"ID", "ACTOR", "SESSION", "CLAIMED_AT", "RELEASED_AT", "OUTCOME", "REASON"}}
+	tb := &table{header: []string{"ID", "ACTOR", "SESSION", "ACTIVE", "CLAIMED_AT", "RELEASED_AT", "OUTCOME", "REASON"}}
 	for _, c := range l.Items {
 		tb.add(
 			strconv.FormatInt(c.ID, 10),
 			c.Actor,
 			c.SessionID,
+			strconv.FormatBool(c.Active),
 			formatTime(c.ClaimedAt, a.Location),
 			formatTimePtr(c.ReleasedAt, a.Location),
 			deref(c.Outcome, "-"),
@@ -709,9 +710,9 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 }
 
 func (a *App) waitingSessionsTable(items []model.Session) *table {
-	tb := &table{header: []string{"ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "REASON"}}
+	tb := &table{header: []string{"ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "CONFLICTS", "REASON"}}
 	for _, s := range items {
-		tb.add(s.Actor, s.SessionID, deref(s.State, "-"), deref(s.Issue, "-"), formatTimePtr(s.StateAt, a.Location), deref(s.StateReason, "-"))
+		tb.add(s.Actor, s.SessionID, deref(s.State, "-"), deref(s.Issue, "-"), formatTimePtr(s.StateAt, a.Location), conflictCountText(s.LocationConflicts), deref(s.StateReason, "-"))
 	}
 	return tb
 }

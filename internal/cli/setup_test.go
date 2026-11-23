@@ -507,4 +507,23 @@ func TestSetupClaudeStoresLowercaseHookActorKey(t *testing.T) {
 			t.Errorf("non-lowercase hook_actors key stored: %q", k)
 		}
 	}
+
+	// Existing mixed-case keys for the same tool are cleaned up on save so exact-match
+	// lookup cannot prefer a stale key such as "Claude".
+	cfg.HookActors["Claude"] = "stale-actor"
+	cfg.HookActors["other"] = "base"
+	if err := saveConfig(h.app.ConfigPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.run("setup", "claude", "--actor", "claude"); code != 0 {
+		t.Fatalf("cleanup run: code=%d stderr=%s", code, h.stderr)
+	}
+	cleaned, err := loadConfig(h.app.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantActors := map[string]string{"claude": "claude", "other": "base"}
+	if !reflect.DeepEqual(cleaned.HookActors, wantActors) {
+		t.Errorf("HookActors after cleanup = %+v, want %+v", cleaned.HookActors, wantActors)
+	}
 }

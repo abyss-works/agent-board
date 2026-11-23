@@ -215,6 +215,15 @@ func TestReleaseCheck(t *testing.T) {
 		t.Errorf("blocked release check table lacks CLI-2:\n%s", h.stdout)
 	}
 
+	// Partial list (Total > len(Items)) prints truncation hint while preserving exit 1.
+	srv.on("GET", "/v1/issues", canned{body: `{"items":[` + pendingIssueJSON + `],"total":250,"limit":1,"offset":0}`})
+	if code := h.run("release", "check", "-p", "CLI", "--limit", "1"); code != 1 {
+		t.Fatalf("partial release check: code=%d stdout=%s stderr=%s", code, h.stdout, h.stderr)
+	}
+	if !strings.Contains(h.stdout.String(), "250건 중 1건 표시") || !strings.Contains(h.stdout.String(), "250건이 남아") {
+		t.Errorf("partial release check lacks truncation hint:\n%s", h.stdout)
+	}
+
 	// JSON / --fields / --text also returns exit 1 when total > 0.
 	hJSON := newHarness(t, srv, false)
 	if code := hJSON.run("release", "check", "-p", "CLI", "--fields", "key,verification_note", "--text"); code != 1 {

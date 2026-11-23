@@ -91,6 +91,9 @@ func (a *App) renderReleaseCheck(w io.Writer, resp *client.Response) error {
 		tb.add(it.Key, string(it.Status), string(it.Priority), it.Title, deref(it.VerificationNote, "-"))
 	}
 	tb.write(w, a.TermWidth)
+	if l.Total > len(l.Items) {
+		footer(w, len(l.Items), l.Total, l.Offset)
+	}
 	fmt.Fprintf(w, "\n미검증 항목 %d건이 남아 있습니다. 검증 후 다시 확인하세요.\n", l.Total)
 	return nil
 }

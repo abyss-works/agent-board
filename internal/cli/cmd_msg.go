@@ -242,9 +242,6 @@ func (r msgRoutingFlags) validate(fs *flag.FlagSet) (*model.SessionRef, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !model.ValidActorID(parsed.Actor) || !model.ValidSessionID(parsed.SessionID) {
-			return nil, usageErrorf("--to-session 의 행위자 또는 세션 ID 형식이 맞지 않습니다: %q", r.toSession)
-		}
 		ref = &parsed
 	}
 	if isSet(fs, "to-role") {
