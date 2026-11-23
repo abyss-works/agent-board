@@ -158,6 +158,8 @@ describe('queryKeysForEvent', () => {
       ['agb', 'overview'],
       ['agb', 'agenda'],
       ['agb', 'board'],
+      ['agb', 'sessions'],
+      ['agb', 'session'],
     ])
   })
 
@@ -168,6 +170,10 @@ describe('queryKeysForEvent', () => {
       ['agb', 'issue'],
       ['agb', 'overview'],
       ['agb', 'board'],
+      ['agb', 'agenda'],
+      ['agb', 'queue'],
+      ['agb', 'sessions'],
+      ['agb', 'session'],
     ])
   })
 
@@ -179,6 +185,9 @@ describe('queryKeysForEvent', () => {
       ['agb', 'overview'],
       ['agb', 'board'],
       ['agb', 'queue'],
+      ['agb', 'agenda'],
+      ['agb', 'sessions'],
+      ['agb', 'session'],
     ])
   })
 

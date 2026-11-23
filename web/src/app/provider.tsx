@@ -4,7 +4,7 @@ import { ApiClient, isActorRejected, isUnauthorized } from '@/api/client'
 import { queryKeysForEvent, subscribeEventStream } from '@/api/events'
 import { AppStorage, browserStore } from '@/lib/storage'
 import { connection } from './connection'
-import { createQueryClient, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
+import { createQueryClient, invalidateOnReconnect, LOGIN_ACTORS_KEY, refreshForActor } from './query-client'
 import { ApiContext, BASE_URL, AppStateContext, CLIENT_HOST, type AppState } from './state'
 
 const storage = new AppStorage(browserStore())
@@ -53,6 +53,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const selectActor = useCallback((picked: string) => {
     storage.setActor(picked)
     setActor(picked)
+    connection.reset()
   }, [])
 
   const selectProject = useCallback((key: string | null) => {
@@ -78,7 +79,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         onOpen: ({ reconnected, hadCursor }) => {
           connection.markStreamConnected()
           if (reconnected && !hadCursor) {
-            void queryClient.invalidateQueries()
+            invalidateOnReconnect(queryClient)
           }
         },
         onHeartbeat: () => {

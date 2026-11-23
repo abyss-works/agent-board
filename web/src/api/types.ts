@@ -232,13 +232,6 @@ export interface Session {
   children?: Session[]
 }
 
-export interface SessionListResponse {
-  items: Session[]
-  total: number
-  limit: number
-  offset: number
-}
-
 /** CLI가 만든 기기 승인 요청. 사용자가 코드를 확인하고 승인하거나 거부한다. 서버 메모리에만 있고 600초 뒤 만료한다. */
 export interface DeviceAuthorization {
   /** `XXXX-XXXX` */

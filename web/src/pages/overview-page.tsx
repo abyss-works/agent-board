@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, ArrowRightIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon, ShieldAlertIcon } from 'lucide-react'
+import { ArrowRightIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon, ShieldAlertIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useAgenda, useOverview, useProjects } from '@/api/queries'
@@ -10,12 +10,12 @@ import { IssueLink } from '@/components/issue/issue-link'
 import { IssueRow } from '@/components/issue/issue-row'
 import { ActorChip, IssueKey, PriorityIcon, StatusIcon, TypeIcon } from '@/components/issue/meta'
 import { PageHeader } from '@/components/layout/page-header'
-import { WaitingStateBadge } from '@/components/session/session-meta'
+import { LocationConflictBadge, WaitingStateBadge } from '@/components/session/session-meta'
 import { Badge } from '@/components/ui/badge'
 import { useFlash } from '@/hooks/use-flash'
 import { unverifiedListPath } from '@/lib/verification'
 import { PRIORITY_LABEL, PROJECT_STATUS_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
-import { sessionDetailPath, sessionKey, sessionRefLabel } from '@/lib/session-tree'
+import { sessionDetailPath, sessionKey } from '@/lib/session-tree'
 import { formatKst, formatKstTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -84,20 +84,20 @@ function Section({
   children,
 }: {
   title: string
-  total: number
+  total?: number
   to?: string
   icon?: ReactNode
   accent?: keyof typeof ACCENT
   extra?: ReactNode
   children: ReactNode
 }) {
-  const tone = accent && total > 0 ? ACCENT[accent] : null
+  const tone = accent && total !== undefined && total > 0 ? ACCENT[accent] : null
   return (
     <section className={cn('flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/40', tone?.section)}>
       <header className={cn('flex h-9 items-center gap-2 border-b px-3', tone?.header)}>
         {icon}
         <h3 className={cn('text-xs font-semibold', tone?.title)}>{title}</h3>
-        {tone ? (
+        {total === undefined ? null : tone ? (
           <Badge variant={tone.badge} className="tabular-nums">
             {total}
           </Badge>
@@ -121,8 +121,6 @@ const LIST_ROWS = 5
 const LIST_HEIGHT = `calc(${LIST_ROWS} * 2rem + ${LIST_ROWS - 1}px)`
 
 function DecisionWaitingSessionRow({ session }: { session: Session }) {
-  const conflicts = session.location_conflicts ?? []
-  const conflictTitle = conflicts.length > 0 ? conflicts.map(sessionRefLabel).join(', ') : undefined
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-2 py-1 text-xs transition-colors hover:bg-accent/40">
       <ActorChip actor={session.actor} className="shrink-0" />
@@ -130,12 +128,7 @@ function DecisionWaitingSessionRow({ session }: { session: Session }) {
         {session.session_id}
       </Link>
       {session.state ? <WaitingStateBadge state={session.state} /> : null}
-      {conflicts.length > 0 ? (
-        <Badge variant="destructive" title={conflictTitle}>
-          <AlertTriangleIcon className="size-3" />
-          위치 충돌 {conflicts.length}
-        </Badge>
-      ) : null}
+      <LocationConflictBadge conflicts={session.location_conflicts} />
       {session.state_reason ? (
         <span className="min-w-0 max-w-full truncate text-[0.6875rem] text-muted-foreground" title={session.state_reason}>
           {session.state_reason}
@@ -376,8 +369,12 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           </div>
         </Group>
         <Group title="내 차례">
-          {waitingTotal > 0 ? (
-            <Section title="대기 세션" total={waitingTotal} to="/sessions" icon={<HourglassIcon className="size-3.5 text-amber-400" />} accent="decision">
+          {agendaQ.isError ? (
+            <Section title="대기 세션" to="/sessions?status=waiting" icon={<HourglassIcon className="size-3.5 text-amber-400" />}>
+              <QueryError error={agendaQ.error} onRetry={() => void agendaQ.refetch()} className="m-3" />
+            </Section>
+          ) : waitingTotal > 0 ? (
+            <Section title="대기 세션" total={waitingTotal} to="/sessions?status=waiting" icon={<HourglassIcon className="size-3.5 text-amber-400" />} accent="decision">
               <WaitingSessionList items={waitingSessions} />
             </Section>
           ) : null}

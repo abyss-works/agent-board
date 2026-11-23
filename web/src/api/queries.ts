@@ -28,7 +28,6 @@ import type {
   ProjectPatch,
   QueueItem,
   Session,
-  SessionListResponse,
   Template,
   Topic,
   TopicCreate,
@@ -149,7 +148,7 @@ export function sessionsQueryKey(params?: SessionListParams) {
 /** 세션 목록 조회. 기본 갱신 정책을 상속한다. */
 export function useSessions(params?: SessionListParams, options?: { enabled?: boolean }) {
   const api = useApi()
-  return useQuery<SessionListResponse>({
+  return useQuery<Page<Session>>({
     queryKey: sessionsQueryKey(params),
     queryFn: ({ signal }) => api.listSessions(params, signal),
     placeholderData: keepPreviousData,
@@ -261,8 +260,11 @@ export function useActors() {
   })
 }
 
+/** 기기 승인 단건 조회 쿼리 키 앞부분. 재연결 일괄 무효화에서 제외할 때 쓴다. */
+export const DEVICE_AUTHORIZATION_KEY = [QUERY_ROOT, 'device-authorization'] as const
+
 function deviceAuthorizationKey(userCode: string | null) {
-  return [QUERY_ROOT, 'device-authorization', userCode]
+  return [...DEVICE_AUTHORIZATION_KEY, userCode] as const
 }
 
 /**

@@ -9,7 +9,7 @@ import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { IssueLink } from '@/components/issue/issue-link'
 import { ActorChip, IssueKey } from '@/components/issue/meta'
 import { PageHeader } from '@/components/layout/page-header'
-import { SessionRoleBadge, SessionStatusBadge, WaitingStateBadge } from '@/components/session/session-meta'
+import { SessionRoleBadge, SessionStatusBadge, LocationConflictBadge, WaitingStateBadge } from '@/components/session/session-meta'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +19,7 @@ import {
   sessionKey,
   sessionListParamsFor,
   sessionRefLabel,
+  sessionSummaryEnabled,
   summarizeSessions,
   type HostSessionGroup,
   type SessionStatusFilter,
@@ -103,8 +104,8 @@ function SessionNodeItem({
   const key = sessionKey(s)
   const selected = key === selectedKey
   const isWaiting = s.state !== null
-  const hasConflict = s.location_conflicts.length > 0
-  const conflictTitle = hasConflict ? s.location_conflicts.map(sessionRefLabel).join(', ') : undefined
+  const conflicts = s.location_conflicts ?? []
+  const hasConflict = conflicts.length > 0
 
   return (
     <li className="list-none">
@@ -127,37 +128,32 @@ function SessionNodeItem({
           aria-pressed={selected}
           className="min-w-0 flex-1 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
         >
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <ActorChip actor={s.actor} />
             <span className="font-mono text-xs text-foreground/90 break-all">{s.session_id}</span>
             {!s.named ? <Badge variant="outline">기본 ID</Badge> : null}
             {s.role ? <SessionRoleBadge role={s.role} /> : null}
             <SessionStatusBadge session={s} />
-            {hasConflict ? (
-              <Badge variant="destructive" title={conflictTitle}>
-                <AlertTriangleIcon className="size-3" />
-                위치 충돌 {s.location_conflicts.length}
-              </Badge>
-            ) : null}
+            <LocationConflictBadge conflicts={conflicts} />
             {node.crossHost ? (
               <Badge variant="info" title={`부모와 다른 호스트: ${s.last_host}`}>
                 <ServerIcon className="size-3" />
                 {s.last_host || '알 수 없음'}
               </Badge>
             ) : null}
-          </div>
+          </span>
           {isWaiting && s.state_reason ? (
-            <p className="mt-1 truncate text-xs text-amber-200/90" title={s.state_reason}>
+            <span className="mt-1 block truncate text-xs text-amber-200/90" title={s.state_reason}>
               {s.state_reason}
-            </p>
+            </span>
           ) : null}
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.6875rem] text-muted-foreground">
+          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.6875rem] text-muted-foreground">
             {s.last_project ? <span className="font-mono text-foreground/70">{s.last_project}</span> : null}
             <LocationSummary location={s.location} />
             <time dateTime={s.last_seen_at} title={`${formatKst(s.last_seen_at)} KST`} className="ml-auto font-mono tabular-nums">
               {formatKst(s.last_seen_at)}
             </time>
-          </div>
+          </span>
         </button>
         {s.issue ? (
           <IssueLink
@@ -409,7 +405,7 @@ export function SessionDetailBody({ session, onSelect }: { session: Session; onS
       </div>
 
       {session.location ? (
-        <SessionLocationDetails location={session.location} conflicts={session.location_conflicts} onSelect={onSelect} />
+        <SessionLocationDetails location={session.location} conflicts={session.location_conflicts ?? []} onSelect={onSelect} />
       ) : null}
 
       <div className="space-y-1.5">
@@ -431,6 +427,7 @@ export function SessionDetailBody({ session, onSelect }: { session: Session; onS
                   <ActorChip actor={child.actor} />
                   <span className="font-mono text-[0.75rem] break-all">{child.session_id}</span>
                   {child.role ? <SessionRoleBadge role={child.role} /> : null}
+                  <LocationConflictBadge conflicts={child.location_conflicts} />
                   <SessionStatusBadge session={child} className="ml-auto" />
                 </button>
               </li>
@@ -439,7 +436,7 @@ export function SessionDetailBody({ session, onSelect }: { session: Session; onS
         )}
       </div>
 
-      <SessionActivityTimeline selected={{ actor: session.actor, session_id: session.session_id }} />
+      <SessionActivityTimeline key={sessionKey(session)} selected={{ actor: session.actor, session_id: session.session_id }} />
     </div>
   )
 }
@@ -519,19 +516,29 @@ export function SessionsPage() {
   })
   const sessionsQuery = useSessions(listParams)
 
-  const summaryBase = { project: effectiveProject, named: namedOnly ? true : undefined, limit: 1 } as const
-  const allCountQuery = useSessions(summaryBase, { enabled: statusFilter !== 'all' })
-  const activeCountQuery = useSessions({ ...summaryBase, active: true }, { enabled: statusFilter !== 'active' })
-  const waitingCountQuery = useSessions({ ...summaryBase, waiting: true }, { enabled: statusFilter !== 'waiting' })
-
   const items = sessionsQuery.data?.items
   const listTotal = sessionsQuery.data?.total
-  const completeAllLoaded = statusFilter === 'all' && items !== undefined && listTotal !== undefined && listTotal === items.length
+  const completeAllLoaded =
+    statusFilter === 'all' &&
+    !sessionsQuery.isPlaceholderData &&
+    items !== undefined &&
+    listTotal !== undefined &&
+    listTotal === items.length
   const fallbackSummary = useMemo(() => (completeAllLoaded ? summarizeSessions(items) : null), [completeAllLoaded, items])
+  const summaryEnabled = sessionSummaryEnabled({
+    status: statusFilter,
+    completeAllLoaded,
+    listPending: sessionsQuery.isPending,
+  })
+
+  const summaryBase = { project: effectiveProject, named: namedOnly ? true : undefined, limit: 1 } as const
+  const allCountQuery = useSessions(summaryBase, { enabled: summaryEnabled.all })
+  const activeCountQuery = useSessions({ ...summaryBase, active: true }, { enabled: summaryEnabled.active })
+  const waitingCountQuery = useSessions({ ...summaryBase, waiting: true }, { enabled: summaryEnabled.waiting })
 
   const totalCount = statusFilter === 'all' ? listTotal : allCountQuery.data?.total
-  const activeCount = statusFilter === 'active' ? listTotal : (activeCountQuery.data?.total ?? fallbackSummary?.active)
-  const waitingCount = statusFilter === 'waiting' ? listTotal : (waitingCountQuery.data?.total ?? fallbackSummary?.waiting)
+  const activeCount = statusFilter === 'active' ? listTotal : (fallbackSummary?.active ?? activeCountQuery.data?.total)
+  const waitingCount = statusFilter === 'waiting' ? listTotal : (fallbackSummary?.waiting ?? waitingCountQuery.data?.total)
   const staleCount =
     statusFilter === 'stale'
       ? listTotal

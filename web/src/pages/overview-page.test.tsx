@@ -2,17 +2,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
-import { ApiClient } from '@/api/client'
+import { ApiClient, ServerUnavailableError } from '@/api/client'
 import { QUERY_ROOT, agendaQueryKey } from '@/api/queries'
 import { decisionItem, issueSummary, sessionFixture } from '@/api/test-fixtures'
-import type { Agenda, DecisionItem, DoingItem, IssueSummary, Overview, Section, Session } from '@/api/types'
+import type { Agenda, DecisionItem, DoingItem, IssueSummary, Overview, Section, Session, SessionRef } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
 import { OverviewPage } from './overview-page'
 
 const state: AppState = {
   token: 'token',
   actor: 'owner',
-  project: 'AGB',
+  project: 'APP',
   sessionId: 'session',
   authNotice: null,
   login: () => {},
@@ -32,7 +32,7 @@ function section<T>(items: T[]): Section<T> {
 
 function overview(partial: Partial<Overview> = {}): Overview {
   return {
-    project: { key: 'AGB', name: 'agent-board', status: 'active', created_at: '2026-10-17T00:00:00.000Z', updated_at: '2026-10-17T00:00:00.000Z', created_by: 'owner', updated_by: 'owner' },
+    project: { key: 'APP', name: 'sample-app', status: 'active', created_at: '2026-10-17T00:00:00.000Z', updated_at: '2026-10-17T00:00:00.000Z', created_by: 'owner', updated_by: 'owner' },
     generated_at: '2026-10-17T07:10:21.000Z',
     counts: {
       total: 0,
@@ -81,9 +81,9 @@ function agendaOf(o: Overview, waitingSessions: Section<Session>): Agenda {
 
 function render(o: Overview, waitingSessions?: Section<Session>): string {
   const client = new QueryClient()
-  client.setQueryData([QUERY_ROOT, 'overview', 'AGB'], o)
+  client.setQueryData([QUERY_ROOT, 'overview', 'APP'], o)
   if (waitingSessions !== undefined) {
-    client.setQueryData(agendaQueryKey('AGB'), agendaOf(o, waitingSessions))
+    client.setQueryData(agendaQueryKey('APP'), agendaOf(o, waitingSessions))
   }
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -105,18 +105,18 @@ function sectionOf(html: string, title: string): string {
   return found.split('</section>')[0]
 }
 
-const asked = decisionItem({ key: 'AGB-7', number: 7, title: '캐시 도입', decision_needed: 'Redis를 쓸지 정해 주세요' })
+const asked = decisionItem({ key: 'APP-7', project: 'APP', number: 7, title: '캐시 도입', decision_needed: 'Redis를 쓸지 정해 주세요' })
 function held(summary: IssueSummary, actor: string, lastActiveAt: string, stale: boolean): DoingItem {
   return { ...summary, holder: { actor, session_id: `${actor}-s`, last_active_at: lastActiveAt, stale } }
 }
 
-const working = held(issueSummary({ key: 'AGB-8', number: 8, title: '검색 개선', status: 'doing' }), 'claude', '2026-10-17T07:00:00.000Z', false)
+const working = held(issueSummary({ key: 'APP-8', project: 'APP', number: 8, title: '검색 개선', status: 'doing' }), 'claude', '2026-10-17T07:00:00.000Z', false)
 
 describe('현황의 결정 필요', () => {
   const html = render(overview({ decisions: section([asked]), doing: section([working]) }))
 
   it('칸과 요약 카드의 이름이 결정 필요다', () => {
-    expect(sectionOf(html, '결정 필요')).toContain('AGB-7')
+    expect(sectionOf(html, '결정 필요')).toContain('APP-7')
     expect(html).toContain('>결정 필요</div>')
     expect(html).not.toContain('결정 대기')
   })
@@ -134,23 +134,74 @@ describe('현황의 결정 필요', () => {
   it('결정을 기다리는 이슈가 없으면 비어 있다고 보인다', () => {
     const empty = sectionOf(render(overview()), '결정 필요')
     expect(empty).toContain('없음')
-    expect(empty).not.toContain('AGB-')
+    expect(empty).not.toContain('APP-')
   })
   it('대기 세션이 없는 결정 항목은 세션 링크나 충돌 배지 없이 깔끔히 그린다', () => {
     const decisions = sectionOf(html, '결정 필요')
     expect(decisions).not.toContain('/sessions?')
     expect(decisions).not.toContain('위치 충돌')
   })
+  it('waiting_sessions나 location_conflicts가 null 또는 누락이어도 예외 없이 그린다', () => {
+    const nullWaiting = decisionItem({
+      key: 'APP-7',
+      project: 'APP',
+      number: 7,
+      title: '캐시 도입',
+      decision_needed: 'Redis를 쓸지 정해 주세요',
+      waiting_sessions: null as unknown as Session[],
+    })
+    const undefinedWaiting = decisionItem({
+      key: 'APP-8',
+      project: 'APP',
+      number: 8,
+      title: '검색 개선',
+      decision_needed: '색인 방식 선택',
+    })
+    delete (undefinedWaiting as unknown as Record<string, unknown>).waiting_sessions
+
+    const nullConflictSession = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-null-conflicts',
+      issue: 'APP-9',
+      state: 'waiting_input',
+      location_conflicts: null as unknown as SessionRef[],
+    })
+    const missingConflictSession = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'sess-missing-conflicts',
+      issue: 'APP-9',
+      state: 'waiting_external',
+    })
+    delete (missingConflictSession as unknown as Record<string, unknown>).location_conflicts
+
+    const withSession = decisionItem({
+      key: 'APP-9',
+      project: 'APP',
+      number: 9,
+      title: '배포 방식',
+      decision_needed: '카나리 적용 여부',
+      waiting_sessions: [nullConflictSession, missingConflictSession],
+    })
+
+    const decisions = sectionOf(render(overview({ decisions: section([nullWaiting, undefinedWaiting, withSession]) })), '결정 필요')
+    expect(decisions).toContain('APP-7')
+    expect(decisions).toContain('APP-8')
+    expect(decisions).toContain('APP-9')
+    expect(decisions).toContain('sess-null-conflicts')
+    expect(decisions).toContain('sess-missing-conflicts')
+    expect(decisions).not.toContain('위치 충돌')
+  })
   it('연결된 대기 세션이 1건이면 이슈 링크 밖에 세션 링크, 행위자, 대기 상태, 사유를 그린다', () => {
     const waiting = sessionFixture({
       actor: 'agent-a',
       session_id: 'sess-decide-1',
-      issue: 'AGB-7',
+      issue: 'APP-7',
       state: 'waiting_approval',
       state_reason: 'Redis 클러스터 구성 승인을 기다립니다',
     })
     const item = decisionItem({
-      key: 'AGB-7',
+      key: 'APP-7',
+      project: 'APP',
       number: 7,
       title: '캐시 도입',
       decision_needed: 'Redis를 쓸지 정해 주세요',
@@ -164,7 +215,7 @@ describe('현황의 결정 필요', () => {
     expect(decisions).toContain('Redis 클러스터 구성 승인을 기다립니다')
     expect(decisions).toContain('href="/sessions?actor=agent-a&amp;session=sess-decide-1"')
 
-    const issueLinkStart = decisions.indexOf('href="/issues/AGB-7"')
+    const issueLinkStart = decisions.indexOf('href="/issues/APP-7"')
     const issueLinkEnd = decisions.indexOf('</a>', issueLinkStart)
     const sessionLinkStart = decisions.indexOf('href="/sessions?actor=agent-a&amp;session=sess-decide-1"')
     expect(issueLinkStart).toBeGreaterThanOrEqual(0)
@@ -177,7 +228,7 @@ describe('현황의 결정 필요', () => {
     const first = sessionFixture({
       actor: 'agent-a',
       session_id: 'sess-first',
-      issue: 'AGB-7',
+      issue: 'APP-7',
       state: 'waiting_input',
       state_reason: '직렬화 형식 선택 필요',
       location_conflicts: [{ actor: 'agent-c', session_id: 'sess-other' }],
@@ -185,7 +236,7 @@ describe('현황의 결정 필요', () => {
     const second = sessionFixture({
       actor: 'agent-b',
       session_id: 'sess-second',
-      issue: 'AGB-7',
+      issue: 'APP-7',
       state: 'waiting_external',
       state_reason: null,
       location_conflicts: [],
@@ -193,12 +244,13 @@ describe('현황의 결정 필요', () => {
     const third = sessionFixture({
       actor: 'agent-c',
       session_id: 'sess-third',
-      issue: 'AGB-7',
+      issue: 'APP-7',
       state: null,
       state_reason: null,
     })
     const item = decisionItem({
-      key: 'AGB-7',
+      key: 'APP-7',
+      project: 'APP',
       number: 7,
       title: '캐시 도입',
       decision_needed: 'Redis를 쓸지 정해 주세요',
@@ -228,8 +280,8 @@ describe('현황의 다음 할 일', () => {
 })
 
 describe('현황의 진행 중', () => {
-  const quiet = held(issueSummary({ key: 'AGB-9', number: 9, title: '오래된 작업', status: 'doing' }), 'codex', '2026-10-17T03:00:00.000Z', true)
-  const second = held(issueSummary({ key: 'AGB-10', number: 10, title: '두 번째 작업', status: 'doing' }), 'claude', '2026-10-17T07:00:00.000Z', false)
+  const quiet = held(issueSummary({ key: 'APP-9', project: 'APP', number: 9, title: '오래된 작업', status: 'doing' }), 'codex', '2026-10-17T03:00:00.000Z', true)
+  const second = held(issueSummary({ key: 'APP-10', project: 'APP', number: 10, title: '두 번째 작업', status: 'doing' }), 'claude', '2026-10-17T07:00:00.000Z', false)
   const doing = sectionOf(render(overview({ doing: section([working, quiet, second]) })), '진행 중')
 
   it('점유한 행위자별로 묶고 마지막 활동 시각을 보인다', () => {
@@ -279,13 +331,40 @@ describe('현황의 대기 세션', () => {
     expect(card).toContain('배포 승인이 필요합니다')
     expect(card).toContain('href="/issues/APP-15"')
     expect(card.indexOf('sess-wait-earlier')).toBeLessThan(card.indexOf('sess-wait-later'))
-    expect(card).toContain('href="/sessions"')
+    expect(card).toContain('href="/sessions?status=waiting"')
     expect(card).toContain('href="/sessions?actor=agent-a&amp;session=sess-wait-earlier"')
   })
 
   it('대기 세션이 0건이면 대기 세션 카드를 보이지 않는다', () => {
     const html = render(overview(), section([]))
     expect(html).not.toContain('>대기 세션</h3>')
+  })
+
+  it('대기 세션 조회가 실패하면 0건으로 숨기지 않고 오류 안내를 보인다', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } })
+    client.setQueryData([QUERY_ROOT, 'overview', 'APP'], overview())
+    await client
+      .fetchQuery({
+        queryKey: agendaQueryKey('APP'),
+        queryFn: () => Promise.reject(new ServerUnavailableError(503)),
+        retry: false,
+      })
+      .catch(() => {})
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <AppStateContext.Provider value={state}>
+          <ApiContext.Provider value={api}>
+            <MemoryRouter>
+              <OverviewPage />
+            </MemoryRouter>
+          </ApiContext.Provider>
+        </AppStateContext.Provider>
+      </QueryClientProvider>,
+    )
+    const card = sectionOf(html, '대기 세션')
+    expect(card).toContain('서버가 꺼져 있습니다')
+    expect(card).toContain('다시 시도')
+    expect(card).toContain('href="/sessions?status=waiting"')
   })
 })
 

@@ -1,6 +1,6 @@
 import { MutationCache, QueryCache, QueryClient, notifyManager } from '@tanstack/react-query'
 import { isActorRejected, isApiError, isUnauthorized } from '@/api/client'
-import { QUERY_ROOT } from '@/api/queries'
+import { DEVICE_AUTHORIZATION_KEY, QUERY_ROOT } from '@/api/queries'
 import type { AppStorage } from '@/lib/storage'
 import { connection } from './connection'
 import { FALLBACK_POLL_MS } from './state'
@@ -65,10 +65,12 @@ export function createQueryClient({ storage, onUnauthorized, onActorCleared }: H
     })
 
   let unsubscribeConnection: (() => void) | null = subscribeConnection()
+  let mountCount = 0
   const baseMount = client.mount.bind(client)
   const baseUnmount = client.unmount.bind(client)
 
   client.mount = () => {
+    mountCount += 1
     baseMount()
     if (!unsubscribeConnection) {
       const nextStream = connection.getSnapshot().stream
@@ -80,8 +82,11 @@ export function createQueryClient({ storage, onUnauthorized, onActorCleared }: H
   }
 
   client.unmount = () => {
-    unsubscribeConnection?.()
-    unsubscribeConnection = null
+    if (mountCount > 0) mountCount -= 1
+    if (mountCount === 0) {
+      unsubscribeConnection?.()
+      unsubscribeConnection = null
+    }
     baseUnmount()
   }
 
@@ -91,4 +96,12 @@ export function createQueryClient({ storage, onUnauthorized, onActorCleared }: H
 /** 행위자가 정해지면 이전 행위자로 받은 캐시를 새 행위자의 클라이언트로 다시 받는다. */
 export function refreshForActor(client: QueryClient, actor: string | null): void {
   if (actor) void client.invalidateQueries()
+}
+
+/** 커서 없는 재연결 시 기기 승인 단건 조회(`refetchOnReconnect: false`)를 빼고 캐시를 무효화한다. */
+export function invalidateOnReconnect(client: QueryClient): void {
+  void client.invalidateQueries({
+    predicate: (query) =>
+      !(query.queryKey[0] === DEVICE_AUTHORIZATION_KEY[0] && query.queryKey[1] === DEVICE_AUTHORIZATION_KEY[1]),
+  })
 }

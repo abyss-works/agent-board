@@ -6,8 +6,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiClient, type SessionListParams } from '@/api/client'
 import { activityQueryKey, sessionQueryKey, sessionsQueryKey } from '@/api/queries'
 import { activityFixture, sessionFixture } from '@/api/test-fixtures'
-import type { Activity, Page, Session, SessionListResponse, SessionRef } from '@/api/types'
+import type { Activity, Page, Session, SessionRef } from '@/api/types'
 import { ApiContext, AppStateContext, type AppState } from '@/app/state'
+import { sessionKey } from '@/lib/session-tree'
 import { SessionDetailBody, SessionLocationDetails, SessionsPage } from './sessions-page'
 
 const defaultState: AppState = {
@@ -27,7 +28,7 @@ const api = new ApiClient({ baseUrl: '', token: 'token', actor: 'owner', session
   throw new Error('세션 화면이 요청을 보냈습니다.')
 })
 
-function listResponse(items: Session[], total = items.length): SessionListResponse {
+function listResponse(items: Session[], total = items.length): Page<Session> {
   return { items, total, limit: 200, offset: 0 }
 }
 
@@ -212,13 +213,16 @@ describe('세션 관제 화면', () => {
 
     const html = renderSessions({ sessions: [approval, input, external] })
     expect(html).toContain('승인 대기')
+    expect(html).toContain('border-rose-500/40 bg-rose-500/15 text-rose-300')
     expect(html).toContain('운영 배포 승인을 기다립니다')
     expect(html).toContain('입력 대기')
+    expect(html).toContain('border-amber-500/40 bg-amber-500/15 text-amber-300')
     expect(html).toContain('캐시 백엔드 선택이 필요합니다')
     expect(html).toContain('외부 대기')
     expect(html).toContain('외부 빌드 완료를 기다립니다')
     expect(html).toContain('기본 ID')
     expect(html).toContain('대기 3')
+    expect(html).not.toMatch(/<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<(?:div|p)\b/)
   })
 
   it('선택된 세션의 상세 정보, 부모·자식 세션, 작업 위치, 활동 타임라인을 표시한다', () => {
@@ -502,5 +506,68 @@ describe('세션 관제 화면', () => {
     expect(html).not.toContain('충돌 ')
     expect(html).not.toContain('border-rose-500/35')
     expect(html).not.toContain('role="alert"')
+  })
+
+  it('SessionDetailBody는 활동 타임라인에 sessionKey를 key로 부여해 세션 전환 시 이전 타임라인 잔상을 막는다', () => {
+    const selected = sessionFixture({ actor: 'agent-a', session_id: 'sess-alpha' })
+    const tree = SessionDetailBody({ session: selected, onSelect: () => {} })
+    const timelines = findReactElements(tree, (el) => typeof el.type === 'function' && el.type.name === 'SessionActivityTimeline')
+    expect(timelines).toHaveLength(1)
+    expect(timelines[0].key).toBe(sessionKey(selected))
+  })
+
+  it('전체 목록을 모두 불러온 경우 캐시된 요약 쿼리가 남아 있어도 목록 집계 기준으로 요약을 표시한다', () => {
+    const s1 = sessionFixture({ session_id: 'all-1', stale: false, state: 'waiting_input' })
+    const s2 = sessionFixture({ session_id: 'all-2', stale: true, state: null })
+    const html = renderSessions({
+      sessions: [s1, s2],
+      total: 2,
+      summaryTotals: { active: 99, waiting: 99 },
+      initialEntry: '/sessions',
+    })
+    expect(summaryValueOf(html, '전체')).toBe('2')
+    expect(summaryValueOf(html, '활성')).toBe('1')
+    expect(summaryValueOf(html, '대기 중')).toBe('1')
+    expect(summaryValueOf(html, '멈춤')).toBe('1')
+  })
+
+  it('location_conflicts가 누락되거나 null이어도 예외 없이 그리고, 자식 세션 충돌 배지를 상세 목록에 표시한다', () => {
+    const missingConflicts = { ...sessionFixture({ actor: 'agent-a', session_id: 'sess-missing' }) } as Record<string, unknown>
+    delete missingConflicts.location_conflicts
+
+    const childWithConflict = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'sess-child-conflict',
+      role: 'subagent',
+      parent: { actor: 'agent-a', session_id: 'sess-parent' },
+      location_conflicts: [{ actor: 'agent-c', session_id: 'sess-other' }],
+    })
+    const parentNullConflicts = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'sess-parent',
+      last_host: 'host-a',
+      location: {
+        repo_remote: 'https://example.com/org/app.git',
+        branch: 'feat/main',
+        worktree: '/work/main',
+        head: 'abc1234',
+        dirty_count: 0,
+        reported_at: '2026-10-17T07:00:00.000Z',
+      },
+      location_conflicts: null as unknown as SessionRef[],
+      children: [childWithConflict],
+    })
+
+    const html = renderSessions({
+      sessions: [missingConflicts as unknown as Session, parentNullConflicts, childWithConflict],
+      detailSession: parentNullConflicts,
+      activities: [],
+      initialEntry: '/sessions?actor=agent-a&session=sess-parent',
+    })
+    const detailHtml = html.slice(html.indexOf('aria-label="세션 상세"'))
+    expect(detailHtml).toContain('sess-child-conflict')
+    expect(detailHtml).toContain('위치 충돌 1')
+    expect(detailHtml).toContain('title="agent-c/sess-other"')
+    expect(detailHtml).not.toContain('role="alert"')
   })
 })

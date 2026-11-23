@@ -1,5 +1,5 @@
 import { userActorIds } from '@/lib/actors'
-import type { Actor, Agenda, ErrorDetail, EventListResponse, Issue, Session, SessionListResponse, VerificationState } from './types'
+import type { Actor, Agenda, ErrorDetail, EventListResponse, Issue, Page, Session, VerificationState } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
@@ -238,8 +238,8 @@ export class ApiClient {
     return this.delete<Issue>(`/issues/${key}/verify`, version !== undefined ? { ifMatch: version } : {})
   }
 
-  listSessions(params?: SessionListParams, signal?: AbortSignal): Promise<SessionListResponse> {
-    return this.get<SessionListResponse>('/sessions', params ? { ...params } : undefined, signal)
+  listSessions(params?: SessionListParams, signal?: AbortSignal): Promise<Page<Session>> {
+    return this.get<Page<Session>>('/sessions', params ? { ...params } : undefined, signal)
   }
 
   getSession(actor: string, sessionId: string, signal?: AbortSignal): Promise<Session> {

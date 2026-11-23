@@ -12,7 +12,7 @@ export interface VerificationBannerProps {
   requesting: boolean
   pending?: boolean
   onCancelRequest: () => void
-  onRequestPending: (note: string) => void
+  onRequestPending: (note: string, options?: { onSuccess?: () => void }) => void
   onVerify: () => void
   onUnverify: () => void
   onClear: () => void
@@ -39,6 +39,16 @@ export function VerificationBanner({
   const [draftNote, setDraftNote] = useState('')
   const [editingNote, setEditingNote] = useState(false)
   const [noteInput, setNoteInput] = useState(issue.verification_note ?? '')
+  const requestOpen = issue.verification_state === 'none' && requesting
+  const [prevRequestOpen, setPrevRequestOpen] = useState(requestOpen)
+  if (requestOpen !== prevRequestOpen) {
+    setPrevRequestOpen(requestOpen)
+    if (!requestOpen) setDraftNote('')
+  }
+
+  const submitRequest = () => {
+    onRequestPending(draftNote, { onSuccess: () => setDraftNote('') })
+  }
 
   if (issue.verification_state === 'none') {
     if (!requesting) return null
@@ -59,8 +69,7 @@ export function VerificationBanner({
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
-              onRequestPending(draftNote)
-              setDraftNote('')
+              submitRequest()
             } else if (e.key === 'Escape') {
               setDraftNote('')
               onCancelRequest()
@@ -82,10 +91,7 @@ export function VerificationBanner({
           <Button
             size="xs"
             disabled={pending}
-            onClick={() => {
-              onRequestPending(draftNote)
-              setDraftNote('')
-            }}
+            onClick={submitRequest}
           >
             검증 필요로 지정
           </Button>

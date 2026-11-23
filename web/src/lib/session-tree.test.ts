@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { Session } from '@/api/types'
 import { sessionFixture } from '@/api/test-fixtures'
 import {
   buildHostSessionTrees,
-  filterSessionsByStatus,
   parseSessionStatusFilter,
   sessionDetailPath,
   sessionListParamsFor,
+  sessionSummaryEnabled,
   summarizeSessions,
 } from './session-tree'
 
@@ -88,6 +89,79 @@ describe('buildHostSessionTrees', () => {
     expect(rootIds).toEqual(['cyc-a', 'cyc-b', 'self'])
     const nodeB = groups[0].roots.find((r) => r.session.session_id === 'cyc-b')!
     expect(nodeB.children.map((c) => c.session.session_id)).toEqual(['tail-under-b'])
+  })
+
+  it('3단계 순환(A-B-C-A)을 모두 루트로 승격하고 순환으로 진입하는 자식은 유지한다', () => {
+    const a = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'cyc-3-a',
+      last_host: 'host-a',
+      parent: { actor: 'agent-a', session_id: 'cyc-3-c' },
+    })
+    const b = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'cyc-3-b',
+      last_host: 'host-a',
+      parent: { actor: 'agent-a', session_id: 'cyc-3-a' },
+    })
+    const c = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'cyc-3-c',
+      last_host: 'host-a',
+      parent: { actor: 'agent-a', session_id: 'cyc-3-b' },
+    })
+    const leaf = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'leaf-under-c',
+      last_host: 'host-a',
+      parent: { actor: 'agent-a', session_id: 'cyc-3-c' },
+    })
+
+    const groups = buildHostSessionTrees([a, b, c, leaf])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].totalCount).toBe(4)
+    expect(groups[0].roots.map((r) => r.session.session_id).sort()).toEqual(['cyc-3-a', 'cyc-3-b', 'cyc-3-c'])
+    const nodeC = groups[0].roots.find((r) => r.session.session_id === 'cyc-3-c')!
+    expect(nodeC.children.map((child) => child.session.session_id)).toEqual(['leaf-under-c'])
+  })
+
+  it('서로 다른 actor가 같은 session_id를 가져도 충돌 없이 각자의 부모에 매칭한다', () => {
+    const aMain = sessionFixture({ actor: 'agent-a', session_id: 'shared', last_host: 'host-a', role: 'main' })
+    const bMain = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'shared',
+      last_host: 'host-a',
+      role: 'subagent',
+      parent: { actor: 'agent-a', session_id: 'shared' },
+    })
+    const aChild = sessionFixture({
+      actor: 'agent-a',
+      session_id: 'worker',
+      last_host: 'host-a',
+      role: 'runner',
+      parent: { actor: 'agent-a', session_id: 'shared' },
+    })
+    const bChild = sessionFixture({
+      actor: 'agent-b',
+      session_id: 'worker',
+      last_host: 'host-a',
+      role: 'runner',
+      parent: { actor: 'agent-b', session_id: 'shared' },
+    })
+
+    const groups = buildHostSessionTrees([bChild, aChild, bMain, aMain])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].totalCount).toBe(4)
+    expect(groups[0].roots).toHaveLength(1)
+    const root = groups[0].roots[0]
+    expect(root.session.actor).toBe('agent-a')
+    expect(root.session.session_id).toBe('shared')
+    expect(root.children.map((ch) => `${ch.session.actor}/${ch.session.session_id}`).sort()).toEqual([
+      'agent-a/worker',
+      'agent-b/shared',
+    ])
+    const bMainNode = root.children.find((ch) => ch.session.actor === 'agent-b')!
+    expect(bMainNode.children.map((ch) => `${ch.session.actor}/${ch.session.session_id}`)).toEqual(['agent-b/worker'])
   })
 
   it('부모와 다른 호스트의 자식은 부모 아래에 유지하고 crossHost를 표시한다', () => {
@@ -219,6 +293,20 @@ describe('buildHostSessionTrees', () => {
     expect(hostA.conflictCount).toBe(2)
     expect(hostC.conflictCount).toBe(0)
   })
+
+  it('location_conflicts가 없거나 null이어도 예외 없이 0으로 집계한다', () => {
+    const missing = { ...sessionFixture({ session_id: 'no-conflicts' }) } as Record<string, unknown>
+    delete missing.location_conflicts
+    const nulled = sessionFixture({
+      session_id: 'null-conflicts',
+      location_conflicts: null as unknown as Session['location_conflicts'],
+    })
+
+    const groups = buildHostSessionTrees([missing as unknown as Session, nulled])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].totalCount).toBe(2)
+    expect(groups[0].conflictCount).toBe(0)
+  })
 })
 
 describe('세션 요약·필터·경로 유틸', () => {
@@ -230,12 +318,32 @@ describe('세션 요약·필터·경로 유틸', () => {
     expect(summarizeSessions([active, waiting, stale])).toEqual({ total: 3, active: 2, waiting: 1, stale: 1 })
   })
 
-  it('상태 필터별로 세션을 거른다', () => {
-    const list = [active, waiting, stale]
-    expect(filterSessionsByStatus(list, 'all').map((s) => s.session_id)).toEqual(['a', 'w', 's'])
-    expect(filterSessionsByStatus(list, 'active').map((s) => s.session_id)).toEqual(['a', 'w'])
-    expect(filterSessionsByStatus(list, 'waiting').map((s) => s.session_id)).toEqual(['w'])
-    expect(filterSessionsByStatus(list, 'stale').map((s) => s.session_id)).toEqual(['s'])
+  it('요약 쿼리 활성화 여부를 전체 로드·대기 상태에 맞게 계산한다', () => {
+    expect(sessionSummaryEnabled({ status: 'all', completeAllLoaded: true, listPending: false })).toEqual({
+      all: false,
+      active: false,
+      waiting: false,
+    })
+    expect(sessionSummaryEnabled({ status: 'all', completeAllLoaded: false, listPending: true })).toEqual({
+      all: false,
+      active: false,
+      waiting: false,
+    })
+    expect(sessionSummaryEnabled({ status: 'all', completeAllLoaded: false, listPending: false })).toEqual({
+      all: false,
+      active: true,
+      waiting: true,
+    })
+    expect(sessionSummaryEnabled({ status: 'waiting', completeAllLoaded: false, listPending: true })).toEqual({
+      all: true,
+      active: true,
+      waiting: false,
+    })
+    expect(sessionSummaryEnabled({ status: 'active', completeAllLoaded: false, listPending: false })).toEqual({
+      all: true,
+      active: false,
+      waiting: true,
+    })
   })
 
   it('잘못된 상태 필터 값은 all로 처리한다', () => {
