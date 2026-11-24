@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -795,6 +796,78 @@ func TestEnsureActors(t *testing.T) {
 	}
 	if kind != "user" {
 		t.Errorf("claude kind = %q, want user", kind)
+	}
+}
+
+func TestEnsureAgentActorAndListActors(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "agb.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.EnsureActors(ctx, []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "claude", Kind: model.ActorAgent},
+	}); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+
+	created, err := s.EnsureAgentActor(ctx, "devin")
+	if err != nil || !created {
+		s.Close()
+		t.Fatalf("first EnsureAgentActor(devin) = (%v, %v), want (true, nil)", created, err)
+	}
+	created, err = s.EnsureAgentActor(ctx, "devin")
+	if err != nil || created {
+		s.Close()
+		t.Fatalf("second EnsureAgentActor(devin) = (%v, %v), want (false, nil)", created, err)
+	}
+	created, err = s.EnsureAgentActor(ctx, "claude")
+	if err != nil || created {
+		s.Close()
+		t.Fatalf("EnsureAgentActor(claude) = (%v, %v), want (false, nil)", created, err)
+	}
+
+	for _, bad := range []string{"owner", "", "Bad_Actor"} {
+		created, err := s.EnsureAgentActor(ctx, bad)
+		var ve *model.ValidationError
+		if created || !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != "actor" {
+			s.Close()
+			t.Fatalf("EnsureAgentActor(%q) = (%v, %v), want (false, *model.ValidationError on actor)", bad, created, err)
+		}
+	}
+
+	actors, err := s.ListActors(ctx)
+	if err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	want := []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "claude", Kind: model.ActorAgent},
+		{ID: "devin", Kind: model.ActorAgent},
+	}
+	if !reflect.DeepEqual(actors, want) {
+		s.Close()
+		t.Fatalf("ListActors = %+v, want %+v", actors, want)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	persisted, err := reopened.ListActors(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(persisted, want) {
+		t.Fatalf("ListActors after reopen = %+v, want %+v", persisted, want)
 	}
 }
 

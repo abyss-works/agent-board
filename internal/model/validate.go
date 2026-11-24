@@ -272,12 +272,14 @@ func ValidateMilestone(name, description string, targetDate *string) error {
 }
 
 // ValidateDeviceRequest checks a request for a device authorization: the
-// actor must be a declared agent and the client host must follow the rule of
-// the X-Client-Host header.
+// actor must be a valid agent ID (declared agent or undeclared, never a user)
+// and the client host must follow the rule of the X-Client-Host header.
 func ValidateDeviceRequest(actor, clientHost string, actors map[string]Actor) error {
 	var e ValidationError
-	if a, ok := actors[actor]; !ok || a.Kind != ActorAgent {
-		e.add("actor", "선언된 agent 종류 행위자여야 합니다.")
+	if !ValidActorID(actor) {
+		e.add("actor", "행위자 ID는 영문 소문자와 숫자 1~32자여야 합니다.")
+	} else if a, ok := actors[actor]; ok && a.Kind == ActorUser {
+		e.add("actor", "user 종류 행위자는 기기 승인 로그인을 쓸 수 없습니다.")
 	}
 	if !ValidClientHost(clientHost) {
 		e.add("client_host", "X-Client-Host와 같은 규칙의 기기 이름(1~64자)이어야 합니다.")

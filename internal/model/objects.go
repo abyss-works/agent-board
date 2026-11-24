@@ -100,6 +100,7 @@ type DeviceAuthorization struct {
 	Actor      string       `json:"actor"`
 	ClientHost string       `json:"client_host"`
 	Status     DeviceStatus `json:"status"`
+	NewActor   bool         `json:"new_actor"`
 	CreatedAt  Time         `json:"created_at"`
 	ExpiresAt  Time         `json:"expires_at"`
 }

@@ -91,10 +91,15 @@ func TestValidateDeviceRequest(t *testing.T) {
 		want       []string // field of each violation, in order
 	}{
 		{"agent and host", "codex", "DESKTOP-RPLTFHM", nil},
+		{"undeclared agent and host", "devin", "desk", nil},
+		{"alphanumeric agent", "agent42", "desk", nil},
 		{"host with dots", "claude", "desk-win10.local", nil},
 		{"host of 64 characters", "claude", strings.Repeat("h", 62) + ".a", nil},
 		{"user actor", "owner", "desk", []string{"actor"}},
-		{"undeclared actor", "gemini", "desk", []string{"actor"}},
+		{"invalid actor format uppercase", "BadActor", "desk", []string{"actor"}},
+		{"invalid actor format hyphen", "bad-actor", "desk", []string{"actor"}},
+		{"invalid actor format underscore", "Bad_Actor", "desk", []string{"actor"}},
+		{"invalid actor format too long", strings.Repeat("a", 33), "desk", []string{"actor"}},
 		{"empty actor", "", "desk", []string{"actor"}},
 		{"empty host", "claude", "", []string{"client_host"}},
 		{"host with a space", "claude", "my host", []string{"client_host"}},
@@ -163,10 +168,16 @@ func TestDeviceAuthorizationJSON(t *testing.T) {
 	created, _ := ParseTime("2026-10-19T01:20:00.000Z")
 	expires, _ := ParseTime("2026-10-19T01:30:00.000Z")
 	d := DeviceAuthorization{UserCode: "BDFG-HJKL", Actor: "codex", ClientHost: "DESKTOP-RPLTFHM", Status: DevicePending, CreatedAt: created, ExpiresAt: expires}
-	want := `{"user_code":"BDFG-HJKL","actor":"codex","client_host":"DESKTOP-RPLTFHM","status":"pending",` +
+	want := `{"user_code":"BDFG-HJKL","actor":"codex","client_host":"DESKTOP-RPLTFHM","status":"pending","new_actor":false,` +
 		`"created_at":"2026-10-19T01:20:00.000Z","expires_at":"2026-10-19T01:30:00.000Z"}`
 	if got := string(mustJSON(t, d)); got != want {
 		t.Errorf("device authorization JSON =\n%s\nwant\n%s", got, want)
+	}
+	d.NewActor = true
+	wantNew := `{"user_code":"BDFG-HJKL","actor":"codex","client_host":"DESKTOP-RPLTFHM","status":"pending","new_actor":true,` +
+		`"created_at":"2026-10-19T01:20:00.000Z","expires_at":"2026-10-19T01:30:00.000Z"}`
+	if got := string(mustJSON(t, d)); got != wantNew {
+		t.Errorf("device authorization (new_actor) JSON =\n%s\nwant\n%s", got, wantNew)
 	}
 
 	g := DeviceGrant{DeviceCode: "dev", UserCode: "BDFG-HJKL", ExpiresIn: DeviceExpiresIn, Interval: DeviceInterval}
