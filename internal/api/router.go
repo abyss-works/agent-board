@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	crand "crypto/rand"
 	"io"
 	"io/fs"
@@ -50,13 +51,15 @@ type Options struct {
 }
 
 type handler struct {
-	opts    Options
-	actors  map[string]model.Actor
-	store   *store.Store
-	devices *deviceStore
-	stats   *statsCollector
-	broker  *eventBroker
-	started time.Time
+	opts       Options
+	actorsMu   sync.RWMutex
+	actors     map[string]model.Actor
+	actorOrder []model.Actor
+	store      *store.Store
+	devices    *deviceStore
+	stats      *statsCollector
+	broker     *eventBroker
+	started    time.Time
 
 	// seen holds, per actor and session ID, when this process last wrote the
 	// call of that session.
@@ -89,6 +92,9 @@ func New(o Options) http.Handler {
 		h.store.SetEventHook(h.broker.Notify)
 	}
 	for _, a := range o.Actors {
+		if _, exists := h.actors[a.ID]; !exists {
+			h.actorOrder = append(h.actorOrder, a)
+		}
 		h.actors[a.ID] = a
 	}
 	if h.opts.Logger == nil {
@@ -130,7 +136,7 @@ func New(o Options) http.Handler {
 	route(root, "/v1/health", methods{"GET": h.health})
 	// A request that passed authentication and the trace headers records the
 	// call of its session before the route handles it.
-	authenticated := h.auth(h.listActorsUnnamed(trace(h.actors, h.bind(h.touchSession(protected)))))
+	authenticated := h.auth(h.listActorsUnnamed(h.trace(h.bind(h.touchSession(protected)))))
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if startsLogin(r) {
 			protected.ServeHTTP(w, r)
@@ -212,10 +218,67 @@ func (h *handler) serverStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *handler) actor(id string) (model.Actor, bool) {
+	h.actorsMu.RLock()
+	defer h.actorsMu.RUnlock()
+	a, ok := h.actors[id]
+	return a, ok
+}
+
+func (h *handler) actorList() []model.Actor {
+	h.actorsMu.RLock()
+	defer h.actorsMu.RUnlock()
+	out := make([]model.Actor, len(h.actorOrder))
+	copy(out, h.actorOrder)
+	return out
+}
+
+func (h *handler) actorMap() map[string]model.Actor {
+	h.actorsMu.RLock()
+	defer h.actorsMu.RUnlock()
+	out := make(map[string]model.Actor, len(h.actors))
+	for k, v := range h.actors {
+		out[k] = v
+	}
+	return out
+}
+
+func (h *handler) registerAgentActor(ctx context.Context, id string) (bool, error) {
+	if h.store != nil {
+		created, err := h.store.EnsureAgentActor(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		h.actorsMu.Lock()
+		if _, exists := h.actors[id]; !exists {
+			a := model.Actor{ID: id, Kind: model.ActorAgent}
+			h.actors[id] = a
+			h.actorOrder = append(h.actorOrder, a)
+		}
+		h.actorsMu.Unlock()
+		return created, nil
+	}
+	h.actorsMu.Lock()
+	defer h.actorsMu.Unlock()
+	if a, exists := h.actors[id]; exists {
+		if a.Kind == model.ActorUser {
+			return false, &model.ValidationError{Fields: []model.FieldError{
+				{Field: "actor", Message: "user 종류 행위자는 기기 승인 로그인을 쓸 수 없습니다."},
+			}}
+		}
+		return false, nil
+	}
+	a := model.Actor{ID: id, Kind: model.ActorAgent}
+	h.actors[id] = a
+	h.actorOrder = append(h.actorOrder, a)
+	return true, nil
+}
+
 func (h *handler) listActors(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"items": h.opts.Actors})
+	writeJSON(w, 200, map[string]any{"items": h.actorList()})
 }
 
 func (h *handler) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, h.actors[TraceFrom(r.Context()).Actor])
+	a, _ := h.actor(TraceFrom(r.Context()).Actor)
+	writeJSON(w, 200, a)
 }

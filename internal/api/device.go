@@ -29,6 +29,8 @@ type deviceRequest struct {
 	actor      string
 	clientHost string
 	status     model.DeviceStatus
+	newActor   bool
+	approving  bool
 	approvedBy string
 	// approvedSession and approvedHost are the session and device of the approving request.
 	approvedSession, approvedHost string
@@ -39,6 +41,7 @@ type deviceRequest struct {
 func (d deviceRequest) view() model.DeviceAuthorization {
 	return model.DeviceAuthorization{
 		UserCode: d.userCode, Actor: d.actor, ClientHost: d.clientHost, Status: d.status,
+		NewActor:  d.newActor,
 		CreatedAt: model.NewTime(d.createdAt), ExpiresAt: model.NewTime(d.expiresAt),
 	}
 }
@@ -169,13 +172,57 @@ func (s *deviceStore) decide(userCode string, status model.DeviceStatus, by mode
 	if !ok {
 		return deviceRequest{}, errDeviceNotFound
 	}
-	if d.status != model.DevicePending {
+	if d.status != model.DevicePending || d.approving {
 		return deviceRequest{}, errDeviceNotPending
 	}
 	d.status = status
+	d.newActor = false
 	if status == model.DeviceApproved {
 		d.approvedBy, d.approvedSession, d.approvedHost = by.Actor, by.SessionID, by.ClientHost
 	}
+	return *d, nil
+}
+
+// reserveApprove marks a pending request as approving so concurrent PATCH calls
+// fail with errDeviceNotPending while actor persistence runs outside s.mu.
+func (s *deviceStore) reserveApprove(userCode string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweep(s.now())
+	d, ok := s.byUser[userCode]
+	if !ok {
+		return "", errDeviceNotFound
+	}
+	if d.status != model.DevicePending || d.approving {
+		return "", errDeviceNotPending
+	}
+	d.approving = true
+	return d.actor, nil
+}
+
+func (s *deviceStore) cancelApprove(userCode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.byUser[userCode]; ok {
+		d.approving = false
+	}
+}
+
+func (s *deviceStore) finishApprove(userCode string, by model.Trace, newActor bool) (deviceRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweep(s.now())
+	d, ok := s.byUser[userCode]
+	if !ok {
+		return deviceRequest{}, errDeviceNotFound
+	}
+	if d.status != model.DevicePending {
+		return deviceRequest{}, errDeviceNotPending
+	}
+	d.approving = false
+	d.status = model.DeviceApproved
+	d.newActor = newActor
+	d.approvedBy, d.approvedSession, d.approvedHost = by.Actor, by.SessionID, by.ClientHost
 	return *d, nil
 }
 
@@ -241,7 +288,7 @@ func (h *handler) createDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if err := model.ValidateDeviceRequest(actor, host, h.actors); err != nil {
+	if err := model.ValidateDeviceRequest(actor, host, h.actorMap()); err != nil {
 		writeError(w, h.storeError(r, err))
 		return
 	}
@@ -281,7 +328,12 @@ func (h *handler) getDeviceAuthorization(w http.ResponseWriter, r *http.Request)
 		writeError(w, h.deviceError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, d.view())
+	v := d.view()
+	if d.status == model.DevicePending {
+		_, exists := h.actor(d.actor)
+		v.NewActor = !exists
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (h *handler) patchDeviceAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +356,27 @@ func (h *handler) patchDeviceAuthorization(w http.ResponseWriter, r *http.Reques
 		writeError(w, validationFailed([]Detail{{Field: "status", Message: "approved, denied 중 하나여야 합니다."}}))
 		return
 	}
-	d, err := h.devices.decide(code, status, TraceFrom(r.Context()))
+	if status == model.DeviceDenied {
+		d, err := h.devices.decide(code, status, TraceFrom(r.Context()))
+		if err != nil {
+			writeError(w, h.deviceError(r, err))
+			return
+		}
+		writeJSON(w, http.StatusOK, d.view())
+		return
+	}
+	actor, err := h.devices.reserveApprove(code)
+	if err != nil {
+		writeError(w, h.deviceError(r, err))
+		return
+	}
+	created, err := h.registerAgentActor(r.Context(), actor)
+	if err != nil {
+		h.devices.cancelApprove(code)
+		writeError(w, h.storeError(r, err))
+		return
+	}
+	d, err := h.devices.finishApprove(code, TraceFrom(r.Context()), created)
 	if err != nil {
 		writeError(w, h.deviceError(r, err))
 		return

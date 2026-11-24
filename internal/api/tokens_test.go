@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -323,16 +324,18 @@ func TestCreateDeviceAuthorizationRules(t *testing.T) {
 		body   string
 		fields []string
 	}{
-		"user actor":        {`{"actor":"owner","client_host":"desk"}`, []string{"actor"}},
-		"undeclared actor":  {`{"actor":"gemini","client_host":"desk"}`, []string{"actor"}},
-		"empty actor":       {`{"actor":"","client_host":"desk"}`, []string{"actor"}},
-		"bad host":          {`{"actor":"claude","client_host":"my host"}`, []string{"client_host"}},
-		"empty host":        {`{"actor":"claude","client_host":""}`, []string{"client_host"}},
-		"long host":         {`{"actor":"claude","client_host":"` + strings.Repeat("h", 65) + `"}`, []string{"client_host"}},
-		"both wrong":        {`{"actor":"owner","client_host":""}`, []string{"actor", "client_host"}},
-		"nothing":           {`{}`, []string{"actor", "client_host"}},
-		"null fields":       {`{"actor":null,"client_host":null}`, []string{"actor", "client_host"}},
-		"missing host only": {`{"actor":"claude"}`, []string{"client_host"}},
+		"user actor":              {`{"actor":"owner","client_host":"desk"}`, []string{"actor"}},
+		"invalid actor format":    {`{"actor":"Bad_Actor","client_host":"desk"}`, []string{"actor"}},
+		"invalid actor hyphen":    {`{"actor":"bad-actor","client_host":"desk"}`, []string{"actor"}},
+		"invalid actor uppercase": {`{"actor":"Gemini","client_host":"desk"}`, []string{"actor"}},
+		"empty actor":             {`{"actor":"","client_host":"desk"}`, []string{"actor"}},
+		"bad host":                {`{"actor":"claude","client_host":"my host"}`, []string{"client_host"}},
+		"empty host":              {`{"actor":"claude","client_host":""}`, []string{"client_host"}},
+		"long host":               {`{"actor":"claude","client_host":"` + strings.Repeat("h", 65) + `"}`, []string{"client_host"}},
+		"both wrong":              {`{"actor":"owner","client_host":""}`, []string{"actor", "client_host"}},
+		"nothing":                 {`{}`, []string{"actor", "client_host"}},
+		"null fields":             {`{"actor":null,"client_host":null}`, []string{"actor", "client_host"}},
+		"missing host only":       {`{"actor":"claude"}`, []string{"client_host"}},
 	} {
 		b := wantErr(t, post(c.body), 422, "validation_failed", "")
 		var got []string
@@ -889,4 +892,175 @@ func TestReplacedTokenKeepsTheSessionAndDeviceOfTheApproval(t *testing.T) {
 		return
 	}
 	t.Error("the first token was not revoked")
+}
+
+func TestDynamicAgentRegistration(t *testing.T) {
+	clock := newFakeClock()
+	e := newEnvWith(t, loginActors, func(o *Options) { o.Now = clock.Now })
+	e.st.SetClock(clock.Now)
+	owner := map[string]string{"X-Actor": "owner"}
+
+	// Existing agent authorization reports new_actor: false.
+	existing := e.startLogin(t, "codex", "desk")
+	var existingView model.DeviceAuthorization
+	decodeJSON(t, e.do(t, "GET", "/v1/device-authorizations/"+existing.UserCode, "", owner), &existingView)
+	if existingView.NewActor {
+		t.Fatalf("existing agent pending new_actor = true, want false")
+	}
+	decodeJSON(t, e.decide(t, existing.UserCode, "denied", "owner"), &existingView)
+	if existingView.NewActor {
+		t.Fatalf("existing agent denied new_actor = true, want false")
+	}
+
+	// Undeclared valid agent starts login and shows new_actor: true while pending.
+	denied := e.startLogin(t, "devin", "desk-denied")
+	var deniedView model.DeviceAuthorization
+	decodeJSON(t, e.do(t, "GET", "/v1/device-authorizations/"+denied.UserCode, "", owner), &deniedView)
+	if !deniedView.NewActor || deniedView.Actor != "devin" || deniedView.Status != model.DevicePending {
+		t.Fatalf("undeclared pending = %+v", deniedView)
+	}
+	// Denying must NOT register the actor.
+	decodeJSON(t, e.decide(t, denied.UserCode, "denied", "owner"), &deniedView)
+	if deniedView.Status != model.DeviceDenied || deniedView.NewActor {
+		t.Fatalf("undeclared denied = %+v, want denied with new_actor=false", deniedView)
+	}
+	wantErr(t, e.do(t, "GET", "/v1/actors/me", "", map[string]string{"X-Actor": "devin"}), 400, "bad_request", "unknown_actor")
+
+	// Expired undeclared request must NOT register the actor.
+	expired := e.startLogin(t, "windsurf", "desk-exp")
+	clock.Advance(model.DeviceExpiresIn * time.Second)
+	wantErr(t, e.decide(t, expired.UserCode, "approved", "owner"), 404, "not_found", "")
+	wantErr(t, e.do(t, "GET", "/v1/actors/me", "", map[string]string{"X-Actor": "windsurf"}), 400, "bad_request", "unknown_actor")
+
+	// Approving undeclared agent registers it and returns new_actor: true.
+	g := e.startLogin(t, "devin", "desk-1")
+	var approved model.DeviceAuthorization
+	rec := e.decide(t, g.UserCode, "approved", "owner")
+	if rec.Code != 200 {
+		t.Fatalf("approve devin: %d %s", rec.Code, rec.Body.String())
+	}
+	decodeJSON(t, rec, &approved)
+	if !approved.NewActor || approved.Status != model.DeviceApproved {
+		t.Fatalf("approved = %+v, want status=approved, new_actor=true", approved)
+	}
+	// GET after approval before token exchange keeps new_actor=true.
+	var afterApprove model.DeviceAuthorization
+	decodeJSON(t, e.do(t, "GET", "/v1/device-authorizations/"+g.UserCode, "", owner), &afterApprove)
+	if !afterApprove.NewActor || afterApprove.Status != model.DeviceApproved {
+		t.Fatalf("GET after approval = %+v, want new_actor=true", afterApprove)
+	}
+
+	// Token exchange works, and the newly registered actor can use APIs immediately.
+	exRec := e.exchange(t, g.DeviceCode)
+	if exRec.Code != 201 {
+		t.Fatalf("exchange devin: %d %s", exRec.Code, exRec.Body.String())
+	}
+	var tok model.IssuedToken
+	decodeJSON(t, exRec, &tok)
+	if tok.Actor != "devin" {
+		t.Fatalf("tok.Actor = %q, want devin", tok.Actor)
+	}
+
+	// Listed in GET /v1/actors and authenticated for GET /v1/actors/me.
+	var actorList struct {
+		Items []model.Actor `json:"items"`
+	}
+	decodeJSON(t, e.do(t, "GET", "/v1/actors", "", withToken(tok.Secret, "devin")), &actorList)
+	foundDevin := false
+	for _, a := range actorList.Items {
+		if a.ID == "devin" && a.Kind == model.ActorAgent {
+			foundDevin = true
+		}
+	}
+	if !foundDevin {
+		t.Fatalf("devin missing from /v1/actors: %+v", actorList.Items)
+	}
+	var me model.Actor
+	decodeJSON(t, e.do(t, "GET", "/v1/actors/me", "", withToken(tok.Secret, "devin")), &me)
+	if me.ID != "devin" || me.Kind != model.ActorAgent {
+		t.Fatalf("me = %+v", me)
+	}
+
+	// New actor can create, read, and update issues immediately.
+	if rec := e.createProject(t, "APP", "app"); rec.Code != 201 {
+		t.Fatalf("createProject: %d %s", rec.Code, rec.Body.String())
+	}
+	createdRec := e.postIssue(t, `{"project":"APP","title":"동적 에이전트 이슈"}`, withToken(tok.Secret, "devin"))
+	if createdRec.Code != 201 {
+		t.Fatalf("create issue as devin: %d %s", createdRec.Code, createdRec.Body.String())
+	}
+	var issue model.Issue
+	decodeJSON(t, createdRec, &issue)
+	if issue.CreatedBy != "devin" {
+		t.Fatalf("issue.CreatedBy = %q, want devin", issue.CreatedBy)
+	}
+	if rec := e.do(t, "GET", "/v1/issues/"+issue.Key, "", withToken(tok.Secret, "devin")); rec.Code != 200 {
+		t.Fatalf("get issue as devin: %d %s", rec.Code, rec.Body.String())
+	}
+	patchHdr := withToken(tok.Secret, "devin")
+	patchHdr["If-Match"] = fmt.Sprintf(`"%d"`, issue.Version)
+	if rec := e.do(t, "PATCH", "/v1/issues/"+issue.Key, `{"status":"doing"}`, patchHdr); rec.Code != 200 {
+		t.Fatalf("patch issue as devin: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Second login for the same newly-registered actor has new_actor: false.
+	g2 := e.startLogin(t, "devin", "desk-2")
+	var secondView model.DeviceAuthorization
+	decodeJSON(t, e.do(t, "GET", "/v1/device-authorizations/"+g2.UserCode, "", owner), &secondView)
+	if secondView.NewActor {
+		t.Fatalf("second login pending new_actor = true, want false")
+	}
+	decodeJSON(t, e.decide(t, g2.UserCode, "approved", "owner"), &secondView)
+	if secondView.NewActor {
+		t.Fatalf("second login approved new_actor = true, want false")
+	}
+}
+
+func TestConcurrentApproveUndeclaredActor(t *testing.T) {
+	e := newEnvWith(t, loginActors, nil)
+	g := e.startLogin(t, "racebot", "desk-race")
+
+	const workers = 8
+	codes := make([]int, workers)
+	newFlags := make([]bool, workers)
+	var ready sync.WaitGroup
+	ready.Add(workers)
+	start := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(workers)
+	for i := range workers {
+		go func(idx int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			rec := e.decide(t, g.UserCode, "approved", "owner")
+			codes[idx] = rec.Code
+			if rec.Code == 200 {
+				var d model.DeviceAuthorization
+				decodeJSON(t, rec, &d)
+				newFlags[idx] = d.NewActor
+			}
+		}(i)
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	okCount, conflictCount := 0, 0
+	for i, c := range codes {
+		switch c {
+		case 200:
+			okCount++
+			if !newFlags[i] {
+				t.Errorf("winning approval %d had new_actor=false, want true", i)
+			}
+		case 409:
+			conflictCount++
+		default:
+			t.Errorf("worker %d status = %d, want 200 or 409", i, c)
+		}
+	}
+	if okCount != 1 || conflictCount != workers-1 {
+		t.Fatalf("ok=%d conflict=%d, want 1 and %d", okCount, conflictCount, workers-1)
+	}
 }

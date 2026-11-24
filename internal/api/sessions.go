@@ -193,7 +193,7 @@ func (h *handler) patchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tr := TraceFrom(r.Context())
-	if tr.Actor != ref.Actor && h.actors[tr.Actor].Kind != model.ActorUser {
+	if a, ok := h.actor(tr.Actor); tr.Actor != ref.Actor && (!ok || a.Kind != model.ActorUser) {
 		writeError(w, errNotSessionActor)
 		return
 	}

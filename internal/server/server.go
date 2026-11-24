@@ -80,6 +80,11 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			return nil, fmt.Errorf("seed token for %s: %w", actor, err)
 		}
 	}
+	persisted, err := st.ListActors(context.Background())
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("list actors: %w", err)
+	}
 	var embedder *embed.Runner
 	var searcher *embed.Searcher
 	if cfg.Embedding.Enabled() {
@@ -98,7 +103,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if cfg.WebDir != "" {
 		web = os.DirFS(cfg.WebDir)
 	}
-	apiOpts := api.Options{Token: cfg.Token, Actors: cfg.Actors, Version: opts.Version, Release: opts.Release, Logger: opts.Logger, Store: st, Web: web}
+	apiOpts := api.Options{Token: cfg.Token, Actors: persisted, Version: opts.Version, Release: opts.Release, Logger: opts.Logger, Store: st, Web: web}
 	if searcher != nil {
 		apiOpts.Semantic = searcher
 		apiOpts.SimilarModel = cfg.Embedding.Model

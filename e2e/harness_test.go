@@ -479,6 +479,7 @@ type deviceAuth struct {
 	Actor      string `json:"actor"`
 	ClientHost string `json:"client_host"`
 	Status     string `json:"status"`
+	NewActor   bool   `json:"new_actor"`
 	CreatedAt  string `json:"created_at"`
 	ExpiresAt  string `json:"expires_at"`
 }

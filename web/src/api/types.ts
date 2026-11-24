@@ -241,6 +241,8 @@ export interface DeviceAuthorization {
   /** 요청을 보낸 기기 이름 */
   client_host: string
   status: DeviceAuthorizationStatus
+  /** 승인 시 새 agent 행위자로 자동 등록되는지 여부 */
+  new_actor?: boolean
   created_at: string
   expires_at: string
 }
