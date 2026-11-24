@@ -250,10 +250,14 @@ export function useTemplates() {
   })
 }
 
+export function actorsQueryKey() {
+  return [QUERY_ROOT, 'actors'] as const
+}
+
 export function useActors() {
   const api = useApi()
   return useQuery({
-    queryKey: [QUERY_ROOT, 'actors'],
+    queryKey: actorsQueryKey(),
     queryFn: ({ signal }) => api.get<{ items: Actor[] }>('/actors', undefined, signal),
     refetchInterval: false,
     staleTime: 60_000,
@@ -263,7 +267,7 @@ export function useActors() {
 /** 기기 승인 단건 조회 쿼리 키 앞부분. 재연결 일괄 무효화에서 제외할 때 쓴다. */
 export const DEVICE_AUTHORIZATION_KEY = [QUERY_ROOT, 'device-authorization'] as const
 
-function deviceAuthorizationKey(userCode: string | null) {
+export function deviceAuthorizationKey(userCode: string | null) {
   return [...DEVICE_AUTHORIZATION_KEY, userCode] as const
 }
 
@@ -490,6 +494,9 @@ export function useDecideDeviceAuthorization() {
       api.patch<DeviceAuthorization>(`/device-authorizations/${userCode}`, { status }),
     onSuccess: (auth, { userCode }) => {
       qc.setQueryData(deviceAuthorizationKey(userCode), auth)
+      if (auth.status === 'approved') {
+        void qc.invalidateQueries({ queryKey: actorsQueryKey() })
+      }
     },
   })
 }
