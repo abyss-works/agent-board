@@ -469,11 +469,12 @@ func TestLoginRequestRules(t *testing.T) {
 			body   map[string]any
 			fields []string
 		}{
-			"a user":         {map[string]any{"actor": "owner", "client_host": host}, []string{"actor"}},
-			"not declared":   {map[string]any{"actor": "nobody", "client_host": host}, []string{"actor"}},
-			"a bad host":     {map[string]any{"actor": "claude", "client_host": "my host"}, []string{"client_host"}},
-			"both are wrong": {map[string]any{"actor": "owner", "client_host": ""}, []string{"actor", "client_host"}},
-			"nothing":        {map[string]any{}, []string{"actor", "client_host"}},
+			"a user":            {map[string]any{"actor": "owner", "client_host": host}, []string{"actor"}},
+			"bad actor format":  {map[string]any{"actor": "Bad_Actor", "client_host": host}, []string{"actor"}},
+			"actor with hyphen": {map[string]any{"actor": "bad-actor", "client_host": host}, []string{"actor"}},
+			"a bad host":        {map[string]any{"actor": "claude", "client_host": "my host"}, []string{"client_host"}},
+			"both are wrong":    {map[string]any{"actor": "owner", "client_host": ""}, []string{"actor", "client_host"}},
+			"nothing":           {map[string]any{}, []string{"actor", "client_host"}},
 		} {
 			e := wantError(t, post(c.body), 422, "validation_failed")
 			if got := e.fields(); strings.Join(got, ",") != strings.Join(c.fields, ",") {
@@ -545,5 +546,58 @@ func TestLoginLeavesNoActivity(t *testing.T) {
 	after := decodeAs[list[activity]](t, owner.do(t, "GET", "/v1/activity?limit=1", nil), 200).Total
 	if after != before {
 		t.Errorf("activity records went from %d to %d, a login and a revocation write none", before, after)
+	}
+}
+
+func TestDynamicAgentRegistration(t *testing.T) {
+	newAgent := "dyna" + strings.ToLower(runID)
+	host := loginHost("dynamic")
+
+	g := startLogin(t, newAgent, host)
+	pending := decodeAs[deviceAuth](t, owner.do(t, "GET", "/v1/device-authorizations/"+g.UserCode, nil), 200)
+	if !pending.NewActor || pending.Actor != newAgent || pending.Status != "pending" {
+		t.Fatalf("pending = %+v, want new_actor=true", pending)
+	}
+
+	approved := decodeAs[deviceAuth](t, decide(t, g.UserCode, "approved"), 200)
+	if !approved.NewActor || approved.Status != "approved" {
+		t.Fatalf("approved = %+v, want status=approved, new_actor=true", approved)
+	}
+
+	tok := decodeAs[tokenInfo](t, exchange(t, g.DeviceCode), 201)
+	if tok.Actor != newAgent {
+		t.Fatalf("token actor = %q, want %q", tok.Actor, newAgent)
+	}
+
+	var actorsResp struct {
+		Items []actor `json:"items"`
+	}
+	actorsResp = decodeAs[struct {
+		Items []actor `json:"items"`
+	}](t, as(newAgent).do(t, "GET", "/v1/actors", nil, withSecret(tok.Token)), 200)
+	found := false
+	for _, a := range actorsResp.Items {
+		if a.ID == newAgent && a.Kind == "agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("%s missing from GET /v1/actors: %+v", newAgent, actorsResp.Items)
+	}
+
+	me := decodeAs[actor](t, as(newAgent).do(t, "GET", "/v1/actors/me", nil, withSecret(tok.Token)), 200)
+	if me.ID != newAgent || me.Kind != "agent" {
+		t.Fatalf("me = %+v", me)
+	}
+
+	p := decodeAs[project](t, owner.do(t, "POST", "/v1/projects", map[string]any{"key": projectKey("DR"), "name": "동적 에이전트 E2E"}), 201)
+	created := decodeAs[issue](t, as(newAgent).do(t, "POST", "/v1/issues", map[string]any{
+		"project": p.Key,
+		"title":   "동적 등록 에이전트 이슈",
+		"body":    templateBody(t, "feature"),
+	}, withSecret(tok.Token)), 201)
+	if created.CreatedBy != newAgent {
+		t.Fatalf("issue created_by = %q, want %q", created.CreatedBy, newAgent)
 	}
 }
