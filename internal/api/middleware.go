@@ -202,7 +202,8 @@ func (h *handler) auth(next http.Handler) http.Handler {
 func (h *handler) bind(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cred, actor := credentialFrom(r.Context()), TraceFrom(r.Context()).Actor
-		if (cred.shared && h.actors[actor].Kind != model.ActorUser) || (!cred.shared && cred.actor != actor) {
+		a, ok := h.actor(actor)
+		if (cred.shared && (!ok || a.Kind != model.ActorUser)) || (!cred.shared && cred.actor != actor) {
 			setReject(r, "actor_mismatch")
 			writeError(w, errActorMismatch)
 			return
@@ -244,13 +245,13 @@ func (h *handler) userOnly(fn http.HandlerFunc) http.HandlerFunc {
 
 // trace requires the three tracking headers, each exactly once and well
 // formed, and the actor to be declared. Any violation is a 400.
-func trace(actors map[string]model.Actor, next http.Handler) http.Handler {
+func (h *handler) trace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t, ok := readTrace(w, r, true)
 		if !ok {
 			return
 		}
-		if _, ok := actors[t.Actor]; !ok {
+		if _, ok := h.actor(t.Actor); !ok {
 			setReject(r, "unknown_actor")
 			writeError(w, badRequest("선언되지 않은 행위자입니다.", Detail{Field: headerActor, Reason: "unknown_actor", Message: "X-Actor 값이 서버에 선언된 행위자가 아닙니다."}))
 			return
