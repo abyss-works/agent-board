@@ -95,9 +95,38 @@ func (s *Store) EnsureSeedToken(ctx context.Context, in TokenInput) (*model.Toke
 // transaction, revokes the tokens the actor still has active on that device,
 // in the name of the approver. A token has no activity record.
 func (s *Store) CreateToken(ctx context.Context, in TokenInput) (*model.Token, error) {
+	tok, _, err := s.CreateTokenReplacing(ctx, in)
+	return tok, err
+}
+
+// CreateTokenReplacing stores a token like CreateToken and also returns the
+// IDs of any active tokens that were revoked in the same transaction.
+func (s *Store) CreateTokenReplacing(ctx context.Context, in TokenInput) (*model.Token, []int64, error) {
 	now := s.stamp().String()
 	var id int64
+	var revokedIDs []int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		revokedIDs = nil
+		rows, err := tx.QueryContext(ctx, `select id from token where actor_id = ? and client_host = ? and revoked_at is null`,
+			in.Actor, in.ClientHost)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var rid int64
+			if err := rows.Scan(&rid); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			revokedIDs = append(revokedIDs, rid)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `update token set revoked_at = ?, revoked_by = ?, revoked_session = ?, revoked_host = ? where actor_id = ? and client_host = ? and revoked_at is null`,
 			now, in.CreatedBy, in.ApprovedSession, in.ApprovedHost, in.Actor, in.ClientHost); err != nil {
 			return err
@@ -111,9 +140,13 @@ func (s *Store) CreateToken(ctx context.Context, in TokenInput) (*model.Token, e
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return getToken(ctx, s.db, id)
+	tok, err := getToken(ctx, s.db, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tok, revokedIDs, nil
 }
 
 // AuthenticateToken finds the active token whose secret is given, or returns
