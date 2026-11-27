@@ -35,3 +35,20 @@ describe('IssueCardBody의 오래됨 표시', () => {
     expect(html(false)).not.toContain('오래됨')
   })
 })
+
+describe('IssueCardBody의 검증 필요 표시', () => {
+  const html = (verification_state: 'none' | 'pending' | 'verified', verification_note: string | null = null) =>
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <IssueCardBody issue={issueSummary({ verification_state, verification_note })} />
+      </MemoryRouter>,
+    )
+
+  it('pending 상태에만 검증 필요 배지를 단다', () => {
+    const out = html('pending', '모바일 레이아웃 확인')
+    expect(out).toContain('>검증 필요</span>')
+    expect(out).toContain('모바일 레이아웃 확인')
+    expect(html('none')).not.toContain('검증 필요')
+    expect(html('verified')).not.toContain('검증 필요')
+  })
+})

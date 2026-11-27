@@ -63,7 +63,13 @@ function AuthorizationCard({ auth, onStale }: { auth: DeviceAuthorization; onSta
           <span className="font-mono text-sm font-semibold">{auth.user_code}</span>
         </Row>
         <Row label="행위자">
-          <ActorChip actor={auth.actor} />
+          <div className="flex flex-wrap items-center gap-2">
+            <ActorChip actor={auth.actor} />
+            {auth.new_actor ? <Badge variant="default">신규 에이전트</Badge> : null}
+          </div>
+          {auth.new_actor && auth.status === 'pending' ? (
+            <p className="mt-1 text-xs text-muted-foreground">승인하면 새 agent 행위자로 자동 등록됩니다.</p>
+          ) : null}
         </Row>
         <Row label="기기">
           <span className="font-mono text-xs break-all">{auth.client_host}</span>

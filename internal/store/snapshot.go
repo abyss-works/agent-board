@@ -29,12 +29,14 @@ func (s *Store) Snapshot(ctx context.Context, dst string) error {
 // raises the highest token id or the number of revoked tokens, posting a message raises the highest message id and
 // deleting one the number of deleted messages, acknowledging one the number of message reads, a write to a project, topic or
 // milestone appends a resource activity record, and migrations
-// bump user_version. A write of embeddings or similar documents changes a
-// digest over the keys, hashes and scores of their rows. Recording the last use of a token changes none of these.
+// bump user_version. A new session raises the number of sessions and a change
+// of its parent, role, issue, location, state or state_reason bumps its updated_at. A write of embeddings or similar documents changes a
+// digest over the keys, hashes and scores of their rows. Recording the last use of a token or the last call of a
+// session changes none of these.
 func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
-	var maxActivity, maxDocActivity, maxToken, maxMessage, maxResourceActivity sql.NullInt64
-	var maxProject, maxTopic, maxMilestone, maxDocument sql.NullString
-	var projects, actors, topics, milestones, documents, revokedTokens, deletedMessages, messageReads int
+	var maxActivity, maxDocActivity, maxToken, maxMessage, maxResourceActivity, maxClaim, maxEvent sql.NullInt64
+	var maxProject, maxTopic, maxMilestone, maxDocument, maxSession sql.NullString
+	var projects, actors, topics, milestones, documents, revokedTokens, deletedMessages, messageReads, sessions, releasedClaims int
 	var version int
 	if err := s.db.QueryRowContext(ctx, `select (select max(id) from activity), (select max(updated_at) from project),
 		(select count(*) from project), (select count(*) from actor), (select max(updated_at) from topic), (select count(*) from topic),
@@ -42,8 +44,10 @@ func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 		(select max(updated_at) from document), (select count(*) from document),
 		(select max(id) from document_activity), (select max(id) from token), (select count(*) from token where revoked_at is not null),
 		(select max(id) from message), (select count(deleted_at) from message), (select max(id) from resource_activity),
-		(select count(*) from message_read)`).
-		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics, &maxMilestone, &milestones, &maxDocument, &documents, &maxDocActivity, &maxToken, &revokedTokens, &maxMessage, &deletedMessages, &maxResourceActivity, &messageReads); err != nil {
+		(select count(*) from message_read), (select count(*) from session), (select max(updated_at) from session),
+		(select max(id) from issue_claim), (select count(*) from issue_claim where released_at is not null),
+		coalesce((select max(id) from event), 0)`).
+		Scan(&maxActivity, &maxProject, &projects, &actors, &maxTopic, &topics, &maxMilestone, &milestones, &maxDocument, &documents, &maxDocActivity, &maxToken, &revokedTokens, &maxMessage, &deletedMessages, &maxResourceActivity, &messageReads, &sessions, &maxSession, &maxClaim, &releasedClaims, &maxEvent); err != nil {
 		return "", err
 	}
 	if err := s.db.QueryRowContext(ctx, `pragma user_version`).Scan(&version); err != nil {
@@ -57,7 +61,8 @@ func (s *Store) FingerprintNow(ctx context.Context) (string, error) {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(embeddingRows.String + "\n" + similarRows.String))
-	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:ds%s:dc%d:da%d:k%d:kr%d:g%d:gd%d:gr%d:ra%d:e%x",
+	return fmt.Sprintf("v%d:a%d:p%s:n%d:c%d:t%s:m%d:ms%s:mc%d:ds%s:dc%d:da%d:k%d:kr%d:g%d:gd%d:gr%d:ra%d:sc%d:su%s:ic%d:icr%d:ev%d:e%x",
 		version, maxActivity.Int64, maxProject.String, projects, actors, maxTopic.String, topics, maxMilestone.String, milestones,
-		maxDocument.String, documents, maxDocActivity.Int64, maxToken.Int64, revokedTokens, maxMessage.Int64, deletedMessages, messageReads, maxResourceActivity.Int64, digest[:8]), nil
+		maxDocument.String, documents, maxDocActivity.Int64, maxToken.Int64, revokedTokens, maxMessage.Int64, deletedMessages, messageReads, maxResourceActivity.Int64,
+		sessions, maxSession.String, maxClaim.Int64, releasedClaims, maxEvent.Int64, digest[:8]), nil
 }

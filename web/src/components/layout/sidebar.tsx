@@ -1,10 +1,10 @@
-import { ActivityIcon, BookOpenIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
+import { ActivityIcon, BookOpenIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, TerminalIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
 import { useActors, useProjects } from '@/api/queries'
 import type { Project } from '@/api/types'
 import { useConnection } from '@/app/connection'
-import { POLL_MS, useAppState } from '@/app/state'
+import { useAppState } from '@/app/state'
 import { IssueCreateDialog } from '@/components/issue/issue-create-dialog'
 import { ProjectDeleteDialog } from '@/components/project/project-delete-dialog'
 import { ProjectDialog } from '@/components/project/project-dialog'
@@ -173,7 +173,7 @@ function ActorSwitcher() {
   )
 }
 
-function ConnectionStatus() {
+export function ConnectionStatus() {
   const status = useConnection()
   if (status.error) {
     return (
@@ -183,14 +183,18 @@ function ConnectionStatus() {
       </div>
     )
   }
+  const isConnected = status.stream === 'connected'
+  const isReconnecting = status.stream === 'reconnecting'
+  const label = isConnected ? '실시간 연결' : isReconnecting ? '다시 연결 중' : '실시간 연결 중'
+  const dotClass = isConnected ? 'bg-emerald-400' : isReconnecting ? 'bg-amber-400' : 'bg-sky-400'
   return (
     <div className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
-      <span className="relative flex size-1.5">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
+      <span className="relative flex size-1.5 shrink-0">
+        {isConnected ? <span className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-60', dotClass)} /> : null}
+        <span className={cn('relative inline-flex size-1.5 rounded-full', dotClass)} />
       </span>
-      {POLL_MS / 1000}초마다 갱신
-      {status.lastOkAt ? <span className="ml-auto font-mono tabular-nums">{formatKstTime(new Date(status.lastOkAt).toISOString())}</span> : null}
+      <span className="truncate">{label}</span>
+      {status.lastOkAt ? <span className="ml-auto shrink-0 font-mono tabular-nums">{formatKstTime(new Date(status.lastOkAt).toISOString())}</span> : null}
     </div>
   )
 }
@@ -227,6 +231,10 @@ export function Sidebar() {
           )
         })}
         {/* 단축키 없이 메뉴만 둔다. MENU_SHORTCUTS에는 넣지 않는다. */}
+        <NavLink to="/sessions" className={menuLinkClass}>
+          <TerminalIcon className="size-4" />
+          <span className="flex-1">세션</span>
+        </NavLink>
         <NavLink to="/documents" className={menuLinkClass}>
           <BookOpenIcon className="size-4" />
           <span className="flex-1">기록</span>

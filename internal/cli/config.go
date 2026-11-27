@@ -555,6 +555,30 @@ func actorOf(g *globals, getenv func(string) string, file Config) string {
 	return actorOfContext(g, getenv, cc)
 }
 
+// lookupHookActor returns the configured hook actor for tool, preferring an
+// exact non-empty match and falling back to a case-insensitive match over
+// sorted keys.
+func lookupHookActor(hookActors map[string]string, tool string) string {
+	tool = strings.TrimSpace(tool)
+	if tool == "" || len(hookActors) == 0 {
+		return ""
+	}
+	if actor := hookActors[tool]; actor != "" {
+		return actor
+	}
+	keys := make([]string, 0, len(hookActors))
+	for k := range hookActors {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if strings.EqualFold(k, tool) && hookActors[k] != "" {
+			return hookActors[k]
+		}
+	}
+	return ""
+}
+
 func tokenOfContext(actor string, getenv func(string) string, cc ContextConfig, isLocal bool) string {
 	if t := cc.Tokens[actor]; t != "" {
 		return t

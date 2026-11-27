@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -193,5 +194,138 @@ func TestMigration19AddsMessageReadAndKeepsMessages(t *testing.T) {
 	}
 	if fk := queryStrings(t, s, `pragma foreign_key_check`); len(fk) != 0 {
 		t.Errorf("foreign_key_check = %v", fk)
+	}
+}
+
+func TestAckMessageAndUnreadCaseInsensitive(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	advance := msgClock(s, time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC))
+	m1 := putMessage(t, s, "APP", "app", "첫 메시지", "")
+	advance(time.Minute)
+	m2 := putMessage(t, s, "APP", "Reviewer", "둘째 메시지", "")
+	advance(time.Minute)
+
+	first, err := s.AckMessage(ctx, trOwner, m1.ID, "app")
+	if err != nil || first.Reader != "app" {
+		t.Fatalf("first ack = %+v, %v", first, err)
+	}
+
+	// UnreadBy matches case-insensitively.
+	items, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", UnreadBy: "APP", Limit: 50})
+	if err != nil || total != 1 || titles(items) != "둘째 메시지" {
+		t.Errorf("unread_by=APP: %s total=%d err=%v", titles(items), total, err)
+	}
+
+	// Re-acking with different case returns the original record without inserting a second row.
+	advance(time.Hour)
+	again, err := s.AckMessage(ctx, trClaude, m1.ID, "APP")
+	if err != nil || *again != *first || again.Reader != "app" {
+		t.Errorf("second ack = %+v, %v; want %+v", again, err, first)
+	}
+	if n := queryStrings(t, s, `select count(*) from message_read where message_id = `+strconv.FormatInt(m1.ID, 10)); n[0] != "1" {
+		t.Errorf("message_read rows = %v, want 1", n)
+	}
+
+	// Archived project still allows re-ack with different case, returning the original record without 409.
+	st := model.ProjectArchived
+	if _, err := s.UpdateProject(ctx, trOwner, "APP", ProjectPatch{Status: &st}); err != nil {
+		t.Fatal(err)
+	}
+	if archivedAgain, err := s.AckMessage(ctx, trClaude, m1.ID, "App"); err != nil || *archivedAgain != *first {
+		t.Errorf("archived re-ack = %+v, %v; want %+v", archivedAgain, err, first)
+	}
+	if _, err := s.AckMessage(ctx, trClaude, m2.ID, "APP"); !errors.Is(err, ErrProjectNotActive) {
+		t.Errorf("new ack in archived project err = %v, want ErrProjectNotActive", err)
+	}
+}
+
+func TestAckMessageConcurrentSamePair(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	m := putMessage(t, s, "APP", "alpha", "동시 확인", "")
+
+	const workers = 12
+	readers := []string{"alpha", "ALPHA", "Alpha"}
+	results := make([]*model.MessageRead, workers)
+	errs := make([]error, workers)
+
+	var ready sync.WaitGroup
+	ready.Add(workers)
+	start := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(workers)
+	for i := range workers {
+		go func(idx int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			results[idx], errs[idx] = s.AckMessage(ctx, trClaude, m.ID, readers[idx%len(readers)])
+		}(i)
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	for i := range workers {
+		if errs[i] != nil {
+			t.Fatalf("worker %d err = %v", i, errs[i])
+		}
+		if results[i] == nil || *results[i] != *results[0] {
+			t.Errorf("worker %d got %+v, want %+v", i, results[i], results[0])
+		}
+	}
+	if n := queryStrings(t, s, `select count(*) from message_read where message_id = `+strconv.FormatInt(m.ID, 10)); n[0] != "1" {
+		t.Errorf("message_read rows = %v, want 1", n)
+	}
+	if n := queryStrings(t, s, `select count(*) from event where kind = 'message.read' and subject = '`+strconv.FormatInt(m.ID, 10)+`'`); n[0] != "1" {
+		t.Errorf("message.read events = %v, want 1", n)
+	}
+}
+
+func TestUnreadByPaginationAndExpiredExclusion(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	advance := msgClock(s, time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC))
+
+	m1 := putMessage(t, s, "APP", "", "첫째", "")
+	advance(time.Minute)
+	mExpired := putMessage(t, s, "APP", "", "만료됨", "30m")
+	advance(time.Minute)
+	m2 := putMessage(t, s, "APP", "", "둘째", "")
+	advance(time.Minute)
+	mAcked := putMessage(t, s, "APP", "", "확인됨", "")
+	advance(time.Minute)
+	m3 := putMessage(t, s, "APP", "", "셋째", "")
+
+	if _, err := s.AckMessage(ctx, trOwner, mAcked.ID, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	// Advance past mExpired's 30m TTL; m1/m2/m3 (7d TTL) remain active.
+	advance(time.Hour)
+
+	page1, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", UnreadBy: "alpha", Limit: 2, Offset: 0})
+	if err != nil || total != 3 || titles(page1) != "셋째,둘째" {
+		t.Fatalf("page1: titles=%q total=%d err=%v", titles(page1), total, err)
+	}
+	page2, total, err := s.ListMessages(ctx, MessageFilter{Project: "APP", UnreadBy: "alpha", Limit: 2, Offset: 2})
+	if err != nil || total != 3 || titles(page2) != "첫째" || page2[0].ID != m1.ID {
+		t.Fatalf("page2: titles=%q total=%d err=%v", titles(page2), total, err)
+	}
+	if got := m2.ID; got == 0 || m3.ID == 0 {
+		t.Fatalf("unexpected zero IDs")
+	}
+
+	// Expired unacked message appears only when All=true, and disappears once acked.
+	withAll, totalAll, err := s.ListMessages(ctx, MessageFilter{Project: "APP", UnreadBy: "alpha", All: true, Limit: 10})
+	if err != nil || totalAll != 4 || titles(withAll) != "셋째,둘째,만료됨,첫째" {
+		t.Fatalf("withAll: titles=%q total=%d err=%v", titles(withAll), totalAll, err)
+	}
+	if _, err := s.AckMessage(ctx, trOwner, mExpired.ID, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	afterAckExpired, totalAfter, err := s.ListMessages(ctx, MessageFilter{Project: "APP", UnreadBy: "alpha", All: true, Limit: 10})
+	if err != nil || totalAfter != 3 || titles(afterAckExpired) != "셋째,둘째,첫째" {
+		t.Fatalf("afterAckExpired: titles=%q total=%d err=%v", titles(afterAckExpired), totalAfter, err)
 	}
 }

@@ -65,7 +65,7 @@ type IssueFilter struct {
 	Parent          string
 	Topic           string // topic ids and none, comma separated (OR)
 	Milestone       string // milestone ids and none, comma separated (OR)
-	Acknowledged    string // "true" or "false"; empty sends no filter
+	Verification    string // none, pending, verified, comma separated (OR); empty sends no filter
 	Dormant         bool   // only dormant issues; false sends no filter
 	CreatedBy       string
 	UpdatedBy       string
@@ -92,7 +92,7 @@ func (f IssueFilter) Values() url.Values {
 	set(v, "parent", f.Parent)
 	set(v, "topic", f.Topic)
 	set(v, "milestone", f.Milestone)
-	set(v, "acknowledged", f.Acknowledged)
+	set(v, "verification", f.Verification)
 	if f.Dormant {
 		v.Set("dormant", "true")
 	}
@@ -362,25 +362,45 @@ func (c *Client) DeleteMilestone(ctx context.Context, id int64) (*Response, erro
 	return c.Request(ctx, http.MethodDelete, "/v1/milestones/"+strconv.FormatInt(id, 10), nil, nil)
 }
 
-// PutMessage posts a message to the message space of a project. in holds
-// title and optionally to, body and ttl.
+// PutMessage posts a message to the message space of a project.
 func (c *Client) PutMessage(ctx context.Context, project string, in map[string]any) (*Response, error) {
 	return c.Request(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/messages", in, nil)
 }
 
-// ListMessages lists the messages of a project, newest first. An empty to
-// matches every addressee; a unreadBy leaves out the messages that reader
-// acknowledged; all adds the expired and deleted messages. A zero page field
-// is left to the server default.
-func (c *Client) ListMessages(ctx context.Context, project, to, unreadBy string, all bool, page Page) (*Response, error) {
+// MessageFilter selects messages of a project. ToSession is "<actor>/<session ID>".
+// A zero ReplyTo or zero Page field is left out.
+type MessageFilter struct {
+	To        string
+	ToSession string
+	ToRole    string
+	Issue     string
+	ReplyTo   int64
+	UnreadBy  string
+	All       bool
+	Page
+}
+
+// Values encodes the filter as query parameters.
+func (f MessageFilter) Values() url.Values {
 	v := url.Values{}
-	set(v, "to", to)
-	set(v, "unread_by", unreadBy)
-	page.addTo(v)
-	if all {
+	set(v, "to", f.To)
+	set(v, "to_session", f.ToSession)
+	set(v, "to_role", f.ToRole)
+	set(v, "issue", f.Issue)
+	if f.ReplyTo > 0 {
+		v.Set("reply_to", strconv.FormatInt(f.ReplyTo, 10))
+	}
+	set(v, "unread_by", f.UnreadBy)
+	if f.All {
 		v.Set("all", "true")
 	}
-	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/messages", v), nil, nil)
+	f.Page.addTo(v)
+	return v
+}
+
+// ListMessages lists the messages of a project, newest first.
+func (c *Client) ListMessages(ctx context.Context, project string, f MessageFilter) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/projects/"+url.PathEscape(project)+"/messages", f.Values()), nil, nil)
 }
 
 // GetMessage fetches one message with its body, whatever its state.
@@ -396,6 +416,58 @@ func (c *Client) AckMessage(ctx context.Context, id int64, reader string) (*Resp
 // DeleteMessage soft deletes a message.
 func (c *Client) DeleteMessage(ctx context.Context, id int64) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil, nil)
+}
+
+// SessionFilter selects sessions. Parent is "<actor>/<session ID>". A nil
+// Active, Named or Waiting leaves that filter out.
+type SessionFilter struct {
+	Project, Actor, Parent string
+	Active, Named, Waiting *bool
+	Page                   Page
+}
+
+// Values encodes the filter as query parameters.
+func (f SessionFilter) Values() url.Values {
+	v := url.Values{}
+	set(v, "project", f.Project)
+	set(v, "actor", f.Actor)
+	set(v, "parent", f.Parent)
+	if f.Active != nil {
+		v.Set("active", strconv.FormatBool(*f.Active))
+	}
+	if f.Named != nil {
+		v.Set("named", strconv.FormatBool(*f.Named))
+	}
+	if f.Waiting != nil {
+		v.Set("waiting", strconv.FormatBool(*f.Waiting))
+	}
+	f.Page.addTo(v)
+	return v
+}
+
+func sessionPath(actor, id string) string {
+	return "/v1/sessions/" + url.PathEscape(actor) + "/" + url.PathEscape(id)
+}
+
+// ListSessions lists sessions, the most recently seen first.
+func (c *Client) ListSessions(ctx context.Context, f SessionFilter) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/sessions", f.Values()), nil, nil)
+}
+
+// GetSession fetches one session with its children.
+func (c *Client) GetSession(ctx context.Context, actor, id string) (*Response, error) {
+	return c.Request(ctx, http.MethodGet, sessionPath(actor, id), nil, nil)
+}
+
+// UpdateSession sends a merge patch of parent, role, issue, location, state and state_reason.
+func (c *Client) UpdateSession(ctx context.Context, actor, id string, patch map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPatch, sessionPath(actor, id), patch, nil)
+}
+
+// StartSession registers a child of the session of the client. in holds
+// optionally session_id, role and issue.
+func (c *Client) StartSession(ctx context.Context, in map[string]any) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/sessions", in, nil)
 }
 
 // CreateDeviceAuthorization asks the server to let an agent actor in on a
@@ -445,14 +517,38 @@ func (c *Client) RevokeCurrentToken(ctx context.Context) (*Response, error) {
 	return c.Request(ctx, http.MethodDelete, "/v1/tokens/current", nil, nil)
 }
 
-// Acknowledge marks an issue as acknowledged by the actor of the request.
-func (c *Client) Acknowledge(ctx context.Context, key string) (*Response, error) {
-	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
+// Verify marks a pending issue as verified by the actor of the request. A
+// non-empty version is sent as If-Match.
+func (c *Client) Verify(ctx context.Context, key, version string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/verify", nil, ifMatch(version))
 }
 
-// Unacknowledge clears the acknowledgement of an issue.
-func (c *Client) Unacknowledge(ctx context.Context, key string) (*Response, error) {
-	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/acknowledge", nil, nil)
+// Unverify reverts a verified issue back to pending. A non-empty version is
+// sent as If-Match.
+func (c *Client) Unverify(ctx context.Context, key, version string) (*Response, error) {
+	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/verify", nil, ifMatch(version))
+}
+
+// ClaimIssue claims an issue for the session of the client.
+func (c *Client) ClaimIssue(ctx context.Context, key string) (*Response, error) {
+	return c.Request(ctx, http.MethodPost, "/v1/issues/"+url.PathEscape(key)+"/claim", nil, nil)
+}
+
+// UnclaimIssue releases the open claim on an issue. An empty body sends no
+// request body; otherwise body carries optional outcome and reason fields.
+func (c *Client) UnclaimIssue(ctx context.Context, key string, body map[string]any) (*Response, error) {
+	var payload any
+	if len(body) > 0 {
+		payload = body
+	}
+	return c.Request(ctx, http.MethodDelete, "/v1/issues/"+url.PathEscape(key)+"/claim", payload, nil)
+}
+
+// ListIssueClaims lists one issue's claim history, newest first.
+func (c *Client) ListIssueClaims(ctx context.Context, key string, p Page) (*Response, error) {
+	v := url.Values{}
+	p.addTo(v)
+	return c.Request(ctx, http.MethodGet, withQuery("/v1/issues/"+url.PathEscape(key)+"/claims", v), nil, nil)
 }
 
 // AddComment adds a comment to an issue. A non-empty summary is sent as the

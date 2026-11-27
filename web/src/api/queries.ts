@@ -1,12 +1,13 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useApi } from '@/app/state'
 import { milestoneListParams } from '@/lib/milestones'
-import { issueListQuery, type IssueListFilters } from './client'
+import { issueListQuery, type IssueListFilters, type SessionListParams } from './client'
 import type {
   Activity,
   Actor,
   ActorToken,
   ActorTokenFilter,
+  Agenda,
   Board,
   DeviceAuthorization,
   DeviceAuthorizationPatch,
@@ -26,6 +27,7 @@ import type {
   ProjectCreate,
   ProjectPatch,
   QueueItem,
+  Session,
   Template,
   Topic,
   TopicCreate,
@@ -49,6 +51,20 @@ export function useOverview(projectKey: string | null) {
   return useQuery({
     queryKey: [QUERY_ROOT, 'overview', projectKey],
     queryFn: ({ signal }) => api.get<Overview>(`/projects/${projectKey}/overview`, { limit: 50 }, signal),
+    enabled: projectKey !== null,
+  })
+}
+
+export function agendaQueryKey(projectKey: string | null) {
+  return [QUERY_ROOT, 'agenda', projectKey] as const
+}
+
+/** 프로젝트 아젠다 조회(내 차례 대기 세션 포함). 프로젝트를 고르지 않으면 부르지 않는다. */
+export function useAgenda(projectKey: string | null) {
+  const api = useApi()
+  return useQuery<Agenda>({
+    queryKey: agendaQueryKey(projectKey),
+    queryFn: ({ signal }) => api.getAgenda({ project: projectKey!, limit: 50 }, signal),
     enabled: projectKey !== null,
   })
 }
@@ -92,15 +108,65 @@ export interface ActivityFilters {
   project: string | null
   actor: string | null
   kind: string | null
+  /** 세션 ID 필터. 서버 GET /v1/activity의 session 질의로 보낸다. */
+  session?: string | null
+  limit?: number
 }
 
-export function useActivity(f: ActivityFilters) {
+export function activityQueryKey(f: ActivityFilters) {
+  return [QUERY_ROOT, 'activity', f.project, f.actor, f.kind, f.session ?? null, f.limit ?? 100] as const
+}
+
+export function useActivity(f: ActivityFilters, options?: { enabled?: boolean }) {
   const api = useApi()
+  const session = f.session ?? null
+  const limit = f.limit ?? 100
   return useQuery({
-    queryKey: [QUERY_ROOT, 'activity', f.project, f.actor, f.kind],
+    queryKey: activityQueryKey(f),
     queryFn: ({ signal }) =>
-      api.get<Page<Activity>>('/activity', { project: f.project, actor: f.actor, kind: f.kind, limit: 100 }, signal),
+      api.get<Page<Activity>>('/activity', { project: f.project, actor: f.actor, kind: f.kind, session, limit }, signal),
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function sessionsQueryKey(params?: SessionListParams) {
+  return [
+    QUERY_ROOT,
+    'sessions',
+    params?.project ?? null,
+    params?.actor ?? null,
+    params?.parent ?? null,
+    params?.active ?? null,
+    params?.named ?? null,
+    params?.waiting ?? null,
+    params?.limit ?? null,
+    params?.offset ?? null,
+  ] as const
+}
+
+/** 세션 목록 조회. 기본 갱신 정책을 상속한다. */
+export function useSessions(params?: SessionListParams, options?: { enabled?: boolean }) {
+  const api = useApi()
+  return useQuery<Page<Session>>({
+    queryKey: sessionsQueryKey(params),
+    queryFn: ({ signal }) => api.listSessions(params, signal),
+    placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function sessionQueryKey(actor: string | null, sessionId: string | null) {
+  return [QUERY_ROOT, 'session', actor, sessionId] as const
+}
+
+/** 세션 단건 조회(자식 세션 포함). 행위자와 세션 ID가 모두 있을 때만 호출한다. */
+export function useSession(actor: string | null, sessionId: string | null) {
+  const api = useApi()
+  return useQuery<Session>({
+    queryKey: sessionQueryKey(actor, sessionId),
+    queryFn: ({ signal }) => api.getSession(actor!, sessionId!, signal),
+    enabled: actor !== null && sessionId !== null,
   })
 }
 
@@ -173,7 +239,7 @@ export function useMilestones(projectKey: string | null, statuses: readonly Mile
   })
 }
 
-/** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 3초 갱신에서 뺀다. */
+/** 이슈 종류별 본문 템플릿. 자주 바뀌지 않으므로 주기적 갱신에서 뺀다. */
 export function useTemplates() {
   const api = useApi()
   return useQuery({
@@ -184,23 +250,30 @@ export function useTemplates() {
   })
 }
 
+export function actorsQueryKey() {
+  return [QUERY_ROOT, 'actors'] as const
+}
+
 export function useActors() {
   const api = useApi()
   return useQuery({
-    queryKey: [QUERY_ROOT, 'actors'],
+    queryKey: actorsQueryKey(),
     queryFn: ({ signal }) => api.get<{ items: Actor[] }>('/actors', undefined, signal),
     refetchInterval: false,
     staleTime: 60_000,
   })
 }
 
-function deviceAuthorizationKey(userCode: string | null) {
-  return [QUERY_ROOT, 'device-authorization', userCode]
+/** 기기 승인 단건 조회 쿼리 키 앞부분. 재연결 일괄 무효화에서 제외할 때 쓴다. */
+export const DEVICE_AUTHORIZATION_KEY = [QUERY_ROOT, 'device-authorization'] as const
+
+export function deviceAuthorizationKey(userCode: string | null) {
+  return [...DEVICE_AUTHORIZATION_KEY, userCode] as const
 }
 
 /**
  * 기기 승인 요청 한 건. 정규화한 코드(`XXXX-XXXX`)로 조회하고, 코드가 없으면 부르지 않는다.
- * 요청은 CLI가 토큰을 받아 가면 서버에서 지워지므로 3초 갱신과 창 포커스 갱신에서 뺀다.
+ * 요청은 CLI가 토큰을 받아 가면 서버에서 지워지므로 주기적 갱신과 창 포커스 갱신에서 뺀다.
  * 승인·거부한 뒤 화면의 결과가 사라지지 않게 하려는 것이다.
  */
 export function useDeviceAuthorization(userCode: string | null) {
@@ -267,13 +340,12 @@ export function useDeleteIssue() {
   })
 }
 
-/** 이슈 하나의 확인 표시를 켜거나 끈다. If-Match는 보내지 않아 다른 변경과 겹쳐도 실패하지 않는다. */
-export function useSetAcknowledged() {
+/** 검증 필요(pending) 이슈를 검증 완료(verified)로 표시한다. */
+export function useVerifyIssue() {
   const api = useApi()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ key, acknowledged }: { key: string; acknowledged: boolean }) =>
-      acknowledged ? api.post<Issue>(`/issues/${key}/acknowledge`, undefined) : api.delete<Issue>(`/issues/${key}/acknowledge`),
+    mutationFn: ({ key, version }: { key: string; version?: number }) => api.verifyIssue(key, version),
     onSuccess: (issue) => {
       qc.setQueryData([QUERY_ROOT, 'issue', issue.key], issue)
     },
@@ -281,23 +353,36 @@ export function useSetAcknowledged() {
   })
 }
 
-export interface AcknowledgeManyResult {
+/** 검증 완료(verified) 이슈를 다시 검증 필요(pending)로 되돌린다. */
+export function useUnverifyIssue() {
+  const api = useApi()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, version }: { key: string; version?: number }) => api.unverifyIssue(key, version),
+    onSuccess: (issue) => {
+      qc.setQueryData([QUERY_ROOT, 'issue', issue.key], issue)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: [QUERY_ROOT] }),
+  })
+}
+
+export interface VerifyManyResult {
   done: number
   failed: number
   /** 처음 실패한 요청의 오류 */
   firstError: unknown
 }
 
-/** 키마다 확인 요청을 차례로 보낸다. 일부가 실패해도 나머지는 계속한다. */
-export function useAcknowledgeMany() {
+/** 키마다 검증 완료 요청을 차례로 보낸다. 일부가 실패해도 나머지는 계속한다. */
+export function useVerifyMany() {
   const api = useApi()
   const invalidate = useInvalidateAll()
   return useMutation({
-    mutationFn: async (keys: string[]): Promise<AcknowledgeManyResult> => {
-      const result: AcknowledgeManyResult = { done: 0, failed: 0, firstError: undefined }
+    mutationFn: async (keys: string[]): Promise<VerifyManyResult> => {
+      const result: VerifyManyResult = { done: 0, failed: 0, firstError: undefined }
       for (const key of keys) {
         try {
-          await api.post<Issue>(`/issues/${key}/acknowledge`, undefined)
+          await api.verifyIssue(key)
           result.done += 1
         } catch (err) {
           result.failed += 1
@@ -409,6 +494,9 @@ export function useDecideDeviceAuthorization() {
       api.patch<DeviceAuthorization>(`/device-authorizations/${userCode}`, { status }),
     onSuccess: (auth, { userCode }) => {
       qc.setQueryData(deviceAuthorizationKey(userCode), auth)
+      if (auth.status === 'approved') {
+        void qc.invalidateQueries({ queryKey: actorsQueryKey() })
+      }
     },
   })
 }

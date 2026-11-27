@@ -69,10 +69,7 @@ func addDecisionColumn(tb *table, questions []*string) {
 	}
 }
 
-// issueTable lists issues. The MILESTONE column appears only when some issue
-// has a milestone, the SNIPPET column only for search results and the
-// DECISION column only when some issue asks for a decision.
-func (a *App) issueTable(items []model.IssueSummary) *table {
+func (a *App) baseIssueTable(items []model.IssueSummary) (*table, []*string) {
 	snippet, milestone, dormant := false, false, false
 	for _, it := range items {
 		if it.Dormant {
@@ -114,6 +111,39 @@ func (a *App) issueTable(items []model.IssueSummary) *table {
 		tb.add(row...)
 		questions = append(questions, it.DecisionNeeded)
 	}
+	return tb, questions
+}
+
+// issueTable lists issues. The MILESTONE column appears only when some issue
+// has a milestone, the SNIPPET column only for search results and the
+// DECISION column only when some issue asks for a decision.
+func (a *App) issueTable(items []model.IssueSummary) *table {
+	tb, questions := a.baseIssueTable(items)
+	addDecisionColumn(tb, questions)
+	return tb
+}
+
+func waitingSessionsText(sessions []model.Session) string {
+	if len(sessions) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(sessions))
+	for i, s := range sessions {
+		parts[i] = s.Actor + "/" + s.SessionID
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (a *App) decisionsTable(items []model.DecisionItem) *table {
+	summaries := make([]model.IssueSummary, len(items))
+	for i, it := range items {
+		summaries[i] = it.IssueSummary
+	}
+	tb, questions := a.baseIssueTable(summaries)
+	tb.header = append(tb.header, "WAITING")
+	for i, it := range items {
+		tb.rows[i] = append(tb.rows[i], waitingSessionsText(it.WaitingSessions))
+	}
 	addDecisionColumn(tb, questions)
 	return tb
 }
@@ -144,13 +174,16 @@ func (a *App) renderIssue(w io.Writer, resp *client.Response) error {
 		{"type", string(i.Type)},
 		{"status", string(i.Status)},
 		{"status_reason", deref(i.StatusReason, "-")},
-		{"acknowledged", a.acknowledgedText(i.AcknowledgedAt, i.AcknowledgedBy)},
+		{"verification", a.verificationText(i.VerificationState, i.VerifiedAt, i.VerifiedBy)},
 		{"priority", string(i.Priority)},
 		{"labels", joinOr(i.Labels, "-")},
 		{"parent", deref(i.Parent, "-")},
 		{"depends_on", joinOr(i.DependsOn, "-")},
 		{"refs", joinOr(i.Refs, "-")},
 		{"recheck_condition", deref(i.RecheckCondition, "-")},
+	}
+	if i.VerificationNote != nil {
+		pairs = append(pairs, [2]string{"verification_note", *i.VerificationNote})
 	}
 	if i.DecisionNeeded != nil {
 		pairs = append(pairs, [2]string{"결정 필요", *i.DecisionNeeded})
@@ -188,16 +221,19 @@ func milestoneText(id *int64, name *string) string {
 	return *name + " (" + strconv.FormatInt(*id, 10) + ")"
 }
 
-// acknowledgedText says whether the user has seen an issue: "no", or "yes"
-// with the time and, when known, who.
-func (a *App) acknowledgedText(at *model.Time, by *string) string {
-	if at == nil {
-		return "no"
+// verificationText formats an issue's verification state, including the
+// verification time and actor when verified.
+func (a *App) verificationText(state model.VerificationState, at *model.Time, by *string) string {
+	if state == "" {
+		return string(model.VerificationNone)
+	}
+	if state != model.VerificationVerified || at == nil {
+		return string(state)
 	}
 	if by == nil {
-		return "yes (" + formatTime(*at, a.Location) + ")"
+		return string(state) + " (" + formatTime(*at, a.Location) + ")"
 	}
-	return "yes (" + formatTime(*at, a.Location) + ", " + *by + ")"
+	return string(state) + " (" + formatTime(*at, a.Location) + ", " + *by + ")"
 }
 
 // rawString shows a JSON value compactly: strings without quotes, the
@@ -259,6 +295,56 @@ func (a *App) activityTable(items []model.Activity) *table {
 		tb.add(formatTime(it.At, a.Location), it.Actor, string(it.Kind), it.Issue, describeActivity(it))
 	}
 	return tb
+}
+
+func (a *App) renderIssueClaim(w io.Writer, resp *client.Response) error {
+	c, err := decode[model.IssueClaim](resp)
+	if err != nil {
+		return err
+	}
+	pairs := [][2]string{
+		{"key", c.Issue},
+		{"actor", c.Actor},
+		{"session_id", c.SessionID},
+		{"claimed_at", formatTime(c.ClaimedAt, a.Location)},
+		{"active", strconv.FormatBool(c.Active)},
+	}
+	if c.ReleasedAt != nil {
+		pairs = append(pairs,
+			[2]string{"released_at", formatTimePtr(c.ReleasedAt, a.Location)},
+			[2]string{"outcome", deref(c.Outcome, "-")},
+			[2]string{"reason", deref(c.Reason, "-")},
+		)
+	}
+	fields(w, pairs)
+	return nil
+}
+
+func (a *App) renderIssueClaimList(w io.Writer, resp *client.Response) error {
+	l, err := decode[listOf[model.IssueClaim]](resp)
+	if err != nil {
+		return err
+	}
+	if len(l.Items) == 0 {
+		fmt.Fprintln(w, "점유 이력이 없습니다.")
+		return nil
+	}
+	tb := &table{header: []string{"ID", "ACTOR", "SESSION", "ACTIVE", "CLAIMED_AT", "RELEASED_AT", "OUTCOME", "REASON"}}
+	for _, c := range l.Items {
+		tb.add(
+			strconv.FormatInt(c.ID, 10),
+			c.Actor,
+			c.SessionID,
+			strconv.FormatBool(c.Active),
+			formatTime(c.ClaimedAt, a.Location),
+			formatTimePtr(c.ReleasedAt, a.Location),
+			deref(c.Outcome, "-"),
+			deref(c.Reason, "-"),
+		)
+	}
+	tb.write(w, a.TermWidth)
+	footer(w, len(l.Items), l.Total, l.Offset)
+	return nil
 }
 
 func (a *App) renderActivityList(w io.Writer, resp *client.Response) error {
@@ -463,9 +549,9 @@ type overview struct {
 	Doing          section[model.DoingItem]    `json:"doing"`
 	Review         section[model.IssueSummary] `json:"review"`
 	Blocked        section[model.QueueItem]    `json:"blocked"`
-	Decisions      section[model.IssueSummary] `json:"decisions"`
+	Decisions      section[model.DecisionItem] `json:"decisions"`
 	Next           section[model.QueueItem]    `json:"next"`
-	Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
+	Unverified     section[model.IssueSummary] `json:"unverified"`
 	RecentActivity section[model.Activity]     `json:"recent_activity"`
 }
 
@@ -507,9 +593,12 @@ func (a *App) renderOverview(w io.Writer, resp *client.Response) error {
 	}
 	issues("review", o.Review)
 	queue("blocked", o.Blocked)
-	issues("decisions", o.Decisions)
+	fmt.Fprintf(w, "\n== decisions (%d) ==\n", o.Decisions.Total)
+	if len(o.Decisions.Items) > 0 {
+		a.decisionsTable(o.Decisions.Items).write(w, a.TermWidth)
+	}
 	queue("next", o.Next)
-	issues("unacknowledged", o.Unacknowledged)
+	issues("unverified", o.Unverified)
 	fmt.Fprintf(w, "\n== recent_activity (%d) ==\n", o.RecentActivity.Total)
 	if len(o.RecentActivity.Items) > 0 {
 		a.activityTable(o.RecentActivity.Items).write(w, a.TermWidth)
@@ -556,10 +645,11 @@ type agenda struct {
 		Project  model.Project `json:"project"`
 		Dormant  int           `json:"dormant"`
 		UserTurn struct {
-			Review         section[model.IssueSummary] `json:"review"`
-			Decisions      section[model.IssueSummary] `json:"decisions"`
-			Unacknowledged section[model.IssueSummary] `json:"unacknowledged"`
-			Tasks          section[model.IssueSummary] `json:"tasks"`
+			Review          section[model.IssueSummary] `json:"review"`
+			Decisions       section[model.DecisionItem] `json:"decisions"`
+			Unverified      section[model.IssueSummary] `json:"unverified"`
+			Tasks           section[model.IssueSummary] `json:"tasks"`
+			WaitingSessions section[model.Session]      `json:"waiting_sessions"`
 		} `json:"user_turn"`
 		Agent struct {
 			Doing section[model.DoingItem] `json:"doing"`
@@ -583,11 +673,20 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 	for _, p := range ag.Projects {
 		u, g, wt := p.UserTurn, p.Agent, p.Waiting
 		fmt.Fprintf(w, "\n### %s (%s)\n", p.Project.Key, p.Project.Name)
-		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 미확인 %d, 사용자 할 일 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unacknowledged.Total, u.Tasks.Total)
-		for _, s := range []section[model.IssueSummary]{u.Review, u.Decisions, u.Unacknowledged, u.Tasks} {
+		fmt.Fprintf(w, "\n== 사용자 차례: 검토 %d, 결정 필요 %d, 검증 필요 %d, 사용자 할 일 %d, 대기 세션 %d ==\n", u.Review.Total, u.Decisions.Total, u.Unverified.Total, u.Tasks.Total, u.WaitingSessions.Total)
+		if len(u.Review.Items) > 0 {
+			a.issueTable(u.Review.Items).write(w, a.TermWidth)
+		}
+		if len(u.Decisions.Items) > 0 {
+			a.decisionsTable(u.Decisions.Items).write(w, a.TermWidth)
+		}
+		for _, s := range []section[model.IssueSummary]{u.Unverified, u.Tasks} {
 			if len(s.Items) > 0 {
 				a.issueTable(s.Items).write(w, a.TermWidth)
 			}
+		}
+		if len(u.WaitingSessions.Items) > 0 {
+			a.waitingSessionsTable(u.WaitingSessions.Items).write(w, a.TermWidth)
 		}
 		fmt.Fprintf(w, "\n== 에이전트: 진행 중 %d, 다음 할 일 %d ==\n", g.Doing.Total, g.Next.Total)
 		if len(g.Doing.Items) > 0 {
@@ -610,6 +709,14 @@ func (a *App) renderAgenda(w io.Writer, resp *client.Response) error {
 	return nil
 }
 
+func (a *App) waitingSessionsTable(items []model.Session) *table {
+	tb := &table{header: []string{"ACTOR", "SESSION", "STATE", "ISSUE", "STATE_AT", "CONFLICTS", "REASON"}}
+	for _, s := range items {
+		tb.add(s.Actor, s.SessionID, deref(s.State, "-"), deref(s.Issue, "-"), formatTimePtr(s.StateAt, a.Location), conflictCountText(s.LocationConflicts), deref(s.StateReason, "-"))
+	}
+	return tb
+}
+
 func (a *App) renderStats(w io.Writer, resp *client.Response) error {
 	s, err := decode[struct {
 		StartedAt string `json:"started_at"`
@@ -622,20 +729,41 @@ func (a *App) renderStats(w io.Writer, resp *client.Response) error {
 			TotalMS  float64 `json:"total_ms"`
 			MaxMS    float64 `json:"max_ms"`
 		} `json:"routes"`
+		Streams []struct {
+			Method   string  `json:"method"`
+			Route    string  `json:"route"`
+			Requests int64   `json:"requests"`
+			Errors   int64   `json:"errors"`
+			Active   int64   `json:"active"`
+			TotalMS  float64 `json:"total_ms"`
+			MaxMS    float64 `json:"max_ms"`
+		} `json:"streams"`
 	}](resp)
 	if err != nil {
 		return err
 	}
 	fields(w, [][2]string{{"started_at", s.StartedAt}, {"db_bytes", strconv.FormatInt(s.DBBytes, 10)}})
-	if len(s.Routes) == 0 {
-		return nil
+	if len(s.Routes) > 0 {
+		fmt.Fprintln(w)
+		tb := &table{header: []string{"METHOD", "ROUTE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
+		for _, r := range s.Routes {
+			tb.add(r.Method, r.Route, strconv.FormatInt(r.Requests, 10), strconv.FormatInt(r.Errors, 10),
+				strconv.FormatFloat(r.TotalMS/float64(r.Requests), 'f', 1, 64), strconv.FormatFloat(r.MaxMS, 'f', -1, 64))
+		}
+		tb.write(w, a.TermWidth)
 	}
-	fmt.Fprintln(w)
-	tb := &table{header: []string{"METHOD", "ROUTE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
-	for _, r := range s.Routes {
-		tb.add(r.Method, r.Route, strconv.FormatInt(r.Requests, 10), strconv.FormatInt(r.Errors, 10),
-			strconv.FormatFloat(r.TotalMS/float64(r.Requests), 'f', 1, 64), strconv.FormatFloat(r.MaxMS, 'f', -1, 64))
+	if len(s.Streams) > 0 {
+		fmt.Fprintln(w)
+		stb := &table{header: []string{"METHOD", "STREAM", "ACTIVE", "REQUESTS", "ERRORS", "AVG_MS", "MAX_MS"}}
+		for _, st := range s.Streams {
+			avg := "0.0"
+			if st.Requests > 0 {
+				avg = strconv.FormatFloat(st.TotalMS/float64(st.Requests), 'f', 1, 64)
+			}
+			stb.add(st.Method, st.Route, strconv.FormatInt(st.Active, 10), strconv.FormatInt(st.Requests, 10),
+				strconv.FormatInt(st.Errors, 10), avg, strconv.FormatFloat(st.MaxMS, 'f', -1, 64))
+		}
+		stb.write(w, a.TermWidth)
 	}
-	tb.write(w, a.TermWidth)
 	return nil
 }

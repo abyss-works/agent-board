@@ -73,8 +73,15 @@ func (s *Store) CreateProject(ctx context.Context, tr model.Trace, key, name str
 		if err != nil {
 			return err
 		}
-		return insertResourceActivity(ctx, tx, id, model.ResourceProject, id, model.ResourceCreated, tr, at,
-			resourceChanges(nil, projectFields(name, model.ProjectActive)))
+		changes := resourceChanges(nil, projectFields(name, model.ProjectActive))
+		actID, err := insertResourceActivity(ctx, tx, id, model.ResourceProject, id, model.ResourceCreated, tr, at, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &id, &key, model.EventProjectCreated, key, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -176,8 +183,15 @@ func (s *Store) UpdateProject(ctx context.Context, tr model.Trace, key string, p
 			name, string(status), at.String(), tr.Actor, id); err != nil {
 			return err
 		}
-		return insertResourceActivity(ctx, tx, id, model.ResourceProject, id, model.ResourceUpdated, tr, at,
-			resourceChanges(projectFields(cur.Name, cur.Status), projectFields(name, status)))
+		changes := resourceChanges(projectFields(cur.Name, cur.Status), projectFields(name, status))
+		actID, err := insertResourceActivity(ctx, tx, id, model.ResourceProject, id, model.ResourceUpdated, tr, at, changes)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, at, &id, &key, model.EventProjectUpdated, key, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+			"fields":      changeFields(changes),
+		})
 	})
 	if err != nil {
 		return nil, err

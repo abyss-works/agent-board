@@ -25,24 +25,31 @@ const (
 )
 
 // Message is a short-lived note in the message space of a project. Body is
-// nil in lists, which leave the text out.
+// nil in lists, which leave the text out. Replies is non-nil only when a single
+// message is read.
 type Message struct {
-	ID             int64   `json:"id"`
-	Project        string  `json:"project"`
-	To             *string `json:"to"`
-	Title          string  `json:"title"`
-	Body           *string `json:"body,omitempty"`
-	State          string  `json:"state"`
-	Age            string  `json:"age"`
-	CreatedAt      Time    `json:"created_at"`
-	CreatedBy      string  `json:"created_by"`
-	CreatedSession string  `json:"created_session"`
-	CreatedHost    string  `json:"created_host"`
-	ExpiresAt      Time    `json:"expires_at"`
-	DeletedAt      *Time   `json:"deleted_at"`
-	DeletedBy      *string `json:"deleted_by"`
+	ID             int64       `json:"id"`
+	Project        string      `json:"project"`
+	To             *string     `json:"to"`
+	ToSession      *SessionRef `json:"to_session"`
+	ToRole         *string     `json:"to_role"`
+	Issue          *string     `json:"issue"`
+	ReplyTo        *int64      `json:"reply_to"`
+	ReplyCount     int         `json:"reply_count"`
+	Title          string      `json:"title"`
+	Body           *string     `json:"body,omitempty"`
+	State          string      `json:"state"`
+	Age            string      `json:"age"`
+	CreatedAt      Time        `json:"created_at"`
+	CreatedBy      string      `json:"created_by"`
+	CreatedSession string      `json:"created_session"`
+	CreatedHost    string      `json:"created_host"`
+	ExpiresAt      Time        `json:"expires_at"`
+	DeletedAt      *Time       `json:"deleted_at"`
+	DeletedBy      *string     `json:"deleted_by"`
 	// Reads is nil in lists, which leave the reads out.
-	Reads []MessageRead `json:"reads,omitzero"`
+	Reads   []MessageRead `json:"reads,omitzero"`
+	Replies *[]Message    `json:"replies,omitempty"`
 }
 
 // MessageRead is the mark of one reader on one message: who acknowledged it

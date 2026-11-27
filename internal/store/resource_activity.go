@@ -37,20 +37,23 @@ func resourceChanges(before, after map[string]any) map[string]model.Change {
 	return changes
 }
 
-// insertResourceActivity appends a record. It does nothing when there are no
-// changes.
+// insertResourceActivity appends a record and returns its id. It does nothing
+// and returns 0 when there are no changes.
 func insertResourceActivity(ctx context.Context, tx *sql.Tx, projectID int64, resource model.ResourceKind, resourceID int64,
-	kind model.ResourceActivityKind, tr model.Trace, at model.Time, changes map[string]model.Change) error {
+	kind model.ResourceActivityKind, tr model.Trace, at model.Time, changes map[string]model.Change) (int64, error) {
 	if len(changes) == 0 {
-		return nil
+		return 0, nil
 	}
 	b, err := json.Marshal(changes)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = tx.ExecContext(ctx, `insert into resource_activity(project_id, resource, resource_id, kind, actor_id, session_id, client_host, at, changes)
+	res, err := tx.ExecContext(ctx, `insert into resource_activity(project_id, resource, resource_id, kind, actor_id, session_id, client_host, at, changes)
 		values (?, ?, ?, ?, ?, ?, ?, ?, ?)`, projectID, string(resource), resourceID, string(kind), tr.Actor, tr.SessionID, tr.ClientHost, at.String(), string(b))
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // ListResourceActivity returns a page of the records of a project, newest

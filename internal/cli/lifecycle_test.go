@@ -324,7 +324,7 @@ func TestOverviewTablesAddDecisionColumn(t *testing.T) {
 		`"doing":` + empty + `,"review":` + empty + `,"blocked":` + empty +
 		`,"decisions":{"total":1,"items":[` + withDecision(plain, decisionQuestion) + `]}` +
 		`,"next":{"total":1,"items":[` + queueItem(strings.Replace(plain, "CLI-1", "CLI-2", 1)) + `]}` +
-		`,"unacknowledged":` + empty + `,"recent_activity":` + empty + `}`
+		`,"unverified":` + empty + `,"recent_activity":` + empty + `}`
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/projects/CLI/overview", canned{body: body})
 	h := newHarness(t, srv, true)
@@ -343,13 +343,105 @@ func TestOverviewTablesAddDecisionColumn(t *testing.T) {
 	}
 }
 
-func TestActivityShowsDecisionNeededAndAcknowledgedChanges(t *testing.T) {
+func TestDecisionsTableShowsWaitingSessionsInOverviewAndAgenda(t *testing.T) {
+	project := `{"key":"CLI","name":"cli 검증","status":"active","created_at":"2026-10-17T05:30:00.000Z","updated_at":"2026-10-17T05:30:00.000Z","created_by":"claude","updated_by":"claude"}`
+	empty := `{"total":0,"items":[]}`
+	plain := plainSummary()
+	sessJSON := func(actor, id string) string {
+		return fmt.Sprintf(`{"actor":%q,"session_id":%q,"named":true,"first_seen_at":"2026-10-17T08:00:00.000Z","last_seen_at":"2026-10-17T08:50:00.000Z","last_host":"desk","last_project":"CLI","parent":null,"role":"main","issue":"CLI-1","location":null,"location_conflicts":[],"state":"waiting_input","state_reason":"결정 대기","state_at":"2026-10-17T08:50:00.000Z","stale":false,"updated_at":"2026-10-17T08:50:00.000Z"}`, actor, id)
+	}
+	withWaiting := func(issueJSON, waiting string) string {
+		return strings.TrimSuffix(issueJSON, "}") + `,"waiting_sessions":[` + waiting + `]}`
+	}
+	item0 := withWaiting(withDecision(plain, "질문0"), "")
+	item1 := withWaiting(withDecision(strings.Replace(plain, "CLI-1", "CLI-2", 1), "질문1"), sessJSON("claude", "s1"))
+	item2 := withWaiting(withDecision(strings.Replace(plain, "CLI-1", "CLI-3", 1), "질문2"), sessJSON("claude", "s1")+`,`+sessJSON("codex", "s2"))
+
+	overviewBody := func(items ...string) string {
+		return `{"project":` + project + `,"generated_at":"2026-10-17T09:00:00.000Z","counts":{"total":3,"open":3,"by_status":{},"by_type":{},"by_priority":{}},` +
+			`"doing":` + empty + `,"review":` + empty + `,"blocked":` + empty +
+			`,"decisions":{"total":` + fmt.Sprintf("%d", len(items)) + `,"items":[` + strings.Join(items, ",") + `]}` +
+			`,"next":` + empty + `,"unverified":` + empty + `,"recent_activity":` + empty + `}`
+	}
+	agendaBody := func(items ...string) string {
+		return `{"generated_at":"2026-10-17T09:00:00.000Z","projects":[{"project":` + project + `,"dormant":0,"user_turn":{` +
+			`"review":` + empty + `,"decisions":{"total":` + fmt.Sprintf("%d", len(items)) + `,"items":[` + strings.Join(items, ",") + `]}` +
+			`,"unverified":` + empty + `,"tasks":` + empty + `,"waiting_sessions":` + empty + `},` +
+			`"agent":{"doing":` + empty + `,"next":` + empty + `},"waiting":{"blocked":` + empty + `,"external":` + empty + `}}]}`
+	}
+
+	srv := newFakeServer(t)
+	srv.on("GET", "/v1/projects/CLI/overview", canned{body: overviewBody(item0, item1, item2)})
+	srv.on("GET", "/v1/agenda", canned{body: agendaBody(item0, item1, item2)})
+	h := newHarness(t, srv, true)
+	h.app.TermWidth = 0
+
+	checkTable := func(name, section string) {
+		t.Helper()
+		lines := tableLines(strings.TrimSpace(section))
+		if len(lines) != 4 {
+			t.Fatalf("%s: expected header + 3 rows, got:\n%s", name, section)
+		}
+		if !regexp.MustCompile(`^KEY\s+STATUS\s+PRI\s+TYPE\s+LABELS\s+UPDATED\s+TITLE\s+WAITING\s+DECISION$`).MatchString(lines[0]) {
+			t.Errorf("%s: header = %q", name, lines[0])
+		}
+		if !regexp.MustCompile(`\s-\s+질문0$`).MatchString(lines[1]) {
+			t.Errorf("%s: 0-waiting row = %q", name, lines[1])
+		}
+		if !regexp.MustCompile(`\sclaude/s1\s+질문1$`).MatchString(lines[2]) {
+			t.Errorf("%s: 1-waiting row = %q", name, lines[2])
+		}
+		if !regexp.MustCompile(`\sclaude/s1, codex/s2\s+질문2$`).MatchString(lines[3]) {
+			t.Errorf("%s: multi-waiting row = %q", name, lines[3])
+		}
+	}
+
+	if code := h.run("project", "overview", "CLI"); code != 0 {
+		t.Fatalf("overview code=%d stderr=%s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	checkTable("overview", out[strings.Index(out, "KEY"):strings.Index(out, "\n\n== next")])
+
+	if code := h.run("agenda", "--table"); code != 0 {
+		t.Fatalf("agenda code=%d stderr=%s", code, h.stderr)
+	}
+	agOut := h.stdout.String()
+	checkTable("agenda", agOut[strings.Index(agOut, "KEY"):strings.Index(agOut, "\n\n== 에이전트")])
+
+	// A decision item with 0 waiting sessions still renders both WAITING ("-") and DECISION columns.
+	srv.on("GET", "/v1/projects/CLI/overview", canned{body: overviewBody(item0)})
+	if code := h.run("project", "overview", "CLI"); code != 0 {
+		t.Fatalf("overview 0-waiting code=%d stderr=%s", code, h.stderr)
+	}
+	zeroOut := h.stdout.String()
+	zeroSection := zeroOut[strings.Index(zeroOut, "KEY"):strings.Index(zeroOut, "\n\n== next")]
+	zeroLines := tableLines(strings.TrimSpace(zeroSection))
+	if len(zeroLines) != 2 || !strings.Contains(zeroLines[0], "WAITING") || !strings.Contains(zeroLines[0], "DECISION") || !regexp.MustCompile(`\s-\s+질문0$`).MatchString(zeroLines[1]) {
+		t.Errorf("0-waiting only:\n%s", zeroSection)
+	}
+
+	// Narrow terminal width keeps WAITING intact and truncates DECISION (last column).
+	longItem := withWaiting(withDecision(plain, strings.Repeat("긴 질문 ", 20)), sessJSON("claude", "s1"))
+	srv.on("GET", "/v1/projects/CLI/overview", canned{body: overviewBody(longItem)})
+	h.app.TermWidth = 90
+	if code := h.run("project", "overview", "CLI"); code != 0 {
+		t.Fatalf("narrow overview code=%d stderr=%s", code, h.stderr)
+	}
+	narrowOut := h.stdout.String()
+	narrowSec := narrowOut[strings.Index(narrowOut, "KEY"):strings.Index(narrowOut, "\n\n== next")]
+	narrowLines := tableLines(strings.TrimSpace(narrowSec))
+	if len(narrowLines) != 2 || !strings.Contains(narrowLines[1], "claude/s1") || !strings.HasSuffix(narrowLines[1], "…") {
+		t.Errorf("narrow decisions table:\n%s", narrowSec)
+	}
+}
+
+func TestActivityShowsDecisionNeededAndVerificationChanges(t *testing.T) {
 	record := func(id int, changes string) string {
 		return fmt.Sprintf(`{"id":%d,"issue":"CLI-1","project":"CLI","kind":"updated","actor":"claude","session_id":"s","client_host":"h","at":"2026-10-17T07:10:21.000Z","changes":%s,"summary":null,"body":null}`, id, changes)
 	}
 	srv := newFakeServer(t)
 	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: `{"items":[` +
-		record(4, `{"acknowledged":{"from":true,"to":false},"title":{"from":"이전 제목","to":"새 제목"}}`) + `,` +
+		record(4, `{"verification_note":{"from":null,"to":"화면 확인"},"verification_state":{"from":"none","to":"pending"}}`) + `,` +
 		record(3, `{"decision_needed":{"from":"어느 쪽으로 갈까요?","to":null}}`) + `,` +
 		record(2, `{"decision_needed":{"from":"A안?","to":"B안?"}}`) + `,` +
 		record(1, `{"decision_needed":{"from":null,"to":"어느 쪽으로 갈까요?"}}`) + `],"total":4,"limit":50,"offset":0}`})
@@ -360,7 +452,7 @@ func TestActivityShowsDecisionNeededAndAcknowledgedChanges(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 	for _, want := range []string{
-		"acknowledged: true → false; title: 이전 제목 → 새 제목",
+		"verification_note: - → 화면 확인; verification_state: none → pending",
 		"decision_needed: 어느 쪽으로 갈까요? → -",
 		"decision_needed: A안? → B안?",
 		"decision_needed: - → 어느 쪽으로 갈까요?",

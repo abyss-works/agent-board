@@ -60,3 +60,28 @@ describe('IssueRow의 결정 필요 표시', () => {
     expect(render(null, false, ['api', 'web'])).toContain('>api<')
   })
 })
+
+describe('IssueRow의 검증 필요 표시', () => {
+  const html = (verification_state: 'none' | 'pending' | 'verified', verification_note: string | null = null, compact?: boolean) =>
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <IssueRow issue={issueSummary({ verification_state, verification_note })} compact={compact} />
+      </MemoryRouter>,
+    )
+
+  it('pending 상태에만 검증 필요 배지를 달고 메모가 있으면 설명으로 보인다', () => {
+    const out = html('pending', '결제 페이지 실기기 확인')
+    expect(out).toContain('>검증 필요</span>')
+    expect(out).toContain('결제 페이지 실기기 확인')
+  })
+  it('none과 verified 상태에는 행에 배지를 달지 않는다', () => {
+    expect(html('none')).not.toContain('검증 필요')
+    expect(html('verified', '확인 완료')).not.toContain('검증 필요')
+    expect(html('verified', '확인 완료')).not.toContain('검증 완료')
+  })
+  it('좁은 행에도 pending 배지는 제목 칸 밖에 둔다', () => {
+    const out = html('pending', null, true)
+    expect(out).toContain('>검증 필요</span>')
+    expect(titleCell(out)).not.toContain('검증 필요')
+  })
+})

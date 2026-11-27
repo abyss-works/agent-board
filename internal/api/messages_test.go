@@ -58,7 +58,7 @@ func TestCreateGetAndDeleteMessage(t *testing.T) {
 		t.Fatalf("create: %d %s %q", rec.Code, rec.Body.String(), rec.Header().Get("Location"))
 	}
 	if m.Project != "AGB" || m.To == nil || *m.To != "reviewer" || m.Title != "배포 끝" || m.Body == nil || *m.Body != "본문" || m.State != "active" ||
-		m.CreatedBy != "claude" || m.CreatedSession != "sess-1" || m.CreatedHost != "desk-win10" || m.DeletedAt != nil {
+		m.CreatedBy != "claude" || m.CreatedSession != "sess-1" || m.CreatedHost != "test-host" || m.DeletedAt != nil {
 		t.Errorf("message = %+v", m)
 	}
 	if d := m.ExpiresAt.Time().Sub(m.CreatedAt.Time()).Hours(); d != 72 {
@@ -198,6 +198,313 @@ func TestMessageWritesNeedActiveProject(t *testing.T) {
 	} {
 		if rec.Code != 409 || !strings.Contains(rec.Body.String(), "project_not_active") || !strings.Contains(rec.Body.String(), "메시지") {
 			t.Errorf("%d %s", rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestMessageRoutingCreateListGetAndSessionIsolation(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createProject(t, "OTH", "other")
+	if rec := e.do(t, "POST", "/v1/issues", `{"project":"AGB","title":"이슈 1"}`, map[string]string{"X-Actor": "owner"}); rec.Code != 201 {
+		t.Fatalf("create issue AGB-1: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Create message routed to claude/sess-a with role and issue.
+	rec := e.do(t, "POST", "/v1/projects/AGB/messages",
+		`{"to":"reviewer","to_session":{"actor":"claude","session_id":"sess-a"},"to_role":"subagent","issue":"AGB-1","title":"세션 A 메시지","body":"본문 A"}`,
+		nil)
+	if rec.Code != 201 {
+		t.Fatalf("create m1: %d %s", rec.Code, rec.Body.String())
+	}
+	var m1 model.Message
+	decodeJSON(t, rec, &m1)
+	if m1.ToSession == nil || *m1.ToSession != (model.SessionRef{Actor: "claude", SessionID: "sess-a"}) ||
+		m1.ToRole == nil || *m1.ToRole != "subagent" ||
+		m1.Issue == nil || *m1.Issue != "AGB-1" ||
+		m1.ReplyTo != nil || m1.ReplyCount != 0 ||
+		m1.Replies == nil || len(*m1.Replies) != 0 {
+		t.Fatalf("m1 = %+v (%s)", m1, rec.Body.String())
+	}
+	for _, want := range []string{`"to_session":{"actor":"claude","session_id":"sess-a"}`, `"to_role":"subagent"`, `"issue":"AGB-1"`, `"reply_to":null`, `"reply_count":0`, `"replies":[]`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("m1 JSON lacks %s: %s", want, rec.Body.String())
+		}
+	}
+
+	// Broadcast message and message for owner/sess-b.
+	m2 := e.putMessage(t, "AGB", `{"to_role":"runner","title":"공지"}`)
+	m3 := e.putMessage(t, "AGB", `{"to_session":{"actor":"owner","session_id":"sess-b"},"title":"세션 B 메시지"}`)
+	r1 := e.putMessage(t, "AGB", fmt.Sprintf(`{"reply_to":%d,"title":"답장 1","body":"첫 답장"}`, m1.ID))
+	r2 := e.putMessage(t, "AGB", fmt.Sprintf(`{"reply_to":%d,"title":"답장 2","body":"둘째 답장"}`, m1.ID))
+
+	// GetMessage returns replies ascending and matching reply_count, with no nested replies field in child items.
+	rec = e.do(t, "GET", fmt.Sprintf("/v1/messages/%d", m1.ID), "", nil)
+	if rec.Code != 200 {
+		t.Fatalf("get m1: %d %s", rec.Code, rec.Body.String())
+	}
+	var gotM1 model.Message
+	decodeJSON(t, rec, &gotM1)
+	if gotM1.ReplyCount != 2 || gotM1.Replies == nil || len(*gotM1.Replies) != 2 {
+		t.Fatalf("gotM1 replies = %+v (count=%d)", gotM1.Replies, gotM1.ReplyCount)
+	}
+	rs := *gotM1.Replies
+	if rs[0].ID != r1.ID || rs[1].ID != r2.ID || rs[0].Body == nil || *rs[0].Body != "첫 답장" || rs[0].Replies != nil || rs[1].Replies != nil {
+		t.Errorf("replies = %+v", rs)
+	}
+
+	// Session isolation checks.
+	listAs := func(actor, sessID, query string) messageList {
+		t.Helper()
+		rec := e.do(t, "GET", "/v1/projects/AGB/messages"+query, "", map[string]string{
+			"X-Actor":      actor,
+			"X-Session-Id": sessID,
+		})
+		if rec.Code != 200 {
+			t.Fatalf("list (%s/%s %s): %d %s", actor, sessID, query, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), `"replies"`) {
+			t.Errorf("list must omit replies: %s", rec.Body.String())
+		}
+		var l messageList
+		decodeJSON(t, rec, &l)
+		return l
+	}
+
+	if l := listAs("claude", "sess-a", "?unread_by=AGB"); messageTitles(l.Items) != "답장 2,답장 1,공지,세션 A 메시지" {
+		t.Errorf("claude/sess-a unread = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-b", "?unread_by=AGB"); messageTitles(l.Items) != "답장 2,답장 1,세션 B 메시지,공지" {
+		t.Errorf("owner/sess-b unread = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-c", ""); messageTitles(l.Items) != "답장 2,답장 1,공지" {
+		t.Errorf("owner/sess-c default = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-c", "?all=true"); messageTitles(l.Items) != "답장 2,답장 1,세션 B 메시지,공지,세션 A 메시지" {
+		t.Errorf("owner/sess-c all = %s", messageTitles(l.Items))
+	}
+
+	// Explicit query filters.
+	if l := listAs("owner", "sess-c", "?to_session=claude/sess-a"); messageTitles(l.Items) != "세션 A 메시지" || l.Items[0].ReplyCount != 2 {
+		t.Errorf("to_session filter = %+v", l.Items)
+	}
+	if l := listAs("owner", "sess-c", "?to_role=runner"); messageTitles(l.Items) != "공지" || l.Items[0].ID != m2.ID {
+		t.Errorf("to_role filter = %+v", l.Items)
+	}
+	if l := listAs("claude", "sess-a", "?issue=AGB-1"); messageTitles(l.Items) != "세션 A 메시지" {
+		t.Errorf("issue filter = %s", messageTitles(l.Items))
+	}
+	if l := listAs("owner", "sess-c", fmt.Sprintf("?reply_to=%d", m1.ID)); messageTitles(l.Items) != "답장 2,답장 1" {
+		t.Errorf("reply_to filter = %s", messageTitles(l.Items))
+	}
+	_ = m3
+}
+
+func TestMessageRoutingErrors(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "AGB", "agent-board")
+	e.createProject(t, "OTH", "other")
+	if rec := e.do(t, "POST", "/v1/issues", `{"project":"OTH","title":"타 프로젝트"}`, map[string]string{"X-Actor": "owner"}); rec.Code != 201 {
+		t.Fatalf("create OTH-1: %d %s", rec.Code, rec.Body.String())
+	}
+	otherMsg := e.putMessage(t, "OTH", `{"title":"other"}`)
+
+	postCases := []struct {
+		name, body, field, reason string
+	}{
+		{"to_session string", `{"title":"t","to_session":"claude/s1"}`, "to_session", "invalid"},
+		{"to_session bad actor", `{"title":"t","to_session":{"actor":"BAD","session_id":"s1"}}`, "to_session", "invalid"},
+		{"to_session bad id", `{"title":"t","to_session":{"actor":"claude","session_id":"bad id"}}`, "to_session", "invalid"},
+		{"to_session missing key", `{"title":"t","to_session":{"actor":"claude"}}`, "to_session", "invalid"},
+		{"to_session unknown actor", `{"title":"t","to_session":{"actor":"gemini","session_id":"s1"}}`, "to_session", "unknown_actor"},
+		{"to_role invalid", `{"title":"t","to_role":"boss"}`, "to_role", "invalid"},
+		{"to_role empty", `{"title":"t","to_role":""}`, "to_role", "invalid"},
+		{"issue empty", `{"title":"t","issue":""}`, "issue", "unknown_issue"},
+		{"issue unknown", `{"title":"t","issue":"AGB-999"}`, "issue", "unknown_issue"},
+		{"issue mismatch", `{"title":"t","issue":"OTH-1"}`, "issue", "project_mismatch"},
+		{"reply_to zero", `{"title":"t","reply_to":0}`, "reply_to", "invalid"},
+		{"reply_to negative", `{"title":"t","reply_to":-1}`, "reply_to", "invalid"},
+		{"reply_to string", `{"title":"t","reply_to":"1"}`, "reply_to", "invalid"},
+		{"reply_to float", `{"title":"t","reply_to":1.5}`, "reply_to", "invalid"},
+		{"reply_to unknown", `{"title":"t","reply_to":9999}`, "reply_to", "unknown_message"},
+		{"reply_to mismatch", fmt.Sprintf(`{"title":"t","reply_to":%d}`, otherMsg.ID), "reply_to", "project_mismatch"},
+	}
+	for _, c := range postCases {
+		rec := e.do(t, "POST", "/v1/projects/AGB/messages", c.body, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 422 || len(eb.Error.Details) == 0 || eb.Error.Details[0].Field != c.field || eb.Error.Details[0].Reason != c.reason {
+			t.Errorf("%s: code=%d body=%s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+
+	queryCases := []struct {
+		query, field string
+	}{
+		{"?to_session=claude", "to_session"},
+		{"?to_session=BAD/s1", "to_session"},
+		{"?to_role=boss", "to_role"},
+		{"?issue=bad-key", "issue"},
+		{"?reply_to=0", "reply_to"},
+		{"?reply_to=abc", "reply_to"},
+	}
+	for _, c := range queryCases {
+		rec := e.do(t, "GET", "/v1/projects/AGB/messages"+c.query, "", nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 400 || len(eb.Error.Details) == 0 || eb.Error.Details[0].Field != c.field {
+			t.Errorf("%s: code=%d body=%s", c.query, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Null routing fields behave as omitted (stored as null).
+	rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"title":"널 라우팅","to_role":null,"issue":null}`, nil)
+	if rec.Code != 201 {
+		t.Fatalf("null routing create: %d %s", rec.Code, rec.Body.String())
+	}
+	var nullMsg model.Message
+	decodeJSON(t, rec, &nullMsg)
+	if nullMsg.ToRole != nil || nullMsg.Issue != nil {
+		t.Errorf("null routing stored = %+v", nullMsg)
+	}
+
+	// Deterministic type_mismatch ordering when multiple string fields have wrong types.
+	for i := 0; i < 10; i++ {
+		rec := e.do(t, "POST", "/v1/projects/AGB/messages", `{"to":1,"to_role":2,"issue":3,"title":"t"}`, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 400 || eb.Error.Code != "bad_request" || len(eb.Error.Details) == 0 ||
+			eb.Error.Details[0].Field != "to" || eb.Error.Details[0].Reason != "type_mismatch" {
+			t.Fatalf("iter %d (to first): %d %s", i, rec.Code, rec.Body.String())
+		}
+		rec = e.do(t, "POST", "/v1/projects/AGB/messages", `{"to_role":2,"issue":3,"title":"t"}`, nil)
+		eb = decodeErr(t, rec)
+		if rec.Code != 400 || eb.Error.Code != "bad_request" || len(eb.Error.Details) == 0 ||
+			eb.Error.Details[0].Field != "to_role" || eb.Error.Details[0].Reason != "type_mismatch" {
+			t.Fatalf("iter %d (to_role first): %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestMessageCreateValidationMerging(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "sample-app")
+	e.createProject(t, "ARC", "archived-app")
+	if rec := e.do(t, "PATCH", "/v1/projects/ARC", `{"status":"archived"}`, nil); rec.Code != 200 {
+		t.Fatalf("archive ARC: %d %s", rec.Code, rec.Body.String())
+	}
+
+	wantFields := func(t *testing.T, rec *httptest.ResponseRecorder, want ...string) {
+		t.Helper()
+		eb := decodeErr(t, rec)
+		if rec.Code != 422 || eb.Error.Code != "validation_failed" {
+			t.Fatalf("code=%d err=%+v body=%s", rec.Code, eb, rec.Body.String())
+		}
+		got := map[string]bool{}
+		for _, d := range eb.Error.Details {
+			got[d.Field] = true
+		}
+		if len(eb.Error.Details) != len(want) {
+			t.Errorf("details count=%d, want %d: %+v", len(eb.Error.Details), len(want), eb.Error.Details)
+		}
+		for _, field := range want {
+			if !got[field] {
+				t.Errorf("missing field %q in details=%+v", field, eb.Error.Details)
+			}
+		}
+	}
+
+	t.Run("all validation fields merged", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/APP/messages",
+			`{"title":"","to":"a b","to_session":"bad","to_role":"boss","issue":"APP-999","reply_to":0}`, nil)
+		wantFields(t, rec, "to", "title", "to_session", "to_role", "issue", "reply_to")
+	})
+
+	t.Run("to_session object validation merged with title", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/APP/messages",
+			`{"title":"","to_session":{"actor":"BAD","session_id":"s1"}}`, nil)
+		wantFields(t, rec, "title", "to_session")
+	})
+
+	t.Run("invalid to_session does not persist message", func(t *testing.T) {
+		before := e.listMessages(t, "APP", "?all=true")
+		rec := e.do(t, "POST", "/v1/projects/APP/messages", `{"title":"valid","to_session":"bad"}`, nil)
+		wantFields(t, rec, "to_session")
+		after := e.listMessages(t, "APP", "?all=true")
+		if after.Total != before.Total || len(after.Items) != len(before.Items) {
+			t.Errorf("message created despite 422: before=%+v after=%+v", before, after)
+		}
+	})
+
+	t.Run("unknown project takes precedence over field validation", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/NOPE/messages", `{"title":"t","to_session":"bad","reply_to":0}`, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 404 || eb.Error.Code != "not_found" {
+			t.Errorf("code=%d err=%+v body=%s", rec.Code, eb, rec.Body.String())
+		}
+	})
+
+	t.Run("archived project takes precedence over field validation", func(t *testing.T) {
+		rec := e.do(t, "POST", "/v1/projects/ARC/messages", `{"title":"t","to_session":"bad","reply_to":0}`, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 409 || eb.Error.Code != "conflict" || len(eb.Error.Details) == 0 || eb.Error.Details[0].Reason != "project_not_active" {
+			t.Errorf("code=%d err=%+v body=%s", rec.Code, eb, rec.Body.String())
+		}
+	})
+}
+
+func TestMessageProjectKeyNormalizationAndToCaseInsensitive(t *testing.T) {
+	e := newEnv(t)
+	e.createProject(t, "APP", "sample-app")
+
+	// Lowercase project key in POST normalizes to uppercase and returns project: "APP".
+	rec := e.do(t, "POST", "/v1/projects/app/messages", `{"to":"Reviewer","title":"검토 요청"}`, nil)
+	if rec.Code != 201 {
+		t.Fatalf("POST lowercase project: %d %s", rec.Code, rec.Body.String())
+	}
+	var created model.Message
+	decodeJSON(t, rec, &created)
+	if created.Project != "APP" || created.To == nil || *created.To != "Reviewer" {
+		t.Errorf("created = %+v", created)
+	}
+
+	// Lowercase project key in GET lists APP messages, and ?to matches case-insensitively.
+	l := e.listMessages(t, "app", "?to=reviewer")
+	if l.Total != 1 || len(l.Items) != 1 || l.Items[0].Project != "APP" || *l.Items[0].To != "Reviewer" {
+		t.Errorf("GET app?to=reviewer = %+v", l)
+	}
+	if l := e.listMessages(t, "APP", "?to=REVIEWER"); l.Total != 1 {
+		t.Errorf("GET APP?to=REVIEWER = %+v", l)
+	}
+
+	// Whitespace-padded lowercase project key also normalizes.
+	e.putMessage(t, "%20app%20", `{"to":"app","title":"소문자"}`)
+	if l := e.listMessages(t, "APP", "?to=APP"); l.Total != 1 || *l.Items[0].To != "app" {
+		t.Errorf("GET APP?to=APP = %+v", l)
+	}
+
+	// Malformed project keys return 400 bad_request.
+	for _, bad := range []string{"a!", "1abc", "a", "abcdefghijk"} {
+		for _, method := range []string{"GET", "POST"} {
+			body := ""
+			if method == "POST" {
+				body = `{"title":"t"}`
+			}
+			rec := e.do(t, method, "/v1/projects/"+bad+"/messages", body, nil)
+			eb := decodeErr(t, rec)
+			if rec.Code != 400 || eb.Error.Code != "bad_request" {
+				t.Errorf("%s %s: code=%d err=%+v body=%s", method, bad, rec.Code, eb, rec.Body.String())
+			}
+		}
+	}
+
+	// Well-formed but nonexistent lowercase project key returns 404 not_found.
+	for _, method := range []string{"GET", "POST"} {
+		body := ""
+		if method == "POST" {
+			body = `{"title":"t"}`
+		}
+		rec := e.do(t, method, "/v1/projects/nope/messages", body, nil)
+		eb := decodeErr(t, rec)
+		if rec.Code != 404 || eb.Error.Code != "not_found" {
+			t.Errorf("%s nope: code=%d err=%+v body=%s", method, rec.Code, eb, rec.Body.String())
 		}
 	}
 }

@@ -1,18 +1,21 @@
-import { ArrowRightIcon, BellDotIcon, FolderIcon, LockIcon, ScaleIcon } from 'lucide-react'
+import { ArrowRightIcon, FolderIcon, HourglassIcon, LockIcon, ScaleIcon, ShieldAlertIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
-import { useOverview, useProjects } from '@/api/queries'
-import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DoingItem, type IssueSummary, type Overview, type QueueItem } from '@/api/types'
+import { useAgenda, useOverview, useProjects } from '@/api/queries'
+import { ISSUE_STATUSES, ISSUE_TYPES, PRIORITIES, type Activity, type DecisionItem, type DoingItem, type IssueSummary, type Overview, type QueueItem, type Session } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
+import { IssueLink } from '@/components/issue/issue-link'
 import { IssueRow } from '@/components/issue/issue-row'
-import { PriorityIcon, StatusIcon, TypeIcon } from '@/components/issue/meta'
+import { ActorChip, IssueKey, PriorityIcon, StatusIcon, TypeIcon } from '@/components/issue/meta'
 import { PageHeader } from '@/components/layout/page-header'
+import { LocationConflictBadge, WaitingStateBadge } from '@/components/session/session-meta'
 import { Badge } from '@/components/ui/badge'
 import { useFlash } from '@/hooks/use-flash'
-import { unacknowledgedListPath } from '@/lib/acknowledge'
+import { unverifiedListPath } from '@/lib/verification'
 import { PRIORITY_LABEL, PROJECT_STATUS_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
+import { sessionDetailPath, sessionKey } from '@/lib/session-tree'
 import { formatKst, formatKstTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -54,11 +57,11 @@ const ACCENT = {
     title: 'text-rose-300',
     badge: 'destructive',
   },
-  unacknowledged: {
-    section: 'border-sky-500/40 bg-sky-500/[0.04]',
-    header: 'border-sky-500/30 bg-sky-500/10',
-    title: 'text-sky-300',
-    badge: 'info',
+  unverified: {
+    section: 'border-rose-500/40 bg-rose-500/[0.04]',
+    header: 'border-rose-500/30 bg-rose-500/10',
+    title: 'text-rose-300',
+    badge: 'destructive',
   },
 } as const
 
@@ -77,28 +80,31 @@ function Section({
   to,
   icon,
   accent,
+  extra,
   children,
 }: {
   title: string
-  total: number
+  total?: number
   to?: string
   icon?: ReactNode
   accent?: keyof typeof ACCENT
+  extra?: ReactNode
   children: ReactNode
 }) {
-  const tone = accent && total > 0 ? ACCENT[accent] : null
+  const tone = accent && total !== undefined && total > 0 ? ACCENT[accent] : null
   return (
     <section className={cn('flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/40', tone?.section)}>
       <header className={cn('flex h-9 items-center gap-2 border-b px-3', tone?.header)}>
         {icon}
         <h3 className={cn('text-xs font-semibold', tone?.title)}>{title}</h3>
-        {tone ? (
+        {total === undefined ? null : tone ? (
           <Badge variant={tone.badge} className="tabular-nums">
             {total}
           </Badge>
         ) : (
           <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}</span>
         )}
+        {extra}
         {to ? (
           <Link to={to} className="ml-auto inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground">
             전체 보기 <ArrowRightIcon className="size-3" />
@@ -114,6 +120,53 @@ function Section({
 const LIST_ROWS = 5
 const LIST_HEIGHT = `calc(${LIST_ROWS} * 2rem + ${LIST_ROWS - 1}px)`
 
+function DecisionWaitingSessionRow({ session }: { session: Session }) {
+  return (
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-2 py-1 text-xs transition-colors hover:bg-accent/40">
+      <ActorChip actor={session.actor} className="shrink-0" />
+      <Link to={sessionDetailPath(session)} className="font-mono text-foreground/90 break-all hover:underline">
+        {session.session_id}
+      </Link>
+      {session.state ? <WaitingStateBadge state={session.state} /> : null}
+      <LocationConflictBadge conflicts={session.location_conflicts} />
+      {session.state_reason ? (
+        <span className="min-w-0 max-w-full truncate text-[0.6875rem] text-muted-foreground" title={session.state_reason}>
+          {session.state_reason}
+        </span>
+      ) : null}
+    </li>
+  )
+}
+
+/** 결정 필요 이슈와 연결된 대기 세션을 그린다. 세션 링크는 IssueRow의 <a> 밖에 형제로 둔다. */
+function DecisionList({ items, flash }: { items: DecisionItem[]; flash: Set<string> }) {
+  return (
+    <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
+      {items.length === 0 ? (
+        <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
+      ) : (
+        <ul className="divide-y divide-border/60">
+          {items.map((item) => {
+            const waiting = item.waiting_sessions ?? []
+            return (
+              <li key={item.key} className={waiting.length > 0 ? '[&>a]:border-b-0' : undefined}>
+                <IssueRow issue={item} compact flash={flash.has(item.key)} />
+                {waiting.length > 0 ? (
+                  <ul className="mr-2 mb-1.5 ml-4 space-y-0.5 border-l border-amber-500/30 pl-2">
+                    {waiting.map((s) => (
+                      <DecisionWaitingSessionRow key={sessionKey(s)} session={s} />
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function IssueList({ items, flash, showReady }: { items: (IssueSummary | QueueItem)[]; flash: Set<string>; showReady?: boolean }) {
   return (
     <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
@@ -121,6 +174,30 @@ function IssueList({ items, flash, showReady }: { items: (IssueSummary | QueueIt
         <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
       ) : (
         items.map((i) => <IssueRow key={i.key} issue={i} compact flash={flash.has(i.key)} showReady={showReady} />)
+      )}
+    </div>
+  )
+}
+
+/** 검증 필요 이슈 목록. verification_note가 있으면 행 아래에 한 줄 미리보기를 붙인다. */
+function UnverifiedList({ items, flash }: { items: IssueSummary[]; flash: Set<string> }) {
+  return (
+    <div className="overflow-y-auto" style={{ height: LIST_HEIGHT }}>
+      {items.length === 0 ? (
+        <EmptyState className="flex h-full items-center justify-center py-0">없음</EmptyState>
+      ) : (
+        <ul className="divide-y divide-border/60">
+          {items.map((item) => (
+            <li key={item.key} className={item.verification_note ? '[&>a]:border-b-0' : undefined}>
+              <IssueRow issue={item} compact flash={flash.has(item.key)} />
+              {item.verification_note ? (
+                <p className="mr-3 mb-1.5 ml-9 truncate text-[0.6875rem] text-muted-foreground" title={item.verification_note}>
+                  {item.verification_note}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )
@@ -209,11 +286,50 @@ function Counts({ overview }: { overview: Overview }) {
   )
 }
 
+function WaitingSessionList({ items }: { items: Session[] }) {
+  return (
+    <ul className="max-h-60 divide-y divide-border/60 overflow-y-auto">
+      {items.map((s) => (
+        <li key={sessionKey(s)} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-3 py-2 text-xs transition-colors hover:bg-accent/40">
+          <ActorChip actor={s.actor} className="shrink-0" />
+          <Link to={sessionDetailPath(s)} className="font-mono text-foreground/90 hover:underline">
+            {s.session_id}
+          </Link>
+          {s.state ? <WaitingStateBadge state={s.state} /> : null}
+          {s.state_reason ? (
+            <span className="min-w-0 flex-1 truncate text-muted-foreground" title={s.state_reason}>
+              {s.state_reason}
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
+          {s.issue ? (
+            <IssueLink issueKey={s.issue} className="shrink-0 hover:underline">
+              <IssueKey issueKey={s.issue} className="text-foreground/80" />
+            </IssueLink>
+          ) : null}
+          <time
+            dateTime={s.state_at ?? s.last_seen_at}
+            title={`${formatKst(s.state_at ?? s.last_seen_at)} KST`}
+            className="shrink-0 font-mono text-[0.6875rem] tabular-nums text-muted-foreground"
+          >
+            {formatKstTime(s.state_at ?? s.last_seen_at)}
+          </time>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function ProjectOverview({ projectKey }: { projectKey: string }) {
   const q = useOverview(projectKey)
+  const agendaQ = useAgenda(projectKey)
   const o = q.data
+  const waitingSection = agendaQ.data?.projects[0]?.user_turn.waiting_sessions
+  const waitingSessions = waitingSection?.items ?? []
+  const waitingTotal = waitingSection?.total ?? 0
   const issues = o
-    ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unacknowledged.items]
+    ? [...o.doing.items, ...o.review.items, ...o.blocked.items, ...o.decisions.items, ...o.next.items, ...o.unverified.items]
     : undefined
   const flash = useFlash(issues, (i) => i.key, (i) => i.updated_at)
   const flashActivity = useFlash(o?.recent_activity.items, (a: Activity) => a.id, () => '')
@@ -253,9 +369,18 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
           </div>
         </Group>
         <Group title="내 차례">
+          {agendaQ.isError ? (
+            <Section title="대기 세션" to="/sessions?status=waiting" icon={<HourglassIcon className="size-3.5 text-amber-400" />}>
+              <QueryError error={agendaQ.error} onRetry={() => void agendaQ.refetch()} className="m-3" />
+            </Section>
+          ) : waitingTotal > 0 ? (
+            <Section title="대기 세션" total={waitingTotal} to="/sessions?status=waiting" icon={<HourglassIcon className="size-3.5 text-amber-400" />} accent="decision">
+              <WaitingSessionList items={waitingSessions} />
+            </Section>
+          ) : null}
           <div className="grid gap-3 xl:grid-cols-3">
             <Section title="결정 필요" total={o.decisions.total} icon={<ScaleIcon className="size-3.5 text-amber-400" />} accent="decision">
-              <IssueList items={o.decisions.items} flash={flash} />
+              <DecisionList items={o.decisions.items} flash={flash} />
             </Section>
             <Section
               title="검토"
@@ -280,13 +405,14 @@ function ProjectOverview({ projectKey }: { projectKey: string }) {
               <IssueList items={o.next.items} flash={flash} showReady />
             </Section>
             <Section
-              title="미확인"
-              total={o.unacknowledged.total}
-              to={unacknowledgedListPath()}
-              icon={<BellDotIcon className="size-3.5" />}
-              accent="unacknowledged"
+              title="검증 필요"
+              total={o.unverified.total}
+              to={unverifiedListPath()}
+              icon={<ShieldAlertIcon className="size-3.5 text-rose-400" />}
+              accent="unverified"
+              extra={o.unverified.total > 0 ? <span className="text-[0.6875rem] text-rose-300/80">릴리즈 차단</span> : null}
             >
-              <IssueList items={o.unacknowledged.items} flash={flash} />
+              <UnverifiedList items={o.unverified.items} flash={flash} />
             </Section>
           </div>
         </Group>

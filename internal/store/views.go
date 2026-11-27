@@ -215,9 +215,30 @@ func (s *Store) Labels(ctx context.Context, projects []string) ([]LabelCount, er
 	return out, rows.Err()
 }
 
-// notDeleted are the statuses of issues that have not been soft deleted.
-var notDeleted = []model.IssueStatus{
-	model.StatusBacklog, model.StatusDoing, model.StatusReview, model.StatusDone, model.StatusCancelled,
+// activeForVerification are the statuses of issues that count toward the
+// verification gate: every status except cancelled and deleted (done is included).
+var activeForVerification = []model.IssueStatus{
+	model.StatusBacklog, model.StatusDoing, model.StatusReview, model.StatusDone,
+}
+
+// ListUnverifiedIssues returns all non-cancelled, non-deleted issues (including
+// done) with verification_state = 'pending' for project, optionally scoped to
+// milestoneID, ordered newest updated first.
+func (s *Store) ListUnverifiedIssues(ctx context.Context, project string, milestoneID *int64) ([]model.IssueSummary, error) {
+	f := IssueFilter{
+		Statuses:           activeForVerification,
+		VerificationStates: []model.VerificationState{model.VerificationPending},
+		Sort:               []Sort{{Field: "updated_at", Desc: true}},
+		Limit:              -1,
+	}
+	if project != "" {
+		f.Projects = []string{project}
+	}
+	if milestoneID != nil {
+		f.Milestones = []int64{*milestoneID}
+	}
+	items, _, err := s.ListIssues(ctx, f)
+	return items, err
 }
 
 // Section is a capped list with its full count.
@@ -243,9 +264,9 @@ type Overview struct {
 	Doing          Section[model.DoingItem]    `json:"doing"`
 	Review         Section[model.IssueSummary] `json:"review"`
 	Blocked        Section[model.QueueItem]    `json:"blocked"`
-	Decisions      Section[model.IssueSummary] `json:"decisions"`
+	Decisions      Section[model.DecisionItem] `json:"decisions"`
 	Next           Section[model.QueueItem]    `json:"next"`
-	Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
+	Unverified     Section[model.IssueSummary] `json:"unverified"`
 	RecentActivity Section[model.Activity]     `json:"recent_activity"`
 }
 
@@ -324,25 +345,25 @@ func (s *Store) Overview(ctx context.Context, key string, limit int) (*Overview,
 		return nil, err
 	}
 	o.Blocked = Section[model.QueueItem]{Total: total, Items: items}
-	decisions, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: model.OpenStatuses, decisionNeeded: true, Limit: limit})
-	if err != nil {
+	if o.Decisions, err = s.decisionsSection(ctx, projects, limit); err != nil {
 		return nil, err
 	}
-	o.Decisions = Section[model.IssueSummary]{Total: total, Items: decisions}
 	next, total, err := s.Queue(ctx, QueueFilter{Projects: projects, Statuses: []model.IssueStatus{model.StatusBacklog}, OnlyReady: true, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
 	o.Next = Section[model.QueueItem]{Total: total, Items: next}
-	notAcknowledged := false
-	unacked, total, err := s.ListIssues(ctx, IssueFilter{
-		Projects: projects, Statuses: notDeleted, Acknowledged: &notAcknowledged,
-		Sort: []Sort{{Field: "created_at", Desc: true}}, Limit: limit,
+	unverified, total, err := s.ListIssues(ctx, IssueFilter{
+		Projects:           projects,
+		Statuses:           activeForVerification,
+		VerificationStates: []model.VerificationState{model.VerificationPending},
+		Sort:               []Sort{{Field: "updated_at", Desc: true}},
+		Limit:              limit,
 	})
 	if err != nil {
 		return nil, err
 	}
-	o.Unacknowledged = Section[model.IssueSummary]{Total: total, Items: unacked}
+	o.Unverified = Section[model.IssueSummary]{Total: total, Items: unverified}
 	acts, total, err := s.ListActivity(ctx, ActivityFilter{Projects: projects, Limit: limit})
 	if err != nil {
 		return nil, err
@@ -364,10 +385,11 @@ type AgendaProject struct {
 	// Dormant counts the open issues without activity for model.IssueDormantAfter.
 	Dormant  int `json:"dormant"`
 	UserTurn struct {
-		Review         Section[model.IssueSummary] `json:"review"`
-		Decisions      Section[model.IssueSummary] `json:"decisions"`
-		Unacknowledged Section[model.IssueSummary] `json:"unacknowledged"`
-		Tasks          Section[model.IssueSummary] `json:"tasks"`
+		Review          Section[model.IssueSummary] `json:"review"`
+		Decisions       Section[model.DecisionItem] `json:"decisions"`
+		Unverified      Section[model.IssueSummary] `json:"unverified"`
+		Tasks           Section[model.IssueSummary] `json:"tasks"`
+		WaitingSessions Section[model.Session]      `json:"waiting_sessions"`
 	} `json:"user_turn"`
 	Agent struct {
 		Doing Section[model.DoingItem] `json:"doing"`
@@ -413,11 +435,16 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 		if err != nil {
 			return nil, err
 		}
+		waitingSessions, err := s.waitingSessionsSection(ctx, key, limit)
+		if err != nil {
+			return nil, err
+		}
 		var p AgendaProject
 		p.Project = o.Project
 		p.Dormant = dormantTotal
-		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unacknowledged = o.Review, o.Decisions, o.Unacknowledged
+		p.UserTurn.Review, p.UserTurn.Decisions, p.UserTurn.Unverified = o.Review, o.Decisions, o.Unverified
 		p.UserTurn.Tasks = Section[model.IssueSummary]{Total: taskTotal, Items: tasks}
+		p.UserTurn.WaitingSessions = waitingSessions
 		p.Agent.Doing, p.Agent.Next = o.Doing, o.Next
 		p.Waiting.Blocked = o.Blocked
 		p.Waiting.External = Section[model.IssueSummary]{Total: total, Items: external}
@@ -426,8 +453,135 @@ func (s *Store) Agenda(ctx context.Context, keys []string, limit int) (*Agenda, 
 	return a, nil
 }
 
-// doingSection lists the doing issues with the session holding each: the one
-// that last moved it to doing, and when that session was last active anywhere.
+// waitingSessionsSection lists waiting sessions belonging to project, oldest
+// state_at first (tie-breaking by actor, session_id). A session belongs to the
+// project of its linked issue, or to its last_project when it has no issue.
+func (s *Store) waitingSessionsSection(ctx context.Context, project string, limit int) (Section[model.Session], error) {
+	now := s.stamp()
+	staleCutoff, waitCutoff := sessionCutoffs(now)
+	const from = ` from (
+		select s.actor_id, s.session_id, s.first_seen_at, s.last_seen_at, s.last_host, s.parent_actor_id, s.parent_session_id,
+			s.role, i.key as issue_key, s.location, s.state, s.state_reason, s.state_at, s.updated_at,
+			` + sessionLastProject + ` as last_project, ip.key as issue_project
+		from (
+			select s.*, ` + sessionEffectiveIssueExpr + ` as effective_issue_id
+			from session s
+			where s.state is not null and s.state_at is not null and s.state_at >= ?
+		) s
+		left join issue i on i.id = s.effective_issue_id
+		left join project ip on ip.id = i.project_id
+	) x where coalesce(x.issue_project, x.last_project) = ?`
+	var total int
+	if err := s.db.QueryRowContext(ctx, `select count(*)`+from, staleCutoff, waitCutoff, waitCutoff, project).Scan(&total); err != nil {
+		return Section[model.Session]{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `select x.actor_id, x.session_id, x.first_seen_at, x.last_seen_at, x.last_host, x.parent_actor_id, x.parent_session_id,
+		x.role, x.issue_key, x.location, x.state, x.state_reason, x.state_at, x.updated_at, x.last_project`+from+
+		` order by x.state_at asc, x.actor_id asc, x.session_id asc limit ?`, staleCutoff, waitCutoff, waitCutoff, project, limit)
+	if err != nil {
+		return Section[model.Session]{}, err
+	}
+	defer rows.Close()
+	items := []model.Session{}
+	for rows.Next() {
+		item, err := scanSession(rows, now)
+		if err != nil {
+			return Section[model.Session]{}, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return Section[model.Session]{}, err
+	}
+	ptrs := make([]*model.Session, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := s.attachLocationConflicts(ctx, now, ptrs...); err != nil {
+		return Section[model.Session]{}, err
+	}
+	return Section[model.Session]{Total: total, Items: items}, nil
+}
+
+// decisionsSection lists open decision-needed issues for projects along with any
+// active waiting sessions (within SessionWaitingHold) whose effective issue
+// matches each issue's key.
+func (s *Store) decisionsSection(ctx context.Context, projects []string, limit int) (Section[model.DecisionItem], error) {
+	issues, total, err := s.ListIssues(ctx, IssueFilter{
+		Projects:       projects,
+		Statuses:       model.OpenStatuses,
+		decisionNeeded: true,
+		Limit:          limit,
+	})
+	if err != nil {
+		return Section[model.DecisionItem]{}, err
+	}
+	out := make([]model.DecisionItem, len(issues))
+	for i, it := range issues {
+		out[i] = model.DecisionItem{IssueSummary: it, WaitingSessions: []model.Session{}}
+	}
+	if len(issues) == 0 {
+		return Section[model.DecisionItem]{Total: total, Items: out}, nil
+	}
+	now := s.stamp()
+	staleCutoff, waitCutoff := sessionCutoffs(now)
+	args := make([]any, 0, 3+len(issues))
+	args = append(args, staleCutoff, waitCutoff, waitCutoff)
+	for _, it := range issues {
+		args = append(args, it.Key)
+	}
+	rows, err := s.db.QueryContext(ctx, `select s.actor_id, s.session_id, s.first_seen_at, s.last_seen_at, s.last_host, s.parent_actor_id, s.parent_session_id,
+		s.role, i.key as issue_key, s.location, s.state, s.state_reason, s.state_at, s.updated_at, `+sessionLastProject+` as last_project
+		from (
+			select s.*, `+sessionEffectiveIssueExpr+` as effective_issue_id
+			from session s
+			where s.state is not null and s.state_at is not null and s.state_at >= ?
+		) s
+		join issue i on i.id = s.effective_issue_id
+		where i.key in (`+placeholders(len(issues))+`)
+		order by s.state_at asc, s.actor_id asc, s.session_id asc`, args...)
+	if err != nil {
+		return Section[model.DecisionItem]{}, err
+	}
+	defer rows.Close()
+	var matched []model.Session
+	for rows.Next() {
+		sess, err := scanSession(rows, now)
+		if err != nil {
+			return Section[model.DecisionItem]{}, err
+		}
+		matched = append(matched, *sess)
+	}
+	if err := rows.Err(); err != nil {
+		return Section[model.DecisionItem]{}, err
+	}
+	if len(matched) == 0 {
+		return Section[model.DecisionItem]{Total: total, Items: out}, nil
+	}
+	ptrs := make([]*model.Session, len(matched))
+	for i := range matched {
+		ptrs[i] = &matched[i]
+	}
+	if err := s.attachLocationConflicts(ctx, now, ptrs...); err != nil {
+		return Section[model.DecisionItem]{}, err
+	}
+	byKey := make(map[string][]model.Session, len(issues))
+	for _, sess := range matched {
+		if sess.Issue != nil {
+			byKey[*sess.Issue] = append(byKey[*sess.Issue], sess)
+		}
+	}
+	for i := range out {
+		if ws := byKey[out[i].Key]; len(ws) > 0 {
+			out[i].WaitingSessions = ws
+		}
+	}
+	return Section[model.DecisionItem]{Total: total, Items: out}, nil
+}
+
+// doingSection lists the doing issues with the session holding each. An open
+// stored claim takes precedence; doing issues without an open claim fall back
+// to the session that last moved them to doing.
 func (s *Store) doingSection(ctx context.Context, projects []string, limit int) (Section[model.DoingItem], error) {
 	items, total, err := s.ListIssues(ctx, IssueFilter{Projects: projects, Statuses: []model.IssueStatus{model.StatusDoing}, Limit: limit})
 	if err != nil {
@@ -436,10 +590,35 @@ func (s *Store) doingSection(ctx context.Context, projects []string, limit int) 
 	now := s.now()
 	out := make([]model.DoingItem, len(items))
 	for n, it := range items {
+		var issueID int64
+		if err := s.db.QueryRowContext(ctx, `select id from issue where key = ?`, it.Key).Scan(&issueID); err != nil {
+			return Section[model.DoingItem]{}, fmt.Errorf("holder of %s: %w", it.Key, err)
+		}
+		open, err := getOpenClaim(ctx, s.db, issueID)
+		if err != nil {
+			return Section[model.DoingItem]{}, fmt.Errorf("holder of %s: %w", it.Key, err)
+		}
+		if open != nil {
+			lastActive := open.lastSeenAt
+			if !open.hasSession {
+				lastActive = open.claimedAt
+			}
+			out[n] = model.DoingItem{
+				IssueSummary: it,
+				Holder: model.Holder{
+					Actor:        open.actor,
+					SessionID:    open.sessionID,
+					LastActiveAt: lastActive,
+					Stale:        !open.validAt(now),
+					Source:       model.HolderSourceClaim,
+				},
+			}
+			continue
+		}
 		var h model.Holder
 		var last string
 		// ponytail: one query per doing issue; the section holds at most limit (50) items.
-		err := s.db.QueryRowContext(ctx, `select a.actor_id, a.session_id,
+		err = s.db.QueryRowContext(ctx, `select a.actor_id, a.session_id,
 			(select max(b.at) from activity b where b.session_id = a.session_id)
 			from activity a join issue i on i.id = a.issue_id
 			where i.key = ? and json_extract(a.changes, '$.status.to') = 'doing'
@@ -451,6 +630,7 @@ func (s *Store) doingSection(ctx context.Context, projects []string, limit int) 
 			return Section[model.DoingItem]{}, err
 		}
 		h.Stale = now.Sub(h.LastActiveAt.Time()) > model.StaleAfter
+		h.Source = model.HolderSourceActivity
 		out[n] = model.DoingItem{IssueSummary: it, Holder: h}
 	}
 	return Section[model.DoingItem]{Total: total, Items: out}, nil

@@ -115,6 +115,37 @@ func TestIssueFilterQuery(t *testing.T) {
 	}
 }
 
+func TestMessageFilterQuery(t *testing.T) {
+	f := MessageFilter{
+		To:        "reviewer",
+		ToSession: "claude/sess-1",
+		ToRole:    "subagent",
+		Issue:     "AGB-1",
+		ReplyTo:   7,
+		UnreadBy:  "AGB",
+		All:       true,
+		Page:      Page{Limit: 20, Offset: 40},
+	}
+	want := url.Values{
+		"to": {"reviewer"}, "to_session": {"claude/sess-1"}, "to_role": {"subagent"},
+		"issue": {"AGB-1"}, "reply_to": {"7"}, "unread_by": {"AGB"}, "all": {"true"},
+		"limit": {"20"}, "offset": {"40"},
+	}
+	if got := f.Values(); got.Encode() != want.Encode() {
+		t.Errorf("values = %v, want %v", got, want)
+	}
+	if (MessageFilter{}).Values().Encode() != "" {
+		t.Errorf("empty filter must produce no parameters: %q", (MessageFilter{}).Values().Encode())
+	}
+	rec := newRecorder(t)
+	if _, err := rec.client().ListMessages(context.Background(), "CLI", f); err != nil {
+		t.Fatal(err)
+	}
+	if rec.method != "GET" || rec.path != "/v1/projects/CLI/messages" || rec.query.Encode() != want.Encode() {
+		t.Errorf("request = %s %s?%s", rec.method, rec.path, rec.query.Encode())
+	}
+}
+
 func TestTypedMethodsBuildPaths(t *testing.T) {
 	rec := newRecorder(t)
 	c := rec.client()
@@ -182,11 +213,12 @@ func TestTypedMethodsBuildPaths(t *testing.T) {
 		{"list by milestone", func() (*Response, error) {
 			return c.ListIssues(ctx, IssueFilter{Milestone: "3,none"})
 		}, "GET", "/v1/issues", "milestone=3%2Cnone", ""},
-		{"acknowledge", func() (*Response, error) { return c.Acknowledge(ctx, "CLI-1") }, "POST", "/v1/issues/CLI-1/acknowledge", "", ""},
-		{"unacknowledge", func() (*Response, error) { return c.Unacknowledge(ctx, "CLI-1") }, "DELETE", "/v1/issues/CLI-1/acknowledge", "", ""},
-		{"list unacknowledged", func() (*Response, error) {
-			return c.ListIssues(ctx, IssueFilter{Project: "CLI", Acknowledged: "false"})
-		}, "GET", "/v1/issues", "acknowledged=false&project=CLI", ""},
+		{"verify", func() (*Response, error) { return c.Verify(ctx, "CLI-1", "") }, "POST", "/v1/issues/CLI-1/verify", "", ""},
+		{"verify with version", func() (*Response, error) { return c.Verify(ctx, "CLI-1", "3") }, "POST", "/v1/issues/CLI-1/verify", "", ""},
+		{"unverify", func() (*Response, error) { return c.Unverify(ctx, "CLI-1", "") }, "DELETE", "/v1/issues/CLI-1/verify", "", ""},
+		{"list pending verification", func() (*Response, error) {
+			return c.ListIssues(ctx, IssueFilter{Project: "CLI", Verification: "pending"})
+		}, "GET", "/v1/issues", "project=CLI&verification=pending", ""},
 		{"comment", func() (*Response, error) { return c.AddComment(ctx, "CLI-1", "댓글", "", "") }, "POST", "/v1/issues/CLI-1/comments", "", `{"body":"댓글"}`},
 		{"comment with summary", func() (*Response, error) {
 			return c.AddComment(ctx, "CLI-1", "댓글", "서버 랭킹 함수 구현", "")

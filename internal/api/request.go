@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,23 @@ func readBody(w http.ResponseWriter, r *http.Request, allowed map[string]bool) (
 	return readBodyLimit(w, r, allowed, maxBodyBytes, errPayloadTooLarge)
 }
 
+// readOptionalBody decodes an optional JSON object request body. An empty or
+// whitespace-only body yields an empty map without error.
+func readOptionalBody(w http.ResponseWriter, r *http.Request, allowed map[string]bool) (body, *apiError) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return nil, errPayloadTooLarge
+		}
+		return nil, badRequest("요청 본문을 읽지 못했습니다.")
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return body{}, nil
+	}
+	return decodeBodyObject(raw, allowed)
+}
+
 // readBodyLimit is readBody with its own size limit and the error for a body over it.
 func readBodyLimit(w http.ResponseWriter, r *http.Request, allowed map[string]bool, limit int64, tooLarge *apiError) (body, *apiError) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
@@ -44,6 +62,10 @@ func readBodyLimit(w http.ResponseWriter, r *http.Request, allowed map[string]bo
 		}
 		return nil, badRequest("요청 본문을 읽지 못했습니다.")
 	}
+	return decodeBodyObject(raw, allowed)
+}
+
+func decodeBodyObject(raw []byte, allowed map[string]bool) (body, *apiError) {
 	var b body
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return nil, badRequest("요청 본문이 JSON 객체가 아닙니다.", Detail{Message: err.Error()})
@@ -244,11 +266,40 @@ func (h *handler) storeError(r *http.Request, err error) *apiError {
 	var rerr *store.RefError
 	var ierr *store.ImmutableError
 	var merr *store.MetadataDiffError
+	var cerr *store.ErrIssueClaimed
+	var uerr *store.UnverifiedIssuesError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return notFound("대상이 없습니다.")
+	case errors.As(err, &uerr):
+		details := make([]Detail, len(uerr.Issues))
+		for i, it := range uerr.Issues {
+			msg := it.Key + ": " + it.Title
+			if it.VerificationNote != nil && *it.VerificationNote != "" {
+				msg = it.Key + ": " + *it.VerificationNote
+			}
+			details[i] = Detail{Field: "verification", Reason: "unverified", Message: msg}
+		}
+		return &apiError{
+			Status:  http.StatusConflict,
+			Code:    "unverified_issues",
+			Message: "검증되지 않은 항목이 남아 마일스톤을 닫을 수 없습니다.",
+			Details: details,
+		}
+	case errors.As(err, &cerr):
+		return &apiError{
+			Status:  http.StatusConflict,
+			Code:    "claimed",
+			Message: "다른 세션이 점유 중인 이슈입니다.",
+			Details: []Detail{{Field: "claim", Reason: "claimed", Message: cerr.Actor + "/" + cerr.SessionID + " 세션이 점유 중입니다."}},
+		}
+	case errors.Is(err, store.ErrClaimForbidden):
+		return forbidden("다른 세션의 점유는 해제할 수 없습니다.",
+			Detail{Field: "claim", Reason: "not_claim_holder", Message: "점유한 세션 본인이나 사용자 행위자만 점유를 해제할 수 있습니다."})
 	case errors.Is(err, store.ErrDuplicateKey):
 		return conflict("duplicate_key", "같은 키가 이미 있습니다.")
+	case errors.Is(err, store.ErrSessionExists):
+		return conflict("exists", "같은 행위자의 같은 세션 ID가 이미 있습니다.")
 	case errors.Is(err, store.ErrProjectNotActive):
 		return conflict("project_not_active", "활성 상태가 아닌 프로젝트의 이슈, 주제, 마일스톤, 기록 문서, 메시지는 쓸 수 없습니다.")
 	case errors.As(err, &ierr):

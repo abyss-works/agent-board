@@ -203,13 +203,15 @@ const Usage = `사용법: agb <명령> [옵션]
   whoami            현재 행위자
   actors            선언된 행위자 목록
   stats             서버 성능 지표
+  session           에이전트 세션 목록·단건·수정·자식 세션 시작 (마지막 호출 30분 뒤 멈춤)
 
 프로젝트와 이슈:
   project           프로젝트 목록·단건·생성·수정·삭제·현황·활동
   topic             대주제·주제 목록·생성·수정·삭제
   milestone         마일스톤 목록·단건·생성·수정·닫기·다시 열기·삭제
   template          이슈 종류별 본문 템플릿 목록·출력
-  issue             이슈 목록·단건·생성·수정·삭제·확인·댓글·활동
+  issue             이슈 목록·단건·생성·수정·삭제·검증·댓글·활동
+  release           릴리즈 전 미검증 항목 점검 (release check)
   doc               기록 문서 작성·검사·등록·동기화·상태 수정·검색·조회
   msg               프로젝트별 짧게 사는 메시지 넣기·목록·조회·지우기
   init              저장소 최상위에 .agb.json 만들기 (agb 를 지식 저장소로 씀)
@@ -218,6 +220,7 @@ const Usage = `사용법: agb <명령> [옵션]
   agenda            프로젝트별 사용자 차례, 에이전트 할 일, 대기 (별칭 next)
   digest            시점 이후 프로젝트별 변경 요약 (--since 3d)
   activity          전체 활동 기록
+  watch             이벤트 스트림 구독 (첫 일치 이벤트에서 종료)
   board             상태별 보드
   queue             우선순위 큐
   labels            라벨과 사용 개수
@@ -231,7 +234,7 @@ const Usage = `사용법: agb <명령> [옵션]
   doc-format        기록 문서의 형식, 메타데이터, 상태, 참조 표기, 오류와 대처
   migrate-v0.8      v0.8 에서 v0.9 로 옮겨 오는 절차
 
-공통 옵션 (명령 앞뒤 어디에나):
+공통 옵션 (명령 앞뒤 어디에나. 단, 같은 이름의 명령 옵션이 있으면 명령 뒤에서는 명령 옵션, 공통 옵션은 명령 앞만):
   --json            JSON 출력 (서버 응답 그대로). 기본: 파이프·파일일 때
   --fields <a,b>    이 필드만 남김. 점 경로(files.name)로 중첩 값을 고름. 목록은 항목마다. JSON 출력을 강제
   --text            --fields 와 함께. 항목마다 한 줄, 필드는 탭으로 구분 (아래 "--fields 와 --text")
@@ -275,8 +278,8 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb hel
 `
 
 var root = &command{name: "agb", subs: []*command{
-	configCmd, loginCmd, logoutCmd, skillCmd, setupCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, docCmd, msgCmd, initCmd,
-	agendaCmd, digestCmd, activityCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
+	configCmd, loginCmd, logoutCmd, skillCmd, setupCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, sessionCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, releaseCmd, docCmd, msgCmd, initCmd,
+	agendaCmd, digestCmd, activityCmd, watchCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
 }}
 
 // Run executes args and returns the exit code: 0 success, 1 API or
@@ -660,10 +663,11 @@ func (a *App) emitMany(g *globals, resps []*client.Response, render func(w io.Wr
 	return nil
 }
 
-// leafFlags builds a leaf command's flag set with the global flags added.
-func leafFlags(name string, g *globals) *flag.FlagSet {
+// leafFlags builds a leaf command's flag set with the global flags added,
+// skipping any flag names handled by the command itself.
+func leafFlags(name string, g *globals, skip ...string) *flag.FlagSet {
 	fs := newFlagSet(name)
-	g.addTo(fs)
+	g.addToExcept(fs, skip...)
 	return fs
 }
 

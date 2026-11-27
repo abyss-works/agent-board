@@ -1,5 +1,5 @@
 import type { Activity } from '@/api/types'
-import { fieldLabel, statusLabel, typeLabel } from './labels'
+import { fieldLabel, statusLabel, typeLabel, verificationStateLabel } from './labels'
 
 export interface ChangeLine {
   field: string
@@ -26,7 +26,7 @@ export function formatValue(value: unknown, field?: string, opts?: DescribeOptio
   if (field === 'topic' && typeof value === 'number') return opts?.topicName?.(value) ?? `주제 #${value}`
   if (field === 'milestone' && typeof value === 'number') return opts?.milestoneName?.(value) ?? `마일스톤 #${value}`
   const text = typeof value === 'string' ? value : JSON.stringify(value)
-  if (field === 'acknowledged') return value === true ? '확인됨' : '미확인'
+  if (field === 'verification_state') return verificationStateLabel(text)
   if (field === 'status') return statusLabel(text)
   if (field === 'type') return typeLabel(text)
   return text.length > MAX ? `${text.slice(0, MAX)}…` : text

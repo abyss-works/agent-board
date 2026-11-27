@@ -111,6 +111,37 @@ func git(dir string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
+// sessionLocation reads the location of a session from the repository at
+// dir: the origin URL without credentials, the branch, the absolute path of
+// the top folder, the short HEAD and the number of uncommitted files. Values
+// git cannot give are left out. File contents are never read.
+func sessionLocation(dir string) (map[string]any, error) {
+	top, err := git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, fmt.Errorf("%s는 git 저장소가 아닙니다: %w", dir, err)
+	}
+	loc := map[string]any{"worktree": filepath.FromSlash(top)}
+	if remote := remoteURL(dir); remote != "" {
+		loc["repo_remote"] = remote
+	}
+	if branch, err := git(dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && branch != "" {
+		loc["branch"] = branch
+	}
+	if head, err := git(dir, "rev-parse", "--short", "HEAD"); err == nil && head != "" {
+		loc["head"] = head
+	}
+	status, err := git(dir, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	dirty := 0
+	if status != "" {
+		dirty = len(strings.Split(status, "\n"))
+	}
+	loc["dirty_count"] = dirty
+	return loc, nil
+}
+
 // latestLocation returns the newest location part in activity bodies listed
 // newest first, with the index of its record, or -1 when there is none.
 func latestLocation(bodies []string) (string, int) {
@@ -157,6 +188,7 @@ func (a *App) printLatestLocation(ctx context.Context, c *client.Client, resp *c
 	}
 	loc, n := latestLocation(bodies)
 	if n < 0 {
+		a.printClaimSessionLocation(ctx, c, key)
 		return nil
 	}
 	it := l.Items[n]
@@ -166,4 +198,80 @@ func (a *App) printLatestLocation(ctx context.Context, c *client.Client, resp *c
 	}
 	fmt.Fprintln(a.Stdout, strings.TrimPrefix(loc, locationHeading+"\n"))
 	return nil
+}
+
+// printClaimSessionLocation falls back to the open claim's session location
+// when no comment carries a "## 작업 위치" section. Errors are ignored so older
+// servers or missing sessions never break `issue get`.
+func (a *App) printClaimSessionLocation(ctx context.Context, c *client.Client, key string) {
+	claimsResp, err := c.ListIssueClaims(ctx, key, client.Page{Limit: 10})
+	if err != nil {
+		return
+	}
+	claims, err := decode[listOf[model.IssueClaim]](claimsResp)
+	if err != nil {
+		return
+	}
+	var open *model.IssueClaim
+	for i := range claims.Items {
+		if claims.Items[i].ReleasedAt == nil {
+			open = &claims.Items[i]
+			break
+		}
+	}
+	if open == nil {
+		return
+	}
+	sessResp, err := c.GetSession(ctx, open.Actor, open.SessionID)
+	if err != nil {
+		return
+	}
+	sess, err := decode[model.Session](sessResp)
+	if err != nil || sess.Location == nil {
+		return
+	}
+	loc := sess.Location
+	fmt.Fprintf(a.Stdout, "\n== 마지막 작업 위치 (%s, %s/%s) ==\n", formatTime(loc.ReportedAt, a.Location), sess.Actor, sess.SessionID)
+	if sess.LastHost != "" && sess.LastHost != c.ClientHost {
+		fmt.Fprintf(a.Stdout, "다른 호스트(%s)에서 남긴 기록입니다. 아래 상태는 그 호스트에만 있습니다.\n", sess.LastHost)
+	}
+	if len(sess.LocationConflicts) > 0 {
+		fmt.Fprintf(a.Stdout, "agb: 경고: 같은 저장소·브랜치를 쓰는 활성 세션이 있습니다: %s\n", formatSessionRefs(sess.LocationConflicts))
+	}
+	fmt.Fprintln(a.Stdout)
+	if sess.LastHost != "" {
+		fmt.Fprintf(a.Stdout, "- 호스트: %s\n", sess.LastHost)
+	}
+	if loc.Worktree != nil {
+		fmt.Fprintf(a.Stdout, "\n### %s\n\n", *loc.Worktree)
+	}
+	if loc.RepoRemote != nil {
+		fmt.Fprintf(a.Stdout, "- 원격: %s\n", *loc.RepoRemote)
+	}
+	if loc.Branch != nil || loc.Head != nil {
+		if loc.Head != nil {
+			fmt.Fprintf(a.Stdout, "- 브랜치: %s (HEAD %s)\n", deref(loc.Branch, "-"), *loc.Head)
+		} else {
+			fmt.Fprintf(a.Stdout, "- 브랜치: %s\n", *loc.Branch)
+		}
+	}
+	if loc.DirtyCount != nil {
+		fmt.Fprintf(a.Stdout, "- 커밋하지 않은 파일: %d개\n", *loc.DirtyCount)
+	}
+}
+
+// syncCommentSessionLocation updates the calling session's structured location
+// from dir and prints non-fatal warnings on failure or location conflicts.
+func (a *App) syncCommentSessionLocation(ctx context.Context, c *client.Client, actor, sessionID, dir string) {
+	loc, err := sessionLocation(dir)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "agb: 경고: 세션 작업 위치를 읽지 못했습니다: %v\n", err)
+		return
+	}
+	resp, err := c.UpdateSession(ctx, actor, sessionID, map[string]any{"location": loc})
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "agb: 경고: 세션 작업 위치를 갱신하지 못했습니다: %v\n", err)
+		return
+	}
+	a.warnLocationConflicts(resp)
 }

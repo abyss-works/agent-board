@@ -89,11 +89,13 @@ describe('issueListQuery', () => {
     const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
     expect(issueListQuery({ ...base, topic: ['4'], milestone: ['2'] })).toBe('?project=AGB&topic=4&milestone=2')
   })
-  it('확인 여부 필터는 값이 있을 때만 붙인다', () => {
-    const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
-    expect(issueListQuery({ ...base, acknowledged: 'false' })).toBe('?project=AGB&acknowledged=false')
-    expect(issueListQuery({ ...base, acknowledged: 'true' })).toBe('?project=AGB&acknowledged=true')
-    expect(issueListQuery(base)).toBe('?project=AGB')
+  it('검증 상태 필터는 단일 값과 배열을 쉼표 OR로 붙이고 비면 생략한다', () => {
+    const base = { project: 'APP', status: [], type: [], priority: [], label: [], q: '', sort: '' }
+    expect(issueListQuery({ ...base, verification: 'pending' })).toBe('?project=APP&verification=pending')
+    expect(issueListQuery({ ...base, verification: 'verified' })).toBe('?project=APP&verification=verified')
+    expect(issueListQuery({ ...base, verification: ['pending', 'verified'] })).toBe('?project=APP&verification=pending%2Cverified')
+    expect(issueListQuery({ ...base, verification: [] })).toBe('?project=APP')
+    expect(issueListQuery(base)).toBe('?project=APP')
   })
   it('오래됨 필터는 true일 때만 붙인다', () => {
     const base = { project: 'AGB', status: [], type: [], priority: [], label: [], q: '', sort: '' }
@@ -231,6 +233,30 @@ describe('ApiClient', () => {
     await client.get('/board', undefined, ctrl.signal)
     expect(calls[0].init.signal).toBe(ctrl.signal)
   })
+
+  it('verifyIssue는 POST /v1/issues/{key}/verify를 호출하고 version이 있으면 If-Match를 보낸다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { key: 'APP-1', verification_state: 'verified', version: 2 })
+    const client = new ApiClient(config, fetchFn)
+    await client.verifyIssue('APP-1', 1)
+    expect(calls[0].url).toBe('/api/staging/v1/issues/APP-1/verify')
+    expect(calls[0].init.method).toBe('POST')
+    expect((calls[0].init.headers as Record<string, string>)['If-Match']).toBe('"1"')
+
+    await client.verifyIssue('APP-1')
+    expect((calls[1].init.headers as Record<string, string>)['If-Match']).toBeUndefined()
+  })
+
+  it('unverifyIssue는 DELETE /v1/issues/{key}/verify를 호출하고 version이 있으면 If-Match를 보낸다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { key: 'APP-1', verification_state: 'pending', version: 3 })
+    const client = new ApiClient(config, fetchFn)
+    await client.unverifyIssue('APP-1', 2)
+    expect(calls[0].url).toBe('/api/staging/v1/issues/APP-1/verify')
+    expect(calls[0].init.method).toBe('DELETE')
+    expect((calls[0].init.headers as Record<string, string>)['If-Match']).toBe('"2"')
+
+    await client.unverifyIssue('APP-1')
+    expect((calls[1].init.headers as Record<string, string>)['If-Match']).toBeUndefined()
+  })
 })
 
 describe('기기 승인 오류 분류', () => {
@@ -309,5 +335,141 @@ describe('isActorRejected', () => {
     expect(isActorRejected(apiError(403, 'forbidden', 'user_only'))).toBe(false)
     expect(isActorRejected(new ApiError(401, 'unauthorized', 'x'))).toBe(false)
     expect(isActorRejected(new Error('x'))).toBe(false)
+  })
+})
+
+describe('세션 API 호출', () => {
+  it('listSessions는 질의 매개변수를 붙여 GET /v1/sessions를 부른다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], total: 0, limit: 50, offset: 0 })
+    const client = new ApiClient(config, fetchFn)
+    const res = await client.listSessions({
+      project: 'APP',
+      actor: 'agent-a',
+      parent: 'agent-a/root-1',
+      active: true,
+      named: true,
+      waiting: false,
+      limit: 100,
+      offset: 10,
+    })
+    expect(res.total).toBe(0)
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe(
+      '/api/staging/v1/sessions?project=APP&actor=agent-a&parent=agent-a%2Froot-1&active=true&named=true&waiting=false&limit=100&offset=10',
+    )
+  })
+
+  it('listSessions는 매개변수가 없으면 질의 없이 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], total: 0, limit: 50, offset: 0 })
+    const client = new ApiClient(config, fetchFn)
+    await client.listSessions()
+    expect(calls[0].url).toBe('/api/staging/v1/sessions')
+  })
+
+  it('getSession은 actor와 session_id를 URL 인코딩해 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { actor: 'agent-a', session_id: 'sess.1+a' })
+    const client = new ApiClient(config, fetchFn)
+    await client.getSession('agent-a', 'sess.1+a')
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe('/api/staging/v1/sessions/agent-a/sess.1%2Ba')
+  })
+
+  it('getAgenda는 project와 limit을 붙여 GET /v1/agenda를 부른다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { generated_at: '2026-10-17T07:00:00.000Z', projects: [] })
+    const client = new ApiClient(config, fetchFn)
+    await client.getAgenda({ project: 'APP', limit: 50 })
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe('/api/staging/v1/agenda?project=APP&limit=50')
+  })
+
+  it('getAgenda는 매개변수가 없으면 질의 없이 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { generated_at: '2026-10-17T07:00:00.000Z', projects: [] })
+    const client = new ApiClient(config, fetchFn)
+    await client.getAgenda()
+    expect(calls[0].url).toBe('/api/staging/v1/agenda')
+  })
+})
+
+describe('이벤트 API 호출', () => {
+  it('listEvents는 after, project, kind, limit 질의를 직렬화해 GET /v1/events를 부른다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], next_after: 10 })
+    const client = new ApiClient(config, fetchFn)
+    const res = await client.listEvents({ after: 0, project: 'AGB', kind: 'issue.,claim.', limit: 50 })
+    expect(res).toEqual({ items: [], next_after: 10 })
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].url).toBe('/api/staging/v1/events?after=0&project=AGB&kind=issue.%2Cclaim.&limit=50')
+  })
+
+  it('listEvents는 매개변수가 없으면 질의 없이 호출한다', async () => {
+    const { calls, fetchFn } = fakeFetch(200, { items: [], next_after: 0 })
+    const client = new ApiClient(config, fetchFn)
+    await client.listEvents()
+    expect(calls[0].url).toBe('/api/staging/v1/events')
+  })
+
+  it('openEventStream은 인증·추적 헤더와 Accept·Last-Event-ID를 보내고 lastEventId는 질의에서 뺀다', async () => {
+    const calls: Captured[] = []
+    const client = new ApiClient(config, async (input, init) => {
+      calls.push({ url: String(input), init: init ?? {} })
+      return new Response(new ReadableStream(), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    })
+    const ctrl = new AbortController()
+    const res = await client.openEventStream(
+      { after: 5, project: 'AGB', kind: 'issue.', lastEventId: '42' },
+      ctrl.signal,
+    )
+    expect(res.ok).toBe(true)
+    expect(calls[0].url).toBe('/api/staging/v1/events/stream?after=5&project=AGB&kind=issue.')
+    expect(calls[0].init.method).toBe('GET')
+    expect(calls[0].init.signal).toBe(ctrl.signal)
+    expect(calls[0].init.headers).toEqual({
+      Authorization: `Bearer ${config.token}`,
+      'X-Actor': 'owner',
+      'X-Session-Id': config.sessionId,
+      'X-Client-Host': 'web',
+      Accept: 'text/event-stream',
+      'Last-Event-ID': '42',
+    })
+  })
+
+  it('openEventStream은 401 JSON 오류를 ApiError로, 503과 비-JSON 오류를 ServerUnavailableError로 던진다', async () => {
+    const unauth = fakeFetch(401, { error: { code: 'unauthorized', message: '유효하지 않은 토큰' } })
+    const err401 = await new ApiClient(config, unauth.fetchFn).openEventStream().catch((e: unknown) => e)
+    expect(err401).toBeInstanceOf(ApiError)
+    expect(isUnauthorized(err401)).toBe(true)
+
+    const down = fakeFetch(503, { error: { code: 'shutting_down', message: '종료 중' } })
+    const err503 = await new ApiClient(config, down.fetchFn).openEventStream().catch((e: unknown) => e)
+    expect(err503).toBeInstanceOf(ServerUnavailableError)
+    expect((err503 as ServerUnavailableError).status).toBe(503)
+
+    const html = fakeFetch(500, '<html>error</html>', { 'content-type': 'text/html' })
+    const err500 = await new ApiClient(config, html.fetchFn).openEventStream().catch((e: unknown) => e)
+    expect(err500).toBeInstanceOf(ServerUnavailableError)
+  })
+
+  it('openEventStream은 AbortError를 그대로 던지고, 다른 fetch 예외는 NetworkError를, 빈 body는 ServerUnavailableError를 던진다', async () => {
+    const abortErr = new DOMException('Aborted', 'AbortError')
+    const abortedClient = new ApiClient(config, async () => {
+      throw abortErr
+    })
+    await expect(abortedClient.openEventStream()).rejects.toBe(abortErr)
+
+    const plainAbortErr = Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    const plainAbortedClient = new ApiClient(config, async () => {
+      throw plainAbortErr
+    })
+    await expect(plainAbortedClient.openEventStream()).rejects.toBe(plainAbortErr)
+
+    const netClient = new ApiClient(config, async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await expect(netClient.openEventStream()).rejects.toBeInstanceOf(NetworkError)
+
+    const emptyBodyClient = new ApiClient(config, async () => new Response(null, { status: 200 }))
+    await expect(emptyBodyClient.openEventStream()).rejects.toBeInstanceOf(ServerUnavailableError)
   })
 })

@@ -1,9 +1,9 @@
-import { ArrowLeftIcon, CheckIcon, CopyIcon, PencilIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, CopyIcon, PencilIcon, ShieldAlertIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { useAppState } from '@/app/state'
-import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilestones, usePatchIssue, useSetAcknowledged, useTopics } from '@/api/queries'
+import { useCreateComment, useDeleteIssue, useIssue, useIssueActivity, useMilestones, usePatchIssue, useTopics, useUnverifyIssue, useVerifyIssue } from '@/api/queries'
 import { MILESTONE_STATUSES, type Issue, type IssuePatch, type IssueStatus, type IssueType } from '@/api/types'
 import { ActivityItem } from '@/components/activity/activity-item'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
@@ -17,6 +17,7 @@ import { PRIORITY_OPTIONS, STATUS_OPTIONS, TYPE_OPTIONS } from '@/components/iss
 import { PropertySelect } from '@/components/issue/property-select'
 import { ReasonDialog } from '@/components/issue/reason-dialog'
 import { TopicSelect } from '@/components/issue/topic-select'
+import { VerificationBanner } from '@/components/issue/verification-panel'
 import { Markdown } from '@/components/markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,7 @@ import { formatKst, formatRelative } from '@/lib/time'
 import { topicNameMap } from '@/lib/topics'
 import { toastError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { clearVerificationPatch, requestVerificationPatch, verificationNotePatch } from '@/lib/verification'
 
 function Property({ label, children, note }: { label: string; children: ReactNode; note?: ReactNode }) {
   return (
@@ -63,7 +65,8 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const navigate = useNavigate()
   const patch = usePatchIssue()
   const del = useDeleteIssue()
-  const acknowledge = useSetAcknowledged()
+  const verify = useVerifyIssue()
+  const unverify = useUnverifyIssue()
   const comment = useCreateComment()
   const activity = useIssueActivity(issue.key)
   // 고를 수 있는 주제는 활성 주제, 활동 기록의 주제 이름은 삭제된 주제까지 포함한 전체에서 찾는다.
@@ -77,6 +80,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const [editingBody, setEditingBody] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [requestingVerification, setRequestingVerification] = useState(false)
   // 취소·삭제로 바꾸려고 고른 상태. 사유를 받을 때까지 요청을 보내지 않는다.
   const [reasonFor, setReasonFor] = useState<IssueStatus | null>(null)
   // 종류를 관측으로 바꿀 때 재검토 조건이 없으면 먼저 받는다.
@@ -89,8 +93,31 @@ function IssueDetail({ issue }: { issue: Issue }) {
   const save = (body: IssuePatch, label: string) =>
     patch.mutate({ key: issue.key, patch: body, version: issue.version }, { onError: (err) => toastError(err, `${label}을(를) 저장하지 못했습니다`) })
 
-  const setAcknowledged = (acknowledged: boolean) =>
-    acknowledge.mutate({ key: issue.key, acknowledged }, { onError: (err) => toastError(err, '확인 표시를 바꾸지 못했습니다') })
+  const verifyPending = verify.isPending || unverify.isPending || patch.isPending
+
+  const handleVerify = () =>
+    verify.mutate({ key: issue.key, version: issue.version }, { onError: (err) => toastError(err, '검증 완료를 처리하지 못했습니다') })
+
+  const handleUnverify = () =>
+    unverify.mutate({ key: issue.key, version: issue.version }, { onError: (err) => toastError(err, '검증 상태를 되돌리지 못했습니다') })
+
+  const handleRequestPending = (note: string, options?: { onSuccess?: () => void }) => {
+    patch.mutate(
+      { key: issue.key, patch: requestVerificationPatch(note), version: issue.version },
+      {
+        onSuccess: () => {
+          options?.onSuccess?.()
+          setRequestingVerification(false)
+        },
+        onError: (err) => toastError(err, '검증 필요를 지정하지 못했습니다'),
+      },
+    )
+  }
+
+  const handleClearVerification = () => {
+    setRequestingVerification(false)
+    save(clearVerificationPatch(), '검증 상태')
+  }
 
   const changeStatus = (status: IssueStatus) => {
     if (status === issue.status) return
@@ -146,31 +173,35 @@ function IssueDetail({ issue }: { issue: Issue }) {
           </Button>
           {issue.status === 'deleted' ? <Badge variant="destructive">삭제됨</Badge> : null}
           <div className="ml-auto flex items-center gap-2">
-            {issue.acknowledged_at === null ? (
-              <>
-                <Badge variant="info">미확인</Badge>
-                <Button size="xs" onClick={() => setAcknowledged(true)} disabled={acknowledge.isPending} title="이 이슈를 확인했다고 표시합니다. 작업 흐름에는 영향이 없습니다.">
-                  <CheckIcon />
-                  확인
-                </Button>
-              </>
-            ) : (
+            {issue.verification_state === 'none' && !requestingVerification ? (
               <Button
                 variant="ghost"
                 size="xs"
-                onClick={() => setAcknowledged(false)}
-                disabled={acknowledge.isPending}
-                title={`${issue.acknowledged_by ?? '마이그레이션'}이 ${formatKst(issue.acknowledged_at)} KST에 확인함`}
+                onClick={() => setRequestingVerification(true)}
+                disabled={verifyPending}
+                title="이 이슈를 릴리즈 전 사용자 검증 대상으로 지정합니다"
               >
-                확인 취소
+                <ShieldAlertIcon />
+                검증 필요 지정
               </Button>
-            )}
+            ) : null}
             <span className="font-mono text-[0.625rem] text-muted-foreground">v{issue.version}</span>
           </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-6 py-5">
+            <VerificationBanner
+              issue={issue}
+              requesting={requestingVerification}
+              pending={verifyPending}
+              onCancelRequest={() => setRequestingVerification(false)}
+              onRequestPending={handleRequestPending}
+              onVerify={handleVerify}
+              onUnverify={handleUnverify}
+              onClear={handleClearVerification}
+              onSaveNote={(note) => save(verificationNotePatch(note), '검증 메모')}
+            />
             <InlineInput
               value={issue.title}
               onCommit={(v) => v && save({ title: v }, '제목')}
@@ -368,6 +399,7 @@ function IssueDetail({ issue }: { issue: Issue }) {
           <Meta label="생성" actor={issue.created_by} at={issue.created_at} />
           <Meta label="수정" actor={issue.updated_by} at={issue.updated_at} />
           <Meta label={`${STATUS_LABEL[issue.status]}로`} actor={issue.status_changed_by} at={issue.status_changed_at} />
+          <Meta label="검증" actor={issue.verified_by ?? undefined} at={issue.verified_at} />
           <Meta label="닫힘" at={issue.closed_at} />
           <div className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
             <span className="w-14 shrink-0">프로젝트</span>

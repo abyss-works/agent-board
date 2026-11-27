@@ -1,8 +1,10 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,10 +262,9 @@ func TestOverview(t *testing.T) {
 	}
 }
 
-// The decisions section lists the open issues that ask for a decision, whatever
-// their type and open status, in priority order.
-// A doing issue is held by the session that moved it to doing, and goes stale
-// two hours after that session's last activity on any issue.
+// A doing issue with an open claim uses the stored claim (30m stale, 24h while
+// waiting) with source "claim"; a doing issue without an open claim falls back
+// to activity history (2h stale) with source "activity".
 func TestOverviewDoingHolder(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
@@ -288,24 +289,66 @@ func TestOverviewDoingHolder(t *testing.T) {
 		}
 		return m
 	}
+
+	// Claimed issues report source="claim" and session last_seen_at.
 	start := model.NewTime(now)
-	now = now.Add(90 * time.Minute)
-	// Activity of the same session on another issue keeps it alive.
-	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈", nil, nil); err != nil {
+	now = now.Add(20 * time.Minute)
+	mustTouch(t, s, trClaude, now)
+	seen := model.NewTime(now)
+	now = now.Add(20 * time.Minute) // 20m after seen (active), 40m after start (owner stale)
+	h := holders()
+	if got := h[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != seen || got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("claimed active = %+v, want claude s-claude last active %s not stale claim", got, seen)
+	}
+	if got := h[born.Key]; got.Actor != "owner" || got.SessionID != "s-owner" || got.LastActiveAt != start || !got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("claimed stale = %+v, want owner s-owner last active %s stale claim", got, start)
+	}
+
+	// Waiting session keeps claimed issue non-stale within 24h, stale after 24h.
+	stWait := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, trClaude, trClaude.Actor, trClaude.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: &stWait},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(23 * time.Hour)
+	if got := holders()[held.Key]; got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("waiting claimed at 23h = %+v, want not stale claim", got)
+	}
+	ag, err := s.Agenda(ctx, []string{"AGB"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agHeld model.Holder
+	for _, it := range ag.Projects[0].Agent.Doing.Items {
+		if it.Key == held.Key {
+			agHeld = it.Holder
+		}
+	}
+	if agHeld.Stale || agHeld.Source != model.HolderSourceClaim {
+		t.Errorf("agenda waiting claimed at 23h = %+v, want not stale claim", agHeld)
+	}
+	now = now.Add(2 * time.Hour)
+	if got := holders()[held.Key]; !got.Stale || got.Source != model.HolderSourceClaim {
+		t.Errorf("waiting claimed at 25h = %+v, want stale claim", got)
+	}
+
+	// Releasing the claim on a doing issue leaves it in doing without an open claim,
+	// so it falls back to activity history (2h stale window) with source="activity".
+	if _, err := s.ReleaseClaim(ctx, trClaude, held.Key, model.ClaimOutcomeAbandoned, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddComment(ctx, trClaude, other.Key, "다른 이슈 활동", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	alive := model.NewTime(now)
 	now = now.Add(time.Hour)
-	h := holders()
-	if got := h[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != alive || got.Stale {
-		t.Errorf("held after 1h of quiet = %+v, want claude s-claude last active %s not stale", got, alive)
-	}
-	if got := h[born.Key]; got.Actor != "owner" || got.SessionID != "s-owner" || got.LastActiveAt != start || !got.Stale {
-		t.Errorf("born doing after 2.5h = %+v, want owner s-owner last active %s stale", got, start)
+	if got := holders()[held.Key]; got.Actor != "claude" || got.SessionID != "s-claude" || got.LastActiveAt != alive || got.Stale || got.Source != model.HolderSourceActivity {
+		t.Errorf("activity fallback after 1h = %+v, want claude s-claude %s not stale activity", got, alive)
 	}
 	now = now.Add(90 * time.Minute)
-	if got := holders()[held.Key]; !got.Stale {
-		t.Errorf("held after 2.5h of quiet = %+v, want stale", got)
+	if got := holders()[held.Key]; !got.Stale || got.Source != model.HolderSourceActivity {
+		t.Errorf("activity fallback after 2.5h = %+v, want stale activity", got)
 	}
 }
 
@@ -327,7 +370,7 @@ func TestOverviewDecisions(t *testing.T) {
 	mustIssue(t, s, ctx, trOwner, IssueInput{Title: "other project", Project: "OTH", DecisionNeeded: str("다른 프로젝트의 질문")})
 
 	keys := func(o *Overview) []string {
-		return keysOf(o.Decisions.Items, func(i model.IssueSummary) string { return i.Key })
+		return keysOf(o.Decisions.Items, func(i model.DecisionItem) string { return i.Key })
 	}
 	o, err := s.Overview(ctx, "AGB", 10)
 	if err != nil {
@@ -371,7 +414,7 @@ func TestViewItemsCarryDecisionNeeded(t *testing.T) {
 	s, ctx := seeded(t)
 	mustProject(t, s, ctx, "AGB")
 	const question = "어느 쪽으로 할지"
-	dep := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "doing", Status: model.StatusDoing, DecisionNeeded: str(question)})
+	dep := mustIssue(t, s, ctx, trClaude, IssueInput{Title: "doing", Status: model.StatusDoing, DecisionNeeded: str(question), VerificationState: model.VerificationPending})
 	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "review", Status: model.StatusReview, DecisionNeeded: str(question)})
 	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "blocked", DependsOn: []string{dep.Key}, DecisionNeeded: str(question)})
 	mustIssue(t, s, ctx, trClaude, IssueInput{Title: "ready", Priority: model.P0, DecisionNeeded: str(question)})
@@ -401,7 +444,7 @@ func TestViewItemsCarryDecisionNeeded(t *testing.T) {
 	has("overview blocked", o.Blocked.Items[0].DecisionNeeded)
 	has("overview decisions", o.Decisions.Items[0].DecisionNeeded)
 	has("overview next", o.Next.Items[0].DecisionNeeded)
-	has("overview unacknowledged", o.Unacknowledged.Items[0].DecisionNeeded)
+	has("overview unverified", o.Unverified.Items[0].DecisionNeeded)
 }
 
 func TestQueueLeavesOutExternalWaits(t *testing.T) {
@@ -497,4 +540,481 @@ func TestUserTasksAreTheUsersTurn(t *testing.T) {
 	if p.UserTurn.Tasks.Total != 1 || p.UserTurn.Tasks.Items[0].Key != task.Key || p.Agent.Next.Total != 1 {
 		t.Errorf("tasks = %+v, next = %+v", p.UserTurn.Tasks, p.Agent.Next)
 	}
+}
+
+func TestAgendaWaitingSessionsAttributionAndOrder(t *testing.T) {
+	s, ctx := seeded(t)
+	t0 := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
+	mustProject(t, s, ctx, "AAA")
+	mustProject(t, s, ctx, "BBB")
+	issueA := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "a"})
+	issueB := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "BBB", Title: "b"})
+
+	// Session 1: issue in AAA, last_project in BBB -> attributed to AAA only.
+	tr1 := model.Trace{Actor: "claude", SessionID: "s-issue-a", ClientHost: "desk"}
+	mustTouch(t, s, tr1, t0)
+	if _, err := s.AddComment(ctx, tr1, issueB.Key, "BBB 활동", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fixClock(s, t0.Add(2*time.Minute))
+	stIn := model.SessionStateWaitingInput
+	reason1 := "승인 필요"
+	if _, err := s.UpdateSession(ctx, tr1, tr1.Actor, tr1.SessionID, SessionPatch{
+		Issue:       Optional[string]{Set: true, Value: &issueA.Key},
+		State:       Optional[string]{Set: true, Value: &stIn},
+		StateReason: Optional[string]{Set: true, Value: &reason1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 2: no issue, last_project in AAA -> attributed to AAA, earlier state_at so comes first.
+	tr2 := model.Trace{Actor: "claude", SessionID: "s-last-a", ClientHost: "desk"}
+	mustTouch(t, s, tr2, t0)
+	if _, err := s.AddComment(ctx, tr2, issueA.Key, "AAA 활동", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fixClock(s, t0.Add(time.Minute))
+	stApp := model.SessionStateWaitingApproval
+	if _, err := s.UpdateSession(ctx, tr2, tr2.Actor, tr2.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: &stApp},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 3: neither issue nor last_project -> excluded from project agendas.
+	tr3 := model.Trace{Actor: "claude", SessionID: "s-orphan", ClientHost: "desk"}
+	mustTouch(t, s, tr3, t0)
+	fixClock(s, t0.Add(30*time.Second))
+	stExt := model.SessionStateWaitingExternal
+	if _, err := s.UpdateSession(ctx, tr3, tr3.Actor, tr3.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: &stExt},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session 4: in AAA (via issue) but NOT waiting -> excluded.
+	tr4 := model.Trace{Actor: "claude", SessionID: "s-not-waiting", ClientHost: "desk"}
+	mustTouch(t, s, tr4, t0)
+	if _, err := s.UpdateSession(ctx, tr4, tr4.Actor, tr4.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &issueA.Key},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := s.Agenda(ctx, []string{"AAA", "BBB"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aaa := a.Projects[0].UserTurn.WaitingSessions
+	bbb := a.Projects[1].UserTurn.WaitingSessions
+	if aaa.Total != 2 || len(aaa.Items) != 2 {
+		t.Fatalf("AAA waiting_sessions = %+v", aaa)
+	}
+	if aaa.Items[0].SessionID != "s-last-a" || aaa.Items[1].SessionID != "s-issue-a" {
+		t.Errorf("AAA order = [%s, %s], want [s-last-a, s-issue-a]", aaa.Items[0].SessionID, aaa.Items[1].SessionID)
+	}
+	if aaa.Items[0].Children != nil || aaa.Items[1].Children != nil {
+		t.Errorf("agenda waiting sessions must not carry children")
+	}
+	if bbb.Total != 0 || bbb.Items == nil || len(bbb.Items) != 0 {
+		t.Errorf("BBB waiting_sessions = %+v, want empty non-nil slice", bbb)
+	}
+
+	// Limit caps items while keeping total.
+	aLimited, err := s.Agenda(ctx, []string{"AAA"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := aLimited.Projects[0].UserTurn.WaitingSessions
+	if ws.Total != 2 || len(ws.Items) != 1 || ws.Items[0].SessionID != "s-last-a" {
+		t.Errorf("limited waiting_sessions = %+v", ws)
+	}
+}
+
+func TestAgendaWaitingSessionsCutoffAndTieOrder(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}, {ID: "codex", Kind: model.ActorAgent}}); err != nil {
+		t.Fatal(err)
+	}
+	mustProject(t, s, ctx, "AAA")
+	iss := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "대기 이슈"})
+
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	st := model.SessionStateWaitingInput
+
+	// Session over 24h (> SessionWaitingHold) must be excluded.
+	trOld := model.Trace{Actor: "claude", SessionID: "s-expired", ClientHost: "desk"}
+	fixClock(s, now.Add(-24*time.Hour-time.Minute))
+	mustTouch(t, s, trOld, now.Add(-24*time.Hour-time.Minute))
+	if _, err := s.UpdateSession(ctx, trOld, trOld.Actor, trOld.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &iss.Key},
+		State: Optional[string]{Set: true, Value: &st},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session at exact 24h boundary must be included and appear before tied later sessions.
+	trExact := model.Trace{Actor: "owner", SessionID: "s-boundary", ClientHost: "desk"}
+	fixClock(s, now.Add(-24*time.Hour))
+	mustTouch(t, s, trExact, now.Add(-24*time.Hour))
+	if _, err := s.UpdateSession(ctx, trExact, trExact.Actor, trExact.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &iss.Key},
+		State: Optional[string]{Set: true, Value: &st},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three sessions sharing identical state_at tie-break by actor asc, session_id asc.
+	tieAt := now.Add(-time.Hour)
+	fixClock(s, tieAt)
+	for _, tr := range []model.Trace{
+		{Actor: "codex", SessionID: "s-a", ClientHost: "desk"},
+		{Actor: "claude", SessionID: "s-b", ClientHost: "desk"},
+		{Actor: "claude", SessionID: "s-a", ClientHost: "desk"},
+	} {
+		mustTouch(t, s, tr, tieAt)
+		if _, err := s.UpdateSession(ctx, tr, tr.Actor, tr.SessionID, SessionPatch{
+			Issue: Optional[string]{Set: true, Value: &iss.Key},
+			State: Optional[string]{Set: true, Value: &st},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fixClock(s, now)
+	a, err := s.Agenda(ctx, []string{"AAA"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := a.Projects[0].UserTurn.WaitingSessions
+	if ws.Total != 4 || len(ws.Items) != 4 {
+		t.Fatalf("waiting_sessions = %+v, want 4 items", ws)
+	}
+	got := make([]string, len(ws.Items))
+	for i, it := range ws.Items {
+		got[i] = it.Actor + "/" + it.SessionID
+	}
+	want := []string{"owner/s-boundary", "claude/s-a", "claude/s-b", "codex/s-a"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("waiting_sessions order = %v, want %v", got, want)
+	}
+}
+
+func TestAgendaWaitingSessionsLocationConflicts(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{{ID: "owner", Kind: model.ActorUser}, {ID: "claude", Kind: model.ActorAgent}, {ID: "codex", Kind: model.ActorAgent}}); err != nil {
+		t.Fatal(err)
+	}
+	mustProject(t, s, ctx, "AAA")
+	t0 := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	fixClock(s, t0)
+
+	ptr := func(v string) *string { return &v }
+	trWait := model.Trace{Actor: "claude", SessionID: "s-wait", ClientHost: "desk"}
+	trOther := model.Trace{Actor: "codex", SessionID: "s-other", ClientHost: "laptop"}
+	mustTouch(t, s, trWait, t0)
+	mustTouch(t, s, trOther, t0)
+	i := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AAA", Title: "a"})
+	stIn := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, trWait, trWait.Actor, trWait.SessionID, SessionPatch{
+		Issue:    Optional[string]{Set: true, Value: &i.Key},
+		State:    Optional[string]{Set: true, Value: &stIn},
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://example.com/acme/app.git"), Branch: ptr("feat/a")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trOther, trOther.Actor, trOther.SessionID, SessionPatch{
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("git@example.com:acme/app.git"), Branch: ptr("feat/a")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := s.Agenda(ctx, []string{"AAA"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := a.Projects[0].UserTurn.WaitingSessions.Items
+	if len(items) != 1 {
+		t.Fatalf("waiting items = %+v", items)
+	}
+	if len(items[0].LocationConflicts) != 1 || items[0].LocationConflicts[0] != (model.SessionRef{Actor: "codex", SessionID: "s-other"}) {
+		t.Errorf("waiting session location_conflicts = %+v", items[0].LocationConflicts)
+	}
+}
+
+func TestOverviewAndAgendaDecisionWaitingSessions(t *testing.T) {
+	s, ctx := seeded(t)
+	if err := s.EnsureActors(ctx, []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "claude", Kind: model.ActorAgent},
+		{ID: "codex", Kind: model.ActorAgent},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	clockAt(s, &now)
+	mustProject(t, s, ctx, "AGB")
+	mustProject(t, s, ctx, "OTH")
+
+	dDirect := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "direct", Priority: model.P0, DecisionNeeded: str("직접 연결 결정?")})
+	dMulti := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "multi", Priority: model.P1, DecisionNeeded: str("복수 세션 결정?")})
+	dClaimed := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "claimed", Priority: model.P2, DecisionNeeded: str("점유 연결 결정?")})
+	dEmpty := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "empty", Priority: model.P3, DecisionNeeded: str("대기 없는 결정?")})
+	nonDecision := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "plain", Priority: model.P0})
+	closedDecision := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "closed", Status: model.StatusDone, DecisionNeeded: str("닫힌 결정?")})
+	othDecision := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "OTH", Title: "other", DecisionNeeded: str("다른 프로젝트 결정?")})
+
+	ptr := func(v string) *string { return &v }
+	stIn := model.SessionStateWaitingInput
+	stApp := model.SessionStateWaitingApproval
+
+	// 1) Active waiting session linked via session.issue to dDirect.
+	trDirect := model.Trace{Actor: "claude", SessionID: "s-direct", ClientHost: "desk"}
+	mustTouch(t, s, trDirect, now.Add(-5*time.Minute))
+	now = now.Add(-5 * time.Minute)
+	if _, err := s.UpdateSession(ctx, trDirect, trDirect.Actor, trDirect.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dDirect.Key},
+		State: Optional[string]{Set: true, Value: &stIn},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-waiting active session on dDirect must NOT be attached.
+	trActiveNonWait := model.Trace{Actor: "claude", SessionID: "s-active-nowait", ClientHost: "desk"}
+	mustTouch(t, s, trActiveNonWait, now)
+	if _, err := s.UpdateSession(ctx, trActiveNonWait, trActiveNonWait.Actor, trActiveNonWait.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dDirect.Key},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ended waiting session on dDirect must NOT be attached.
+	trEnded := model.Trace{Actor: "codex", SessionID: "s-ended", ClientHost: "desk"}
+	mustTouch(t, s, trEnded, now)
+	if _, err := s.UpdateSession(ctx, trEnded, trEnded.Actor, trEnded.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dDirect.Key},
+		State: Optional[string]{Set: true, Value: &stIn},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trEnded, trEnded.Actor, trEnded.SessionID, SessionPatch{
+		State: Optional[string]{Set: true, Value: nil},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2) Multiple waiting sessions on dMulti: test state_at ordering, actor/session tiebreak, and location_conflicts.
+	// Reset now to 2026-11-20 12:00, and register earlier + tiebreak sessions.
+	base := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	now = base.Add(-20 * time.Minute)
+	trMFirst := model.Trace{Actor: "codex", SessionID: "s-m1", ClientHost: "laptop"}
+	mustTouch(t, s, trMFirst, now)
+	if _, err := s.UpdateSession(ctx, trMFirst, trMFirst.Actor, trMFirst.SessionID, SessionPatch{
+		Issue:    Optional[string]{Set: true, Value: &dMulti.Key},
+		State:    Optional[string]{Set: true, Value: &stApp},
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("git@example.com:acme/app.git"), Branch: ptr("feat/dec")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same state_at for claude/s-b, claude/s-a, codex/s-c -> ordered claude/s-a, claude/s-b, codex/s-c after trMFirst.
+	now = base.Add(-10 * time.Minute)
+	trMTieB := model.Trace{Actor: "claude", SessionID: "s-b", ClientHost: "desk"}
+	trMTieA := model.Trace{Actor: "claude", SessionID: "s-a", ClientHost: "desk"}
+	trMTieC := model.Trace{Actor: "codex", SessionID: "s-c", ClientHost: "desk"}
+	for _, tr := range []model.Trace{trMTieB, trMTieA, trMTieC} {
+		mustTouch(t, s, tr, now)
+	}
+	if _, err := s.UpdateSession(ctx, trMTieB, trMTieB.Actor, trMTieB.SessionID, SessionPatch{
+		Issue:    Optional[string]{Set: true, Value: &dMulti.Key},
+		State:    Optional[string]{Set: true, Value: &stIn},
+		Location: Optional[model.SessionLocation]{Set: true, Value: &model.SessionLocation{RepoRemote: ptr("https://example.com/acme/app.git"), Branch: ptr("feat/dec")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trMTieA, trMTieA.Actor, trMTieA.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dMulti.Key},
+		State: Optional[string]{Set: true, Value: &stIn},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trMTieC, trMTieC.Actor, trMTieC.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dMulti.Key},
+		State: Optional[string]{Set: true, Value: &stIn},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3) Stale session (>30m last_seen_at) with valid waiting (<24h) linked via newest open issue_claim:
+	// has session.issue=dDirect AND an earlier open claim on dEmpty, then claims dClaimed -> matches ONLY dClaimed!
+	now = base.Add(-2 * time.Hour)
+	trStaleClaim := model.Trace{Actor: "claude", SessionID: "s-stale-claim", ClientHost: "desk"}
+	mustTouch(t, s, trStaleClaim, now)
+	if _, _, err := s.ClaimIssue(ctx, trStaleClaim, dEmpty.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ClaimIssue(ctx, trStaleClaim, dClaimed.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSession(ctx, trStaleClaim, trStaleClaim.Actor, trStaleClaim.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dDirect.Key},
+		State: Optional[string]{Set: true, Value: &stIn},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4) Waiting sessions on non-decision, closed decision, and other-project decision issues must not cause inclusion.
+	now = base.Add(-3 * time.Minute)
+	for idx, key := range []string{nonDecision.Key, closedDecision.Key, othDecision.Key} {
+		tr := model.Trace{Actor: "claude", SessionID: "s-excl-" + itoa(idx), ClientHost: "desk"}
+		mustTouch(t, s, tr, now)
+		if _, err := s.UpdateSession(ctx, tr, tr.Actor, tr.SessionID, SessionPatch{
+			Issue: Optional[string]{Set: true, Value: &key},
+			State: Optional[string]{Set: true, Value: &stIn},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now = base
+	o, err := s.Overview(ctx, "AGB", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag, err := s.Agenda(ctx, []string{"AGB"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkDecisions := func(name string, got Section[model.DecisionItem]) {
+		t.Helper()
+		wantKeys := []string{dDirect.Key, dMulti.Key, dClaimed.Key, dEmpty.Key}
+		if got.Total != 4 || !reflect.DeepEqual(keysOf(got.Items, func(i model.DecisionItem) string { return i.Key }), wantKeys) {
+			t.Fatalf("%s decisions keys = %v (total %d), want %v", name, keysOf(got.Items, func(i model.DecisionItem) string { return i.Key }), got.Total, wantKeys)
+		}
+		// dDirect: only trDirect (not non-waiting, not ended, not trStaleClaim whose open claim overrides session.issue)
+		if ws := got.Items[0].WaitingSessions; len(ws) != 1 || ws[0].Actor != "claude" || ws[0].SessionID != "s-direct" {
+			t.Errorf("%s dDirect waiting_sessions = %+v", name, ws)
+		} else {
+			if ws[0].LocationConflicts == nil || len(ws[0].LocationConflicts) != 0 {
+				t.Errorf("%s dDirect location_conflicts = %#v, want empty non-nil", name, ws[0].LocationConflicts)
+			}
+			if ws[0].Children != nil {
+				t.Errorf("%s dDirect waiting session must not carry children", name)
+			}
+		}
+		// dMulti: deterministic order + location_conflicts
+		wsMulti := got.Items[1].WaitingSessions
+		wantIDs := []string{"codex/s-m1", "claude/s-a", "claude/s-b", "codex/s-c"}
+		gotIDs := keysOf(wsMulti, func(sess model.Session) string { return sess.Actor + "/" + sess.SessionID })
+		if !reflect.DeepEqual(gotIDs, wantIDs) {
+			t.Errorf("%s dMulti order = %v, want %v", name, gotIDs, wantIDs)
+		}
+		if len(wsMulti) == 4 {
+			if want := []model.SessionRef{{Actor: "claude", SessionID: "s-b"}}; !reflect.DeepEqual(wsMulti[0].LocationConflicts, want) {
+				t.Errorf("%s dMulti[0] location_conflicts = %+v, want %+v", name, wsMulti[0].LocationConflicts, want)
+			}
+			if want := []model.SessionRef{{Actor: "codex", SessionID: "s-m1"}}; !reflect.DeepEqual(wsMulti[2].LocationConflicts, want) {
+				t.Errorf("%s dMulti[2] location_conflicts = %+v, want %+v", name, wsMulti[2].LocationConflicts, want)
+			}
+			if wsMulti[1].LocationConflicts == nil || len(wsMulti[1].LocationConflicts) != 0 {
+				t.Errorf("%s dMulti[1] location_conflicts = %#v, want empty non-nil", name, wsMulti[1].LocationConflicts)
+			}
+		}
+		// dClaimed: stale session (>30m) with valid waiting (<24h) via open claim
+		if ws := got.Items[2].WaitingSessions; len(ws) != 1 || ws[0].SessionID != "s-stale-claim" || !ws[0].Stale {
+			t.Errorf("%s dClaimed waiting_sessions = %+v", name, ws)
+		}
+		// dEmpty: non-nil empty slice
+		if ws := got.Items[3].WaitingSessions; ws == nil || len(ws) != 0 {
+			t.Errorf("%s dEmpty waiting_sessions = %#v, want non-nil empty slice", name, ws)
+		}
+	}
+
+	checkDecisions("overview", o.Decisions)
+	checkDecisions("agenda", ag.Projects[0].UserTurn.Decisions)
+
+	// UserTurn.WaitingSessions remains intact alongside Decisions.
+	if ag.Projects[0].UserTurn.WaitingSessions.Total != 8 {
+		t.Errorf("agenda waiting_sessions total = %d, want 8", ag.Projects[0].UserTurn.WaitingSessions.Total)
+	}
+
+	// JSON serialization of empty waiting_sessions and location_conflicts must be [] not null.
+	raw, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"waiting_sessions":[]`) {
+		t.Errorf("marshaled overview lacks empty waiting_sessions []: %s", raw)
+	}
+	if strings.Contains(string(raw), `"waiting_sessions":null`) || strings.Contains(string(raw), `"location_conflicts":null`) {
+		t.Errorf("marshaled overview has null array: %s", raw)
+	}
+}
+
+func TestDecisionWaitingSessionsClaimLifecycleAndExpiry(t *testing.T) {
+	s, ctx := seeded(t)
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	clockAt(s, &now)
+	mustProject(t, s, ctx, "AGB")
+
+	dClaimed := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "claimed", Priority: model.P0, DecisionNeeded: str("점유 질문?")})
+	dFallback := mustIssue(t, s, ctx, trOwner, IssueInput{Project: "AGB", Title: "fallback", Priority: model.P1, DecisionNeeded: str("기본 질문?")})
+
+	tr := model.Trace{Actor: "claude", SessionID: "s-life", ClientHost: "desk"}
+	mustTouch(t, s, tr, now)
+	if _, _, err := s.ClaimIssue(ctx, tr, dClaimed.Key); err != nil {
+		t.Fatal(err)
+	}
+	stIn := model.SessionStateWaitingInput
+	if _, err := s.UpdateSession(ctx, tr, tr.Actor, tr.SessionID, SessionPatch{
+		Issue: Optional[string]{Set: true, Value: &dFallback.Key},
+		State: Optional[string]{Set: true, Value: &stIn},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertWaiting := func(where string, wantClaimed, wantFallback int) {
+		t.Helper()
+		o, err := s.Overview(ctx, "AGB", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(o.Decisions.Items[0].WaitingSessions) != wantClaimed || len(o.Decisions.Items[1].WaitingSessions) != wantFallback {
+			t.Errorf("%s: claimed=%d fallback=%d, want (%d, %d)", where,
+				len(o.Decisions.Items[0].WaitingSessions), len(o.Decisions.Items[1].WaitingSessions), wantClaimed, wantFallback)
+		}
+		if o.Decisions.Items[0].WaitingSessions == nil || o.Decisions.Items[1].WaitingSessions == nil {
+			t.Errorf("%s: nil WaitingSessions slice", where)
+		}
+	}
+
+	assertWaiting("open claim overrides session.issue", 1, 0)
+
+	// Releasing the claim falls back to session.issue (dFallback).
+	if _, err := s.ReleaseClaim(ctx, tr, dClaimed.Key, model.ClaimOutcomeAbandoned, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertWaiting("after release claim", 0, 1)
+
+	// Superseded claim (taken over by owner) also falls back to session.issue (dFallback).
+	if _, _, err := s.ClaimIssue(ctx, tr, dClaimed.Key); err != nil {
+		t.Fatal(err)
+	}
+	assertWaiting("re-claimed", 1, 0)
+	doing := model.StatusDoing
+	if _, _, err := s.UpdateIssue(ctx, trOwner, dClaimed.Key, IssuePatch{Status: &doing}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertWaiting("after taken_over claim", 0, 1)
+
+	// At exact 24h boundary on dFallback via session.issue: still attached.
+	now = now.Add(model.SessionWaitingHold)
+	assertWaiting("at exact 24h boundary", 0, 1)
+
+	// Past 24h (>24h): excluded even if last_seen_at was touched recently.
+	now = now.Add(time.Millisecond)
+	mustTouch(t, s, tr, now)
+	assertWaiting("past 24h waiting hold even with fresh last_seen_at", 0, 0)
 }

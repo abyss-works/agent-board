@@ -35,6 +35,18 @@ type RouteStats struct {
 	Buckets  []Bucket `json:"buckets"`
 }
 
+// StreamStats is the tally of a long-lived streaming route, kept separate from
+// ordinary request routes so stream durations do not skew latency distributions.
+type StreamStats struct {
+	Method   string  `json:"method"`
+	Route    string  `json:"route"`
+	Requests int64   `json:"requests"`
+	Errors   int64   `json:"errors"`
+	Active   int64   `json:"active"`
+	TotalMS  float64 `json:"total_ms"`
+	MaxMS    float64 `json:"max_ms"`
+}
+
 // otherMethod stands for every method outside the standard set, so a client
 // cannot grow the tallies by sending made-up methods.
 const otherMethod = "OTHER"
@@ -56,15 +68,85 @@ type routeTally struct {
 	buckets          [len(latencyBoundsMS) + 1]int64
 }
 
+type streamTally struct {
+	requests, errors, active int64
+	total, max               time.Duration
+}
+
 // statsCollector keeps the tallies in memory. Nothing is persisted, so a
 // restart starts from zero.
 type statsCollector struct {
-	mu     sync.Mutex
-	routes map[routeKey]*routeTally
+	mu      sync.Mutex
+	routes  map[routeKey]*routeTally
+	streams map[routeKey]*streamTally
 }
 
 func newStatsCollector() *statsCollector {
-	return &statsCollector{routes: map[routeKey]*routeTally{}}
+	return &statsCollector{
+		routes:  map[routeKey]*routeTally{},
+		streams: map[routeKey]*streamTally{},
+	}
+}
+
+func (c *statsCollector) streamTallyLocked(method, route string) *streamTally {
+	k := routeKey{normalizeMethod(method), route}
+	t := c.streams[k]
+	if t == nil {
+		t = &streamTally{}
+		c.streams[k] = t
+	}
+	return t
+}
+
+func (c *statsCollector) streamOpened(method, route string) {
+	c.mu.Lock()
+	c.streamTallyLocked(method, route).active++
+	c.mu.Unlock()
+}
+
+func (c *statsCollector) streamClosed(method, route string) {
+	c.mu.Lock()
+	t := c.streamTallyLocked(method, route)
+	if t.active > 0 {
+		t.active--
+	}
+	c.mu.Unlock()
+}
+
+func (c *statsCollector) recordStream(method, route string, status int, d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.streamTallyLocked(method, route)
+	t.requests++
+	if status >= 500 {
+		t.errors++
+	}
+	t.total += d
+	t.max = max(t.max, d)
+}
+
+func (c *statsCollector) streamSnapshot() []StreamStats {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]StreamStats, 0, len(c.streams))
+	for k, t := range c.streams {
+		out = append(out, StreamStats{
+			Method:   k.method,
+			Route:    k.route,
+			Requests: t.requests,
+			Errors:   t.errors,
+			Active:   t.active,
+			TotalMS:  ms(t.total),
+			MaxMS:    ms(t.max),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Route != out[j].Route {
+			return out[i].Route < out[j].Route
+		}
+		return out[i].Method < out[j].Method
+	})
+	return out
 }
 
 func (c *statsCollector) record(method, route string, status int, d time.Duration) {

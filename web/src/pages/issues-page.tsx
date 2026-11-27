@@ -1,10 +1,10 @@
-import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, FolderTreeIcon, MilestoneIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
+import { ArrowUpDownIcon, CheckCheckIcon, FilterIcon, FolderTreeIcon, MilestoneIcon, PlusIcon, SearchIcon, ShieldCheckIcon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { IssueListFilters } from '@/api/client'
-import { useAcknowledgeMany, useIssues, useLabels, useMilestones, useTopics } from '@/api/queries'
-import { ISSUE_STATUSES, ISSUE_TYPES, MILESTONE_STATUSES, PRIORITIES, type IssueStatus, type IssueType, type Priority } from '@/api/types'
+import { useIssues, useLabels, useMilestones, useTopics, useVerifyMany } from '@/api/queries'
+import { ISSUE_STATUSES, ISSUE_TYPES, MILESTONE_STATUSES, PRIORITIES, VERIFICATION_STATES, type IssueStatus, type IssueType, type Priority, type VerificationState } from '@/api/types'
 import { useAppState } from '@/app/state'
 import { EmptyState, Loading, QueryError } from '@/components/feedback'
 import { IssueCreateDialog } from '@/components/issue/issue-create-dialog'
@@ -24,11 +24,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { useFlash } from '@/hooks/use-flash'
-import { unacknowledgedKeys } from '@/lib/acknowledge'
-import { MILESTONE_STATUS_LABEL, PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL } from '@/lib/labels'
+import { MILESTONE_STATUS_LABEL, PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL, VERIFICATION_STATE_LABEL } from '@/lib/labels'
 import { toastError } from '@/lib/toast'
 import { flattenTopics, groupTopics } from '@/lib/topics'
 import { cn } from '@/lib/utils'
+import { pendingVerificationKeys } from '@/lib/verification'
 
 const LIMIT = 200
 
@@ -45,6 +45,17 @@ const STATUS_PRESETS: { value: string; label: string }[] = [
   { value: 'all', label: '전체' },
   { value: 'closed', label: '닫힌 이슈' },
 ]
+
+const VERIFICATION_OPTIONS: { value: '' | VerificationState; label: string }[] = [
+  { value: '', label: '전체' },
+  { value: 'pending', label: '검증 필요' },
+  { value: 'verified', label: '검증 완료' },
+  { value: 'none', label: '해당 없음' },
+]
+
+function isVerificationState(v: string | null): v is VerificationState {
+  return v !== null && (VERIFICATION_STATES as readonly string[]).includes(v)
+}
 
 function csv(v: string | null): string[] {
   return v ? v.split(',').filter(Boolean) : []
@@ -126,8 +137,8 @@ export function IssuesPage() {
   const milestone = csv(params.get('milestone'))
   // 삭제된 마일스톤은 이미 고른 것만 목록에 남겨 이름을 보이고 해제할 수 있게 한다.
   const milestoneOptions = (milestones.data?.items ?? []).filter((m) => m.status !== 'deleted' || milestone.includes(String(m.id)))
-  const acknowledgedParam = params.get('acknowledged')
-  const acknowledged = acknowledgedParam === 'false' || acknowledgedParam === 'true' ? acknowledgedParam : undefined
+  const verificationParam = params.get('verification')
+  const verification = isVerificationState(verificationParam) ? verificationParam : undefined
   const dormant = params.get('dormant') === 'true' ? 'true' : undefined
   const q = params.get('q') ?? ''
   const sort = params.get('sort') ?? ''
@@ -163,36 +174,36 @@ export function IssuesPage() {
   }
 
   const filters = useMemo<IssueListFilters>(
-    () => ({ project, status, type, priority, label, topic, milestone, acknowledged, dormant, q, sort, limit: LIMIT }),
+    () => ({ project, status, type, priority, label, topic, milestone, verification, dormant, q, sort, limit: LIMIT }),
     // 배열은 URL 문자열에서 매번 새로 만들어지므로 문자열로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, paramsKey],
   )
   const filterKey = `${project ?? '*'}|${paramsKey}`
-  const hasFilter = status.length + type.length + priority.length + label.length + topic.length + milestone.length > 0 || q !== '' || acknowledged !== undefined || dormant !== undefined
+  const hasFilter = status.length + type.length + priority.length + label.length + topic.length + milestone.length > 0 || q !== '' || verification !== undefined || dormant !== undefined
   const statusPreset = status.length === 1 && (status[0] === 'all' || status[0] === 'closed') ? status[0] : status.length === 0 ? '' : null
   const list = useIssues(filters).data
   const total = list?.total
-  const acknowledgeMany = useAcknowledgeMany()
-  // 필터가 미확인일 때만, 지금 보이는 목록의 미확인 이슈를 모두 확인한다.
-  const pendingKeys = acknowledged === 'false' && list ? unacknowledgedKeys(list.items) : []
-  const acknowledgeAll = () =>
-    acknowledgeMany.mutate(pendingKeys, {
+  const verifyMany = useVerifyMany()
+  // 필터가 검증 필요일 때만, 지금 보이는 목록의 검증 필요 이슈를 모두 검증 완료 처리한다.
+  const pendingKeys = verification === 'pending' && list ? pendingVerificationKeys(list.items) : []
+  const verifyAll = () =>
+    verifyMany.mutate(pendingKeys, {
       onSuccess: ({ done, failed, firstError }) => {
-        if (failed === 0) toast.success(`${done}건을 확인했습니다`)
-        else toastError(firstError, `${done}건을 확인했고 ${failed}건은 확인하지 못했습니다`)
+        if (failed === 0) toast.success(`${done}건을 검증 완료했습니다`)
+        else toastError(firstError, `${done}건을 검증 완료했고 ${failed}건은 처리하지 못했습니다`)
       },
-      onError: (err) => toastError(err, '확인하지 못했습니다'),
+      onError: (err) => toastError(err, '검증 완료를 처리하지 못했습니다'),
     })
 
   return (
     <>
       <PageHeader title="이슈" meta={project ? <span className="font-mono text-foreground/80">{project}</span> : '전체 프로젝트'}>
         {total !== undefined ? <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{total}건</span> : null}
-        {acknowledged === 'false' ? (
-          <Button variant="secondary" size="xs" onClick={acknowledgeAll} disabled={pendingKeys.length === 0 || acknowledgeMany.isPending} title="지금 보이는 목록의 이슈에 확인 표시를 합니다">
+        {verification === 'pending' ? (
+          <Button variant="secondary" size="xs" onClick={verifyAll} disabled={pendingKeys.length === 0 || verifyMany.isPending} title="지금 보이는 목록의 검증 필요 이슈를 모두 검증 완료로 표시합니다">
             <CheckCheckIcon />
-            목록 모두 확인{pendingKeys.length > 0 ? ` (${pendingKeys.length})` : ''}
+            목록 모두 검증 완료{pendingKeys.length > 0 ? ` (${pendingKeys.length})` : ''}
           </Button>
         ) : null}
         <Button size="xs" onClick={() => setCreate(true)}>
@@ -288,9 +299,28 @@ export function IssuesPage() {
             }}
           />
         ) : null}
-        <Button variant={acknowledged === 'false' ? 'secondary' : 'ghost'} size="xs" className={cn(acknowledged === 'false' && 'text-sky-300')} onClick={() => update({ acknowledged: acknowledged === 'false' ? null : 'false' })}>
-          미확인
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant={verification ? 'secondary' : 'ghost'}
+              size="xs"
+              className={cn(verification === 'pending' && 'text-rose-300', verification === 'verified' && 'text-emerald-300')}
+            >
+              <ShieldCheckIcon />
+              {verification ? VERIFICATION_STATE_LABEL[verification] : '검증'}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel>검증 상태</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={verification ?? ''} onValueChange={(v) => update({ verification: v || null })}>
+              {VERIFICATION_OPTIONS.map((opt) => (
+                <DropdownMenuRadioItem key={opt.value || 'all'} value={opt.value}>
+                  {opt.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button variant={dormant ? 'secondary' : 'ghost'} size="xs" onClick={() => update({ dormant: dormant ? null : 'true' })}>
           오래됨
         </Button>

@@ -100,6 +100,7 @@ type DeviceAuthorization struct {
 	Actor      string       `json:"actor"`
 	ClientHost string       `json:"client_host"`
 	Status     DeviceStatus `json:"status"`
+	NewActor   bool         `json:"new_actor"`
 	CreatedAt  Time         `json:"created_at"`
 	ExpiresAt  Time         `json:"expires_at"`
 }
@@ -116,71 +117,75 @@ type DeviceGrant struct {
 
 // Issue is a full issue resource including the body.
 type Issue struct {
-	Key              string      `json:"key"`
-	Project          string      `json:"project"`
-	Number           int64       `json:"number"`
-	Title            string      `json:"title"`
-	Body             string      `json:"body"`
-	Type             IssueType   `json:"type"`
-	Status           IssueStatus `json:"status"`
-	Priority         Priority    `json:"priority"`
-	Labels           []string    `json:"labels"`
-	Parent           *string     `json:"parent"`
-	DependsOn        []string    `json:"depends_on"`
-	Refs             []string    `json:"refs"`
-	RecheckCondition *string     `json:"recheck_condition"`
-	DecisionNeeded   *string     `json:"decision_needed"`
-	Topic            *int64      `json:"topic"`
-	TopicPath        *string     `json:"topic_path"`
-	Milestone        *int64      `json:"milestone"`
-	MilestoneName    *string     `json:"milestone_name"`
-	StatusReason     *string     `json:"status_reason"`
-	AcknowledgedAt   *Time       `json:"acknowledged_at"`
-	AcknowledgedBy   *string     `json:"acknowledged_by"`
-	Version          int64       `json:"version"`
-	CreatedAt        Time        `json:"created_at"`
-	UpdatedAt        Time        `json:"updated_at"`
-	ClosedAt         *Time       `json:"closed_at"`
-	StatusChangedAt  Time        `json:"status_changed_at"`
-	StatusChangedBy  string      `json:"status_changed_by"`
-	CreatedBy        string      `json:"created_by"`
-	UpdatedBy        string      `json:"updated_by"`
-	Dormant          bool        `json:"dormant"` // derived at read time, see IsDormant
+	Key               string            `json:"key"`
+	Project           string            `json:"project"`
+	Number            int64             `json:"number"`
+	Title             string            `json:"title"`
+	Body              string            `json:"body"`
+	Type              IssueType         `json:"type"`
+	Status            IssueStatus       `json:"status"`
+	Priority          Priority          `json:"priority"`
+	Labels            []string          `json:"labels"`
+	Parent            *string           `json:"parent"`
+	DependsOn         []string          `json:"depends_on"`
+	Refs              []string          `json:"refs"`
+	RecheckCondition  *string           `json:"recheck_condition"`
+	DecisionNeeded    *string           `json:"decision_needed"`
+	Topic             *int64            `json:"topic"`
+	TopicPath         *string           `json:"topic_path"`
+	Milestone         *int64            `json:"milestone"`
+	MilestoneName     *string           `json:"milestone_name"`
+	StatusReason      *string           `json:"status_reason"`
+	VerificationState VerificationState `json:"verification_state"`
+	VerificationNote  *string           `json:"verification_note"`
+	VerifiedAt        *Time             `json:"verified_at"`
+	VerifiedBy        *string           `json:"verified_by"`
+	Version           int64             `json:"version"`
+	CreatedAt         Time              `json:"created_at"`
+	UpdatedAt         Time              `json:"updated_at"`
+	ClosedAt          *Time             `json:"closed_at"`
+	StatusChangedAt   Time              `json:"status_changed_at"`
+	StatusChangedBy   string            `json:"status_changed_by"`
+	CreatedBy         string            `json:"created_by"`
+	UpdatedBy         string            `json:"updated_by"`
+	Dormant           bool              `json:"dormant"` // derived at read time, see IsDormant
 }
 
 // IssueSummary is an issue without its body, as returned by list views.
 // Snippet is set only by full text search.
 type IssueSummary struct {
-	Key              string      `json:"key"`
-	Project          string      `json:"project"`
-	Number           int64       `json:"number"`
-	Title            string      `json:"title"`
-	Type             IssueType   `json:"type"`
-	Status           IssueStatus `json:"status"`
-	Priority         Priority    `json:"priority"`
-	Labels           []string    `json:"labels"`
-	Parent           *string     `json:"parent"`
-	DependsOn        []string    `json:"depends_on"`
-	Refs             []string    `json:"refs"`
-	RecheckCondition *string     `json:"recheck_condition"`
-	DecisionNeeded   *string     `json:"decision_needed"`
-	Topic            *int64      `json:"topic"`
-	TopicPath        *string     `json:"topic_path"`
-	Milestone        *int64      `json:"milestone"`
-	MilestoneName    *string     `json:"milestone_name"`
-	StatusReason     *string     `json:"status_reason"`
-	AcknowledgedAt   *Time       `json:"acknowledged_at"`
-	AcknowledgedBy   *string     `json:"acknowledged_by"`
-	Version          int64       `json:"version"`
-	CreatedAt        Time        `json:"created_at"`
-	UpdatedAt        Time        `json:"updated_at"`
-	ClosedAt         *Time       `json:"closed_at"`
-	StatusChangedAt  Time        `json:"status_changed_at"`
-	StatusChangedBy  string      `json:"status_changed_by"`
-	CreatedBy        string      `json:"created_by"`
-	UpdatedBy        string      `json:"updated_by"`
-	Dormant          bool        `json:"dormant"`
-	Snippet          *string     `json:"snippet,omitempty"`
+	Key               string            `json:"key"`
+	Project           string            `json:"project"`
+	Number            int64             `json:"number"`
+	Title             string            `json:"title"`
+	Type              IssueType         `json:"type"`
+	Status            IssueStatus       `json:"status"`
+	Priority          Priority          `json:"priority"`
+	Labels            []string          `json:"labels"`
+	Parent            *string           `json:"parent"`
+	DependsOn         []string          `json:"depends_on"`
+	Refs              []string          `json:"refs"`
+	RecheckCondition  *string           `json:"recheck_condition"`
+	DecisionNeeded    *string           `json:"decision_needed"`
+	Topic             *int64            `json:"topic"`
+	TopicPath         *string           `json:"topic_path"`
+	Milestone         *int64            `json:"milestone"`
+	MilestoneName     *string           `json:"milestone_name"`
+	StatusReason      *string           `json:"status_reason"`
+	VerificationState VerificationState `json:"verification_state"`
+	VerificationNote  *string           `json:"verification_note"`
+	VerifiedAt        *Time             `json:"verified_at"`
+	VerifiedBy        *string           `json:"verified_by"`
+	Version           int64             `json:"version"`
+	CreatedAt         Time              `json:"created_at"`
+	UpdatedAt         Time              `json:"updated_at"`
+	ClosedAt          *Time             `json:"closed_at"`
+	StatusChangedAt   Time              `json:"status_changed_at"`
+	StatusChangedBy   string            `json:"status_changed_by"`
+	CreatedBy         string            `json:"created_by"`
+	UpdatedBy         string            `json:"updated_by"`
+	Dormant           bool              `json:"dormant"`
+	Snippet           *string           `json:"snippet,omitempty"`
 }
 
 // Summary strips the body from an issue.
@@ -191,7 +196,8 @@ func (i *Issue) Summary() IssueSummary {
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
 		RecheckCondition: i.RecheckCondition, DecisionNeeded: i.DecisionNeeded, Topic: i.Topic, TopicPath: i.TopicPath,
 		Milestone: i.Milestone, MilestoneName: i.MilestoneName, StatusReason: i.StatusReason,
-		AcknowledgedAt: i.AcknowledgedAt, AcknowledgedBy: i.AcknowledgedBy, Version: i.Version,
+		VerificationState: i.VerificationState, VerificationNote: i.VerificationNote,
+		VerifiedAt: i.VerifiedAt, VerifiedBy: i.VerifiedBy, Version: i.Version,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt, ClosedAt: i.ClosedAt,
 		StatusChangedAt: i.StatusChangedAt, StatusChangedBy: i.StatusChangedBy,
 		CreatedBy: i.CreatedBy, UpdatedBy: i.UpdatedBy, Dormant: i.Dormant,
@@ -219,18 +225,27 @@ const UserTaskLabel = "user-task"
 // before the issue counts as stale.
 const StaleAfter = 2 * time.Hour
 
-// Holder is the session that moved a doing issue to doing.
+// Holder is the session holding a doing issue, either from a stored claim
+// (source "claim") or derived from activity history (source "activity").
 type Holder struct {
 	Actor        string `json:"actor"`
 	SessionID    string `json:"session_id"`
-	LastActiveAt Time   `json:"last_active_at"` // the session's latest activity on any issue
+	LastActiveAt Time   `json:"last_active_at"` // session last_seen_at for claims, or latest issue activity for fallbacks
 	Stale        bool   `json:"stale"`
+	Source       string `json:"source,omitempty"`
 }
 
 // DoingItem is a doing issue in the overview with the session holding it.
 type DoingItem struct {
 	IssueSummary
 	Holder Holder `json:"holder"`
+}
+
+// DecisionItem is an open issue needing a decision together with active waiting
+// sessions linked to it.
+type DecisionItem struct {
+	IssueSummary
+	WaitingSessions []Session `json:"waiting_sessions"`
 }
 
 // Change is one field change in an activity record.

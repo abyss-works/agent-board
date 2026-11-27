@@ -12,7 +12,8 @@ import (
 )
 
 var issueCmd = &command{name: "issue", summary: "이슈 관리", subs: []*command{
-	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueAckCmd, issueUnackCmd, issueCommentCmd, issueActivityCmd,
+	issueListCmd, issueGetCmd, issueCreateCmd, issueUpdateCmd, issueDeleteCmd, issueVerifyCmd, issueUnverifyCmd,
+	issueClaimCmd, issueUnclaimCmd, issueClaimsCmd, issueCommentCmd, issueActivityCmd,
 }, hints: map[string][]string{"comments": {"comment", "activity"}}}
 
 // issueFilterFlags registers the shared list filters.
@@ -27,7 +28,7 @@ func issueFilterFlags(fs *flag.FlagSet, f *client.IssueFilter, labels, topics, m
 	fs.Var(topics, "topic", "")
 	fs.Var(milestones, "milestone", "")
 	fs.StringVar(&f.Parent, "parent", "", "")
-	fs.StringVar(&f.Acknowledged, "acknowledged", "", "")
+	fs.StringVar(&f.Verification, "verification", "", "")
 	fs.BoolVar(&f.Dormant, "dormant", false, "")
 	fs.StringVar(&f.CreatedBy, "created-by", "", "")
 	fs.StringVar(&f.UpdatedBy, "updated-by", "", "")
@@ -49,7 +50,7 @@ const issueFilterUsage = `  --project, -p <P>       프로젝트 키. 쉼표로 
   --milestone <M>         마일스톤의 ID나 이름, none 이면 마일스톤이 없는 이슈. 반복하면 OR.
                           이름은 --project 하나가 필요하고, 삭제된 마일스톤을 포함해 정확히 같은 이름을 찾음
   --parent <KEY|none>     상위 이슈. none 이면 상위가 없는 이슈
-  --acknowledged <true|false>  사용자가 확인한 이슈(true)나 아직 확인하지 않은 이슈(false)만
+  --verification <V>      none, pending, verified. 쉼표 OR
   --dormant               30일 넘게 활동(수정, 댓글)이 없는 열린 이슈만. 표시만 하고 닫지 않음
   --created-by, --updated-by, --status-changed-by <행위자>   쉼표 OR
   --sort <F>              priority, created_at, updated_at, key, relevance. 쉼표로 여러 개, - 는 내림차순
@@ -209,6 +210,15 @@ func checkDecision(fs *flag.FlagSet, v string) error {
 	return nil
 }
 
+// checkVerifyNote rejects an empty --verify-note. A note is cleared, or left
+// out on create, with none.
+func checkVerifyNote(fs *flag.FlagSet, v string) error {
+	if isSet(fs, "verify-note") && v == "" {
+		return usageErrorf("--verify-note 값이 비어 있습니다. 확인할 내용을 주거나, 없애려면 none 을 주세요.")
+	}
+	return nil
+}
+
 var issueCreateCmd = &command{
 	name: "create", summary: "이슈 생성",
 	usage: `사용법: agb issue create --project <P> --title <제목> [옵션]
@@ -230,10 +240,12 @@ var issueCreateCmd = &command{
   --topic <T>             주제의 ID나 경로("대주제", "대주제/주제"). agb topic list -p <KEY> 로 확인합니다
   --milestone <M>         마일스톤의 ID나 이름. 이름은 프로젝트의 마일스톤(agb milestone list -p <KEY> --status all)에서
                           정확히 같은 것을 찾고, 없거나 둘 이상이면 오류입니다. 숫자만 있는 값은 ID로 봅니다
+  --verification <V>      사용자 검증 필요 여부. none(기본) 또는 pending. 화면·사용감 등 직접 확인이 필요한 항목만 pending
+  --verify-note <문구|none>  사용자가 무엇을 확인할지 적는 메모. 1~500자. --verification 을 생략하고 주면 pending 으로 설정
 ` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue create", g)
-		var project, title, typ, priority, status, body, bodyFile, parent, recheck, decision, topic, milestone string
+		var project, title, typ, priority, status, body, bodyFile, parent, recheck, decision, topic, milestone, verification, verifyNote string
 		var labels, deps, refs stringList
 		fs.StringVar(&project, "project", "", "")
 		fs.StringVar(&project, "p", "", "")
@@ -252,6 +264,8 @@ var issueCreateCmd = &command{
 		fs.StringVar(&decision, "decision-needed", "", "")
 		fs.StringVar(&topic, "topic", "", "")
 		fs.StringVar(&milestone, "milestone", "", "")
+		fs.StringVar(&verification, "verification", "", "")
+		fs.StringVar(&verifyNote, "verify-note", "", "")
 		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
@@ -268,6 +282,9 @@ var issueCreateCmd = &command{
 		if err := checkDecision(fs, decision); err != nil {
 			return err
 		}
+		if err := checkVerifyNote(fs, verifyNote); err != nil {
+			return err
+		}
 		in := map[string]any{"project": project, "title": title}
 		for name, v := range map[string]string{"type": typ, "priority": priority, "status": status, "parent": parent, "recheck_condition": recheck} {
 			if v != "" {
@@ -276,6 +293,15 @@ var issueCreateCmd = &command{
 		}
 		if decision != "" && decision != "none" {
 			in["decision_needed"] = decision
+		}
+		if verifyNote != "" && verifyNote != "none" {
+			in["verification_note"] = verifyNote
+			if !isSet(fs, "verification") {
+				in["verification_state"] = string(model.VerificationPending)
+			}
+		}
+		if isSet(fs, "verification") {
+			in["verification_state"] = verification
 		}
 		text, present, err := a.readBody(fs, body, bodyFile)
 		if err != nil {
@@ -381,11 +407,13 @@ var issueUpdateCmd = &command{
   --milestone <M>         마일스톤의 ID나 이름. none 이면 마일스톤을 지움. 이름은 이슈 프로젝트의 마일스톤
                           (agb milestone list -p <KEY> --status all)에서 정확히 같은 것을 찾고, 없거나 둘 이상이면
                           오류입니다. 숫자만 있는 값은 ID로 봅니다
+  --verification <V>      사용자 검증 필요 여부. none 또는 pending (검증 완료는 agb issue verify)
+  --verify-note <문구|none>  사용자 검증 메모. 1~500자. none 이면 메모를 지움
   --if-match <버전>       이 버전일 때만 수정. 숫자만 주어도 됩니다
 ` + templateUsage,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("issue update", g)
-		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, decision, topic, milestone, ifMatch string
+		var title, typ, priority, status, reason, body, bodyFile, parent, recheck, decision, topic, milestone, verification, verifyNote, ifMatch string
 		var noParent, noRecheck bool
 		fs.StringVar(&title, "title", "", "")
 		fs.StringVar(&typ, "type", "", "")
@@ -401,6 +429,8 @@ var issueUpdateCmd = &command{
 		fs.StringVar(&decision, "decision-needed", "", "")
 		fs.StringVar(&topic, "topic", "", "")
 		fs.StringVar(&milestone, "milestone", "", "")
+		fs.StringVar(&verification, "verification", "", "")
+		fs.StringVar(&verifyNote, "verify-note", "", "")
 		fs.StringVar(&ifMatch, "if-match", "", "")
 		arrays := []*arrayEdit{{field: "labels", flag: "label"}, {field: "depends_on", flag: "depends-on"}, {field: "refs", flag: "ref"}}
 		for _, e := range arrays {
@@ -455,6 +485,18 @@ var issueUpdateCmd = &command{
 			patch["decision_needed"] = nil
 		case decision != "":
 			patch["decision_needed"] = decision
+		}
+		if err := checkVerifyNote(fs, verifyNote); err != nil {
+			return err
+		}
+		if isSet(fs, "verification") {
+			patch["verification_state"] = verification
+		}
+		switch {
+		case verifyNote == "none":
+			patch["verification_note"] = nil
+		case verifyNote != "":
+			patch["verification_note"] = verifyNote
 		}
 		needRead := false
 		for _, e := range arrays {
@@ -568,17 +610,21 @@ var issueDeleteCmd = &command{
 	},
 }
 
-var issueAckCmd = &command{
-	name: "ack", summary: "사용자 확인 표시 (여러 개 가능)",
-	usage: `사용법: agb issue ack <KEY>...
+var issueVerifyCmd = &command{
+	name: "verify", summary: "사용자 검증 완료 표시 (여러 개 가능)",
+	usage: `사용법: agb issue verify <KEY>... [--if-match <버전>]
 
-사용자가 이슈를 확인했다고 표시합니다. 작업 흐름(상태, 큐, 막힘)에는 영향이 없습니다.
-이미 확인된 이슈는 그대로 둡니다. 여러 키를 주면 차례로 처리하고, 처음 실패하는 키에서 멈춥니다.
-JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다. 에이전트는 사용자가 대화에서 확인했을 때와
-대화 중인 사용자에게 보고하며 그 이슈의 키, 제목, 내용을 적었을 때만 씁니다.
+검증이 필요한(pending) 이슈를 검증 완료(verified)로 표시합니다. 이미 검증된 이슈는 그대로 둡니다.
+여러 키를 주면 차례로 처리하고, 처음 실패하는 키에서 멈춥니다. JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다.
+
+옵션:
+  --if-match <버전>       이 버전일 때만 반영. 숫자만 주어도 됩니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		pos, err := parseArgs(leafFlags("issue ack", g), args)
+		fs := leafFlags("issue verify", g)
+		var ifMatch string
+		fs.StringVar(&ifMatch, "if-match", "", "")
+		pos, err := parseArgs(fs, args)
 		if err != nil {
 			return err
 		}
@@ -589,8 +635,9 @@ JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다. 에이전트는 
 		if err != nil {
 			return err
 		}
+		version := quoteETag(ifMatch)
 		for _, key := range pos {
-			resp, err := c.Acknowledge(ctx, key)
+			resp, err := c.Verify(ctx, key, version)
 			if err != nil {
 				return err
 			}
@@ -602,14 +649,54 @@ JSON 출력은 키마다 서버 응답을 한 줄씩 냅니다. 에이전트는 
 	},
 }
 
-var issueUnackCmd = &command{
-	name: "unack", summary: "사용자 확인 표시 해제",
-	usage: `사용법: agb issue unack <KEY>
+var issueUnverifyCmd = &command{
+	name: "unverify", summary: "사용자 검증 완료 해제 (여러 개 가능)",
+	usage: `사용법: agb issue unverify <KEY>... [--if-match <버전>]
 
-이슈의 확인 표시를 지워 미확인으로 되돌립니다. 이미 미확인이면 그대로 둡니다.
+검증 완료(verified) 이슈를 검증 필요(pending)로 되돌립니다. 검증 메모는 유지되고 이미 pending 이면 그대로 둡니다.
+여러 키를 주면 차례로 처리하고, 처음 실패하는 키에서 멈춥니다.
+
+옵션:
+  --if-match <버전>       이 버전일 때만 반영. 숫자만 주어도 됩니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		pos, err := parseArgs(leafFlags("issue unack", g), args)
+		fs := leafFlags("issue unverify", g)
+		var ifMatch string
+		fs.StringVar(&ifMatch, "if-match", "", "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		if len(pos) == 0 {
+			return usageErrorf("<KEY> 인자가 필요합니다.")
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		version := quoteETag(ifMatch)
+		for _, key := range pos {
+			resp, err := c.Unverify(ctx, key, version)
+			if err != nil {
+				return err
+			}
+			if err := a.emit(g, resp, a.renderIssue); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}
+
+var issueClaimCmd = &command{
+	name: "claim", summary: "이슈 점유",
+	usage: `사용법: agb issue claim <KEY>
+
+현재 세션으로 이슈를 점유합니다. 이미 같은 세션이 유효하게 점유 중이면 기존 점유를 돌려줍니다.
+다른 세션이 유효하게 점유 중이면 409(claimed)로 실패합니다.
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		pos, err := parseArgs(leafFlags("issue claim", g), args)
 		if err != nil {
 			return err
 		}
@@ -621,11 +708,86 @@ var issueUnackCmd = &command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.Unacknowledge(ctx, key)
+		resp, err := c.ClaimIssue(ctx, key)
 		if err != nil {
 			return err
 		}
-		return a.emit(g, resp, a.renderIssue)
+		return a.emit(g, resp, a.renderIssueClaim)
+	},
+}
+
+var issueUnclaimCmd = &command{
+	name: "unclaim", summary: "이슈 점유 해제",
+	usage: `사용법: agb issue unclaim <KEY> [--outcome done|abandoned] [--reason <사유>]
+
+이슈의 미해제 점유를 해제합니다. 점유한 세션 본인이나 사용자 행위자만 해제할 수 있습니다.
+
+옵션:
+  --outcome <결과>        done 또는 abandoned (생략하면 abandoned)
+  --reason <사유>         해제 사유 (1~200자, 제어 문자 불가)
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("issue unclaim", g)
+		var outcome, reason string
+		fs.StringVar(&outcome, "outcome", "", "")
+		fs.StringVar(&reason, "reason", "", "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		body := map[string]any{}
+		if isSet(fs, "outcome") {
+			body["outcome"] = outcome
+		}
+		if isSet(fs, "reason") {
+			body["reason"] = reason
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.UnclaimIssue(ctx, key, body)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderIssueClaim)
+	},
+}
+
+var issueClaimsCmd = &command{
+	name: "claims", summary: "이슈 점유 이력 (최신 먼저)",
+	usage: `사용법: agb issue claims <KEY> [--limit <N>] [--offset <N>]
+
+옵션:
+  --limit <N>             최대 200. 기본 50
+  --offset <N>
+`,
+	run: func(a *App, ctx context.Context, g *globals, args []string) error {
+		fs := leafFlags("issue claims", g)
+		var p client.Page
+		fs.IntVar(&p.Limit, "limit", 0, "")
+		fs.IntVar(&p.Offset, "offset", 0, "")
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			return err
+		}
+		key, err := one(pos, "<KEY>")
+		if err != nil {
+			return err
+		}
+		c, err := a.client(g, true)
+		if err != nil {
+			return err
+		}
+		resp, err := c.ListIssueClaims(ctx, key, p)
+		if err != nil {
+			return err
+		}
+		return a.emit(g, resp, a.renderIssueClaimList)
 	},
 }
 
@@ -736,6 +898,9 @@ var issueCommentCmd = &command{
 		}
 		if err := a.emit(g, resp, a.renderActivity); err != nil {
 			return err
+		}
+		if location || len(repos) > 0 {
+			a.syncCommentSessionLocation(ctx, c, s.Actor, s.SessionID, dirs[0])
 		}
 		if status == string(model.StatusDone) {
 			a.autoSyncRecords(ctx, c)

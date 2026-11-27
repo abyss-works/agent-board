@@ -386,40 +386,62 @@ type project struct {
 }
 
 // issue covers the full issue, the summary (Body nil), search items
-// (Snippet) and queue items (Ready, BlockedBy).
+// (Snippet), queue items (Ready, BlockedBy) and decision items (WaitingSessions).
 type issue struct {
-	Key              string   `json:"key"`
-	Project          string   `json:"project"`
-	Number           int64    `json:"number"`
-	Title            string   `json:"title"`
-	Body             *string  `json:"body"`
-	Type             string   `json:"type"`
-	Status           string   `json:"status"`
-	Priority         string   `json:"priority"`
-	Labels           []string `json:"labels"`
-	Parent           *string  `json:"parent"`
-	DependsOn        []string `json:"depends_on"`
-	Refs             []string `json:"refs"`
-	RecheckCondition *string  `json:"recheck_condition"`
-	DecisionNeeded   *string  `json:"decision_needed"`
-	Version          int64    `json:"version"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
-	ClosedAt         *string  `json:"closed_at"`
-	Topic            *int64   `json:"topic"`
-	TopicPath        *string  `json:"topic_path"`
-	Milestone        *int64   `json:"milestone"`
-	MilestoneName    *string  `json:"milestone_name"`
-	StatusReason     *string  `json:"status_reason"`
-	AcknowledgedAt   *string  `json:"acknowledged_at"`
-	AcknowledgedBy   *string  `json:"acknowledged_by"`
-	StatusChangedAt  string   `json:"status_changed_at"`
-	StatusChangedBy  string   `json:"status_changed_by"`
-	CreatedBy        string   `json:"created_by"`
-	UpdatedBy        string   `json:"updated_by"`
-	Snippet          *string  `json:"snippet"`
-	Ready            *bool    `json:"ready"`
-	BlockedBy        []string `json:"blocked_by"`
+	Key               string    `json:"key"`
+	Project           string    `json:"project"`
+	Number            int64     `json:"number"`
+	Title             string    `json:"title"`
+	Body              *string   `json:"body"`
+	Type              string    `json:"type"`
+	Status            string    `json:"status"`
+	Priority          string    `json:"priority"`
+	Labels            []string  `json:"labels"`
+	Parent            *string   `json:"parent"`
+	DependsOn         []string  `json:"depends_on"`
+	Refs              []string  `json:"refs"`
+	RecheckCondition  *string   `json:"recheck_condition"`
+	DecisionNeeded    *string   `json:"decision_needed"`
+	Version           int64     `json:"version"`
+	CreatedAt         string    `json:"created_at"`
+	UpdatedAt         string    `json:"updated_at"`
+	ClosedAt          *string   `json:"closed_at"`
+	Topic             *int64    `json:"topic"`
+	TopicPath         *string   `json:"topic_path"`
+	Milestone         *int64    `json:"milestone"`
+	MilestoneName     *string   `json:"milestone_name"`
+	StatusReason      *string   `json:"status_reason"`
+	VerificationState string    `json:"verification_state"`
+	VerificationNote  *string   `json:"verification_note"`
+	VerifiedAt        *string   `json:"verified_at"`
+	VerifiedBy        *string   `json:"verified_by"`
+	StatusChangedAt   string    `json:"status_changed_at"`
+	StatusChangedBy   string    `json:"status_changed_by"`
+	CreatedBy         string    `json:"created_by"`
+	UpdatedBy         string    `json:"updated_by"`
+	Snippet           *string   `json:"snippet"`
+	Ready             *bool     `json:"ready"`
+	BlockedBy         []string  `json:"blocked_by"`
+	WaitingSessions   []session `json:"waiting_sessions"`
+}
+
+type sessionRef struct {
+	Actor     string `json:"actor"`
+	SessionID string `json:"session_id"`
+}
+
+type session struct {
+	Actor             string       `json:"actor"`
+	SessionID         string       `json:"session_id"`
+	Named             bool         `json:"named"`
+	LastHost          string       `json:"last_host"`
+	LastProject       *string      `json:"last_project"`
+	Issue             *string      `json:"issue"`
+	LocationConflicts []sessionRef `json:"location_conflicts"`
+	State             *string      `json:"state"`
+	StateReason       *string      `json:"state_reason"`
+	StateAt           *string      `json:"state_at"`
+	Stale             bool         `json:"stale"`
 }
 
 type change struct {
@@ -457,6 +479,7 @@ type deviceAuth struct {
 	Actor      string `json:"actor"`
 	ClientHost string `json:"client_host"`
 	Status     string `json:"status"`
+	NewActor   bool   `json:"new_actor"`
 	CreatedAt  string `json:"created_at"`
 	ExpiresAt  string `json:"expires_at"`
 }
@@ -506,7 +529,7 @@ type overview struct {
 	Blocked        section[issue]    `json:"blocked"`
 	Decisions      section[issue]    `json:"decisions"`
 	Next           section[issue]    `json:"next"`
-	Unacknowledged section[issue]    `json:"unacknowledged"`
+	Unverified     section[issue]    `json:"unverified"`
 	RecentActivity section[activity] `json:"recent_activity"`
 }
 

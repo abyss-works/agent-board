@@ -657,3 +657,102 @@ func TestMilestoneWritesChangeTheFingerprint(t *testing.T) {
 		t.Error("fingerprint unchanged after a milestone was closed")
 	}
 }
+
+func TestMilestoneCloseBlockedByUnverifiedIssues(t *testing.T) {
+	s, ctx := seeded(t)
+	mustProject(t, s, ctx, "APP")
+	m := mustMilestone(t, s, "APP", "v1.0")
+
+	// Done issue with verification_state=pending MUST still block release!
+	donePending := mustIssue(t, s, ctx, trOwner, IssueInput{
+		Project:           "APP",
+		Title:             "merged feature",
+		Status:            model.StatusDone,
+		Milestone:         &m.ID,
+		VerificationState: model.VerificationPending,
+		VerificationNote:  str("스테이징 확인"),
+	})
+	openPending := mustIssue(t, s, ctx, trOwner, IssueInput{
+		Project:           "APP",
+		Title:             "open feature",
+		Status:            model.StatusBacklog,
+		Milestone:         &m.ID,
+		VerificationState: model.VerificationPending,
+	})
+	// Cancelled and deleted pending issues do NOT block closing.
+	mustIssue(t, s, ctx, trOwner, IssueInput{
+		Project:           "APP",
+		Title:             "cancelled pending",
+		Status:            model.StatusCancelled,
+		Milestone:         &m.ID,
+		VerificationState: model.VerificationPending,
+	})
+	mustIssue(t, s, ctx, trOwner, IssueInput{
+		Project:           "APP",
+		Title:             "deleted pending",
+		Status:            model.StatusDeleted,
+		Milestone:         &m.ID,
+		VerificationState: model.VerificationPending,
+	})
+	// None issue does NOT block closing.
+	mustIssue(t, s, ctx, trOwner, IssueInput{
+		Project:   "APP",
+		Title:     "regular done",
+		Status:    model.StatusDone,
+		Milestone: &m.ID,
+	})
+
+	closed := model.MilestoneClosed
+	_, err := s.UpdateMilestone(ctx, trOwner, m.ID, MilestonePatch{Status: &closed})
+	if !errors.Is(err, ErrUnverifiedIssues) {
+		t.Fatalf("close with pending issues: err = %v, want ErrUnverifiedIssues", err)
+	}
+	var ue *UnverifiedIssuesError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %T, want *UnverifiedIssuesError", err)
+	}
+	gotKeys := keysOf(ue.Issues, func(i model.IssueSummary) string { return i.Key })
+	if len(gotKeys) != 2 {
+		t.Fatalf("blocking issues = %v, want 2 (%s, %s)", gotKeys, donePending.Key, openPending.Key)
+	}
+	foundNote := false
+	for _, it := range ue.Issues {
+		if it.Key == donePending.Key && it.VerificationNote != nil && *it.VerificationNote == "스테이징 확인" {
+			foundNote = true
+		}
+	}
+	if !foundNote {
+		t.Errorf("blocking issues missing note on %s: %+v", donePending.Key, ue.Issues)
+	}
+	// Milestone must remain open.
+	if cur, _ := s.GetMilestone(ctx, m.ID); cur.Status != model.MilestoneOpen {
+		t.Errorf("milestone status = %s, want open", cur.Status)
+	}
+
+	// Verify donePending and set openPending to none -> close succeeds.
+	if _, _, err := s.VerifyIssue(ctx, trOwner, donePending.Key, nil); err != nil {
+		t.Fatal(err)
+	}
+	none := model.VerificationNone
+	if _, _, err := s.UpdateIssue(ctx, trOwner, openPending.Key, IssuePatch{VerificationState: &none}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UpdateMilestone(ctx, trOwner, m.ID, MilestonePatch{Status: &closed})
+	if err != nil || got.Status != model.MilestoneClosed || got.ClosedAt == nil {
+		t.Fatalf("close after verifying all: %+v, %v", got, err)
+	}
+
+	// Deleting a milestone with pending issues is NOT blocked.
+	m2 := mustMilestone(t, s, "APP", "v2.0")
+	mustIssue(t, s, ctx, trOwner, IssueInput{
+		Project:           "APP",
+		Title:             "pending in v2",
+		Status:            model.StatusDone,
+		Milestone:         &m2.ID,
+		VerificationState: model.VerificationPending,
+	})
+	deleted := model.MilestoneDeleted
+	if got, err := s.UpdateMilestone(ctx, trOwner, m2.ID, MilestonePatch{Status: &deleted}); err != nil || got.Status != model.MilestoneDeleted {
+		t.Errorf("delete with pending issue: %+v, %v", got, err)
+	}
+}

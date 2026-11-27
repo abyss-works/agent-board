@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -296,12 +297,12 @@ func TestMigrateAddsTopicAckAndReasonToVersion2Database(t *testing.T) {
 		t.Errorf("issues after migration = %d, want 2", n)
 	}
 
-	// The store reads the new columns: old issues are acknowledged with no actor.
+	// The store reads the migrated issue with verification_state reset to none.
 	old, err := s.GetIssue(context.Background(), "AGB-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if old.AcknowledgedAt == nil || old.AcknowledgedBy != nil || old.StatusReason != nil || old.Title != "첫 이슈" || old.Version != 1 {
+	if old.VerificationState != model.VerificationNone || old.VerifiedAt != nil || old.VerifiedBy != nil || old.StatusReason != nil || old.Title != "첫 이슈" || old.Version != 1 {
 		t.Errorf("migrated issue = %+v", old)
 	}
 }
@@ -418,7 +419,7 @@ func TestMigrateAddsMilestoneToVersion3Database(t *testing.T) {
 		t.Fatal(err)
 	}
 	if old.Milestone != nil || old.MilestoneName != nil || old.Topic == nil || *old.Topic != 1 || old.Title != "주제가 붙은 이슈" || old.Version != 4 ||
-		old.StatusReason == nil || *old.StatusReason != "백로그 → 할 일" || old.AcknowledgedBy == nil || *old.AcknowledgedBy != "claude" {
+		old.StatusReason == nil || *old.StatusReason != "백로그 → 할 일" || old.VerificationState != model.VerificationNone {
 		t.Errorf("migrated issue = %+v", old)
 	}
 	var withMilestone int
@@ -662,13 +663,13 @@ func TestMigrateRemovesTodoAndDecisionFromVersion5Database(t *testing.T) {
 		}
 	}
 
-	// Nothing else about an issue changes: not the reason, the stamps, the version, the acknowledgement or the links.
+	// Nothing else about an issue changes: not the reason, the stamps, the version or the links.
 	one, err := s.GetIssue(ctx, "AGB-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if one.StatusReason == nil || *one.StatusReason != "백로그 → 할 일" || one.StatusChangedBy != "claude" || one.StatusChangedAt.String() != "2026-10-17T06:30:00.000Z" ||
-		one.UpdatedAt.String() != "2026-10-17T06:30:00.000Z" || one.Version != 4 || one.AcknowledgedBy == nil || *one.AcknowledgedBy != "owner" ||
+		one.UpdatedAt.String() != "2026-10-17T06:30:00.000Z" || one.Version != 4 || one.VerificationState != model.VerificationNone ||
 		one.Topic == nil || *one.Topic != 1 || one.Milestone == nil || *one.Milestone != 1 ||
 		!reflect.DeepEqual(one.Labels, []string{"api"}) || !reflect.DeepEqual(one.Refs, []string{"doc:api.md"}) {
 		t.Errorf("AGB-1 after the migration = %+v", one)
@@ -677,7 +678,7 @@ func TestMigrateRemovesTodoAndDecisionFromVersion5Database(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if two.StatusReason == nil || *two.StatusReason != "진행 → 검토" || two.AcknowledgedAt != nil || two.Version != 2 || two.Priority != model.P0 {
+	if two.StatusReason == nil || *two.StatusReason != "진행 → 검토" || two.VerificationState != model.VerificationNone || two.Version != 2 || two.Priority != model.P0 {
 		t.Errorf("AGB-2 after the migration = %+v", two)
 	}
 	long, err := s.GetIssue(ctx, "AGB-3")
@@ -795,6 +796,78 @@ func TestEnsureActors(t *testing.T) {
 	}
 	if kind != "user" {
 		t.Errorf("claude kind = %q, want user", kind)
+	}
+}
+
+func TestEnsureAgentActorAndListActors(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "agb.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.EnsureActors(ctx, []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "claude", Kind: model.ActorAgent},
+	}); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+
+	created, err := s.EnsureAgentActor(ctx, "devin")
+	if err != nil || !created {
+		s.Close()
+		t.Fatalf("first EnsureAgentActor(devin) = (%v, %v), want (true, nil)", created, err)
+	}
+	created, err = s.EnsureAgentActor(ctx, "devin")
+	if err != nil || created {
+		s.Close()
+		t.Fatalf("second EnsureAgentActor(devin) = (%v, %v), want (false, nil)", created, err)
+	}
+	created, err = s.EnsureAgentActor(ctx, "claude")
+	if err != nil || created {
+		s.Close()
+		t.Fatalf("EnsureAgentActor(claude) = (%v, %v), want (false, nil)", created, err)
+	}
+
+	for _, bad := range []string{"owner", "", "Bad_Actor"} {
+		created, err := s.EnsureAgentActor(ctx, bad)
+		var ve *model.ValidationError
+		if created || !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != "actor" {
+			s.Close()
+			t.Fatalf("EnsureAgentActor(%q) = (%v, %v), want (false, *model.ValidationError on actor)", bad, created, err)
+		}
+	}
+
+	actors, err := s.ListActors(ctx)
+	if err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	want := []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "claude", Kind: model.ActorAgent},
+		{ID: "devin", Kind: model.ActorAgent},
+	}
+	if !reflect.DeepEqual(actors, want) {
+		s.Close()
+		t.Fatalf("ListActors = %+v, want %+v", actors, want)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	persisted, err := reopened.ListActors(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(persisted, want) {
+		t.Fatalf("ListActors after reopen = %+v, want %+v", persisted, want)
 	}
 }
 

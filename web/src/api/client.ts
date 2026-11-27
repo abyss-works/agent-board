@@ -1,5 +1,5 @@
 import { userActorIds } from '@/lib/actors'
-import type { Actor, ErrorDetail } from './types'
+import type { Actor, Agenda, ErrorDetail, EventListResponse, Issue, Page, Session, VerificationState } from './types'
 
 export interface ClientConfig {
   /** 인스턴스 기준 경로. 개발은 '/api/local' 같은 프록시 접두어, 운영은 '' (같은 출처). */
@@ -62,6 +62,13 @@ export function isUnauthorized(err: unknown): boolean {
   return isApiError(err) && err.status === 401
 }
 
+export function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === 'AbortError') ||
+    (typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError')
+  )
+}
+
 export function isPreconditionFailed(err: unknown): boolean {
   return isApiError(err) && err.status === 412
 }
@@ -119,8 +126,8 @@ export interface IssueListFilters {
   topic?: readonly string[]
   /** 마일스톤 ID(문자열)와 none. 쉼표 OR. none은 마일스톤이 없는 이슈다. */
   milestone?: readonly string[]
-  /** 'false'면 미확인만, 'true'면 확인된 것만. 없으면 거르지 않는다. */
-  acknowledged?: 'true' | 'false'
+  /** 검증 상태 필터(none, pending, verified). 배열이면 쉼표 OR. 없으면 거르지 않는다. */
+  verification?: VerificationState | readonly VerificationState[]
   /** 'true'면 30일 넘게 활동이 없는 열린 이슈만. 없으면 거르지 않는다. */
   dormant?: 'true'
   q: string
@@ -139,7 +146,7 @@ export function issueListQuery(f: IssueListFilters): string {
     label: f.label,
     topic: f.topic?.join(','),
     milestone: f.milestone?.join(','),
-    acknowledged: f.acknowledged,
+    verification: Array.isArray(f.verification) ? f.verification.join(',') : f.verification,
     dormant: f.dormant,
     q: f.q.trim(),
     sort: f.sort,
@@ -156,6 +163,36 @@ export function headersFor(config: ClientConfig): Record<string, string> {
   }
   if (config.actor !== undefined) headers['X-Actor'] = config.actor
   return headers
+}
+
+export interface SessionListParams {
+  project?: string
+  actor?: string
+  parent?: string
+  active?: boolean
+  named?: boolean
+  waiting?: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface AgendaParams {
+  project?: string
+  limit?: number
+}
+
+export interface EventListParams {
+  after?: number
+  project?: string
+  kind?: string
+  limit?: number
+}
+
+export interface EventStreamParams {
+  after?: number
+  project?: string
+  kind?: string
+  lastEventId?: string
 }
 
 export interface RequestOptions {
@@ -193,6 +230,55 @@ export class ApiClient {
     return this.request<T>('DELETE', path, opts)
   }
 
+  verifyIssue(key: string, version?: number): Promise<Issue> {
+    return this.post<Issue>(`/issues/${key}/verify`, undefined, version !== undefined ? { ifMatch: version } : {})
+  }
+
+  unverifyIssue(key: string, version?: number): Promise<Issue> {
+    return this.delete<Issue>(`/issues/${key}/verify`, version !== undefined ? { ifMatch: version } : {})
+  }
+
+  listSessions(params?: SessionListParams, signal?: AbortSignal): Promise<Page<Session>> {
+    return this.get<Page<Session>>('/sessions', params ? { ...params } : undefined, signal)
+  }
+
+  getSession(actor: string, sessionId: string, signal?: AbortSignal): Promise<Session> {
+    return this.get<Session>(`/sessions/${encodeURIComponent(actor)}/${encodeURIComponent(sessionId)}`, undefined, signal)
+  }
+
+  getAgenda(params?: AgendaParams, signal?: AbortSignal): Promise<Agenda> {
+    return this.get<Agenda>('/agenda', params ? { ...params } : undefined, signal)
+  }
+
+  listEvents(params?: EventListParams, signal?: AbortSignal): Promise<EventListResponse> {
+    return this.get<EventListResponse>('/events', params ? { ...params } : undefined, signal)
+  }
+
+  async openEventStream(params?: EventStreamParams, signal?: AbortSignal): Promise<Response> {
+    const query = buildQuery({
+      after: params?.after,
+      project: params?.project,
+      kind: params?.kind,
+    })
+    const url = `${this.config.baseUrl}/v1/events/stream${query}`
+    const headers: Record<string, string> = {
+      ...headersFor(this.config),
+      Accept: 'text/event-stream',
+    }
+    if (params?.lastEventId) headers['Last-Event-ID'] = params.lastEventId
+
+    let res: Response
+    try {
+      res = await this.fetchFn(url, { method: 'GET', headers, signal })
+    } catch (e) {
+      if (isAbortError(e)) throw e
+      throw new NetworkError(e)
+    }
+    if (!res.ok) return parseErrorResponse(res)
+    if (!res.body) throw new ServerUnavailableError(res.status)
+    return res
+  }
+
   async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
     const url = `${this.config.baseUrl}/v1${path}${buildQuery(opts.query ?? {})}`
     const headers = headersFor(this.config)
@@ -208,26 +294,28 @@ export class ApiClient {
         signal: opts.signal,
       })
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') throw e
+      if (isAbortError(e)) throw e
       throw new NetworkError(e)
     }
     return parseResponse<T>(res)
   }
 }
 
-async function parseResponse<T>(res: Response): Promise<T> {
-  if (res.status === 204) return undefined as T
-  const contentType = res.headers.get('content-type') ?? ''
-  const isJson = contentType.includes('application/json')
+async function parseErrorResponse(res: Response): Promise<never> {
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new ServerUnavailableError(res.status)
-  if (!isJson) {
-    if (res.ok) return undefined as T
-    throw new ServerUnavailableError(res.status)
-  }
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) throw new ServerUnavailableError(res.status)
   const data: unknown = await res.json()
-  if (res.ok) return data as T
   const err = (data as { error?: { code?: string; message?: string; details?: ErrorDetail[] } } | null)?.error
   throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, err?.details ?? [])
+}
+
+async function parseResponse<T>(res: Response): Promise<T> {
+  if (res.status === 204) return undefined as T
+  if (!res.ok) return parseErrorResponse(res)
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) return undefined as T
+  return (await res.json()) as T
 }
 
 /** 공용 토큰으로 서버에 선언된 사용자 행위자의 ID를 받는다. 행위자를 정하기 전이라 X-Actor를 보내지 않는다. */

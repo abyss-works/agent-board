@@ -102,9 +102,9 @@ func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string
 	}
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var issueID int64
-		var projectStatus string
-		err := tx.QueryRowContext(ctx, `select i.id, p.status from issue i join project p on p.id = i.project_id where i.key = ?`, key).Scan(&issueID, &projectStatus)
+		var issueID, projectID int64
+		var projectKey, projectStatus string
+		err := tx.QueryRowContext(ctx, `select i.id, i.project_id, p.key, p.status from issue i join project p on p.id = i.project_id where i.key = ?`, key).Scan(&issueID, &projectID, &projectKey, &projectStatus)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -114,8 +114,14 @@ func (s *Store) AddComment(ctx context.Context, tr model.Trace, key, body string
 		if model.ProjectStatus(projectStatus) != model.ProjectActive {
 			return ErrProjectNotActive
 		}
-		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, s.stamp(), nil, summary, kind, &body)
-		return err
+		now := s.stamp()
+		id, err = insertActivity(ctx, tx, issueID, model.ActivityCommented, tr, now, nil, summary, kind, &body)
+		if err != nil {
+			return err
+		}
+		return s.emitEventTx(ctx, tx, now, &projectID, &projectKey, model.EventIssueCommented, key, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": id,
+		})
 	})
 	if err != nil {
 		return nil, err

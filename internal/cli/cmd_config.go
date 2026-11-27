@@ -451,10 +451,8 @@ var configSetContextCmd = &command{
   --use            current_context 도 이 대상으로 전환
 `,
 	run: func(a *App, _ context.Context, g *globals, args []string) error {
-		fs := newFlagSet("config set-context")
-		fs.BoolVar(&g.json, "json", g.json, "")
-		fs.BoolVar(&g.table, "table", g.table, "")
-		fs.StringVar(&g.config, "config", g.config, "")
+		// --url and --actor configure the target context here, so skip them from globals.
+		fs := leafFlags("config set-context", g, "url", "actor")
 		var targetURL, targetActor string
 		var use bool
 		fs.StringVar(&targetURL, "url", "", "")

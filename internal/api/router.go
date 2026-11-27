@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	crand "crypto/rand"
 	"io"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -43,21 +45,62 @@ type Options struct {
 	// SimilarModel is the embedding model whose similar-document pairs the
 	// graph shows. Empty when search by meaning is off: no similar edges.
 	SimilarModel string
+	// SSEPingInterval is how often an open event stream sends a keepalive
+	// comment. Zero uses the default (20 seconds).
+	SSEPingInterval time.Duration
+	// MaxSSEConnections caps concurrent SSE event streams across the server.
+	// Zero uses the default (64).
+	MaxSSEConnections int
+	// MaxSSEConnectionsPerActor caps concurrent SSE event streams per actor.
+	// Zero uses the default (16).
+	MaxSSEConnectionsPerActor int
 }
 
 type handler struct {
-	opts    Options
-	actors  map[string]model.Actor
-	store   *store.Store
-	devices *deviceStore
-	stats   *statsCollector
-	started time.Time
+	opts       Options
+	actorsMu   sync.RWMutex
+	actors     map[string]model.Actor
+	actorOrder []model.Actor
+	store      *store.Store
+	devices    *deviceStore
+	stats      *statsCollector
+	broker     *eventBroker
+	started    time.Time
+
+	// seen holds, per actor and session ID, when this process last wrote the
+	// call of that session.
+	seenMu sync.Mutex
+	seen   map[string]time.Time
 }
 
-// New builds the complete HTTP handler.
+type closeableHandler struct {
+	http.Handler
+	closeFn func()
+}
+
+func (c *closeableHandler) Close() error {
+	c.closeFn()
+	return nil
+}
+
+// New builds the complete HTTP handler. The returned handler also implements
+// io.Closer to close open SSE streams before server shutdown.
 func New(o Options) http.Handler {
-	h := &handler{opts: o, actors: map[string]model.Actor{}, store: o.Store, stats: newStatsCollector()}
+	h := &handler{
+		opts:   o,
+		actors: map[string]model.Actor{},
+		store:  o.Store,
+		stats:  newStatsCollector(),
+		broker: newEventBroker(o.MaxSSEConnections, o.MaxSSEConnectionsPerActor),
+		seen:   map[string]time.Time{},
+	}
+	if h.store != nil {
+		h.store.SetEventHook(h.broker.Notify)
+	}
 	for _, a := range o.Actors {
+		if _, exists := h.actors[a.ID]; !exists {
+			h.actorOrder = append(h.actorOrder, a)
+		}
 		h.actors[a.ID] = a
 	}
 	if h.opts.Logger == nil {
@@ -82,6 +125,8 @@ func New(o Options) http.Handler {
 	h.registerTopics(protected)
 	h.registerMilestones(protected)
 	h.registerMessages(protected)
+	h.registerSessions(protected)
+	h.registerEvents(protected)
 	h.registerDocuments(protected)
 	h.registerSearch(protected)
 	h.registerGraph(protected)
@@ -95,7 +140,9 @@ func New(o Options) http.Handler {
 
 	root := http.NewServeMux()
 	route(root, "/v1/health", methods{"GET": h.health})
-	authenticated := h.auth(h.listActorsUnnamed(trace(h.actors, h.bind(protected))))
+	// A request that passed authentication and the trace headers records the
+	// call of its session before the route handles it.
+	authenticated := h.auth(h.listActorsUnnamed(h.trace(h.bind(h.touchSession(protected)))))
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if startsLogin(r) {
 			protected.ServeHTTP(w, r)
@@ -112,7 +159,10 @@ func New(o Options) http.Handler {
 		root.Handle("/v1/", guarded)
 		root.Handle("/", webHandler(o.Web))
 	}
-	return logging(h.opts.Logger, h.stats, root)
+	return &closeableHandler{
+		Handler: logging(h.opts.Logger, h.stats, root),
+		closeFn: h.broker.Close,
+	}
 }
 
 // startsLogin reports whether the request is one of the two that start a
@@ -170,13 +220,71 @@ func (h *handler) serverStats(w http.ResponseWriter, r *http.Request) {
 		"started_at": model.NewTime(h.started),
 		"db_bytes":   size,
 		"routes":     h.stats.snapshot(),
+		"streams":    h.stats.streamSnapshot(),
 	})
 }
 
+func (h *handler) actor(id string) (model.Actor, bool) {
+	h.actorsMu.RLock()
+	defer h.actorsMu.RUnlock()
+	a, ok := h.actors[id]
+	return a, ok
+}
+
+func (h *handler) actorList() []model.Actor {
+	h.actorsMu.RLock()
+	defer h.actorsMu.RUnlock()
+	out := make([]model.Actor, len(h.actorOrder))
+	copy(out, h.actorOrder)
+	return out
+}
+
+func (h *handler) actorMap() map[string]model.Actor {
+	h.actorsMu.RLock()
+	defer h.actorsMu.RUnlock()
+	out := make(map[string]model.Actor, len(h.actors))
+	for k, v := range h.actors {
+		out[k] = v
+	}
+	return out
+}
+
+func (h *handler) registerAgentActor(ctx context.Context, id string) (bool, error) {
+	if h.store != nil {
+		created, err := h.store.EnsureAgentActor(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		h.actorsMu.Lock()
+		if _, exists := h.actors[id]; !exists {
+			a := model.Actor{ID: id, Kind: model.ActorAgent}
+			h.actors[id] = a
+			h.actorOrder = append(h.actorOrder, a)
+		}
+		h.actorsMu.Unlock()
+		return created, nil
+	}
+	h.actorsMu.Lock()
+	defer h.actorsMu.Unlock()
+	if a, exists := h.actors[id]; exists {
+		if a.Kind == model.ActorUser {
+			return false, &model.ValidationError{Fields: []model.FieldError{
+				{Field: "actor", Message: "user 종류 행위자는 기기 승인 로그인을 쓸 수 없습니다."},
+			}}
+		}
+		return false, nil
+	}
+	a := model.Actor{ID: id, Kind: model.ActorAgent}
+	h.actors[id] = a
+	h.actorOrder = append(h.actorOrder, a)
+	return true, nil
+}
+
 func (h *handler) listActors(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"items": h.opts.Actors})
+	writeJSON(w, 200, map[string]any{"items": h.actorList()})
 }
 
 func (h *handler) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, h.actors[TraceFrom(r.Context()).Actor])
+	a, _ := h.actor(TraceFrom(r.Context()).Actor)
+	writeJSON(w, 200, a)
 }

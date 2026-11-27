@@ -116,6 +116,19 @@ const (
 // Priorities lists every priority from most to least urgent.
 var Priorities = []Priority{P0, P1, P2, P3}
 
+// VerificationState tracks whether an issue needs user verification before
+// release and whether the user has verified it.
+type VerificationState string
+
+const (
+	VerificationNone     VerificationState = "none"
+	VerificationPending  VerificationState = "pending"
+	VerificationVerified VerificationState = "verified"
+)
+
+// VerificationStates lists every verification state.
+var VerificationStates = []VerificationState{VerificationNone, VerificationPending, VerificationVerified}
+
 // DefaultPriority is the priority of an issue created without one. It follows
 // the impact of the type, not who created the issue: a bug is P1, an idea or
 // an observation is not work to start and is P3, anything else is P2. P0 is
@@ -241,6 +254,11 @@ func ParseMilestoneStatus(v string) (MilestoneStatus, bool) {
 // ParsePriority returns the priority named v.
 func ParsePriority(v string) (Priority, bool) { return parseEnum(v, Priorities) }
 
+// ParseVerificationState returns the verification state named v.
+func ParseVerificationState(v string) (VerificationState, bool) {
+	return parseEnum(v, VerificationStates)
+}
+
 // ParseActorKind returns the actor kind named v.
 func ParseActorKind(v string) (ActorKind, bool) {
 	return parseEnum(v, []ActorKind{ActorUser, ActorAgent})
@@ -325,6 +343,11 @@ var (
 	hostLabelRE  = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 	issueKeyRE   = regexp.MustCompile(`^([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)$`)
 )
+
+// NormalizeProjectKey trims whitespace and converts a project key to uppercase.
+func NormalizeProjectKey(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
+}
 
 // ValidProjectKey reports whether v is a well formed project key.
 func ValidProjectKey(v string) bool { return projectKeyRE.MatchString(v) }
@@ -413,4 +436,10 @@ func ParseIssueKey(v string) (project string, n int64, ok bool) {
 		return "", 0, false
 	}
 	return m[1], n, true
+}
+
+// ValidIssueKey reports whether v is a well formed issue key.
+func ValidIssueKey(v string) bool {
+	_, _, ok := ParseIssueKey(v)
+	return ok
 }

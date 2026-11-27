@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react'
 import type { ApiClient } from '@/api/client'
 
 export const CLIENT_HOST = 'web'
-export const POLL_MS = 3000
+export const FALLBACK_POLL_MS = 15_000
 /** API 기준 경로. 개발 서버에서는 Vite 프록시(`/api`), 운영 빌드에서는 같은 출처다. */
 export const BASE_URL = import.meta.env.DEV ? '/api' : ''
 

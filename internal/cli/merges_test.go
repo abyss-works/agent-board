@@ -53,19 +53,22 @@ func TestDoneLinksTheMergeOfTheWorkBranch(t *testing.T) {
 	srv.on("PATCH", "/v1/issues/CLI-1", canned{body: issue})
 	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: activityJSON("다른 댓글", loc)})
 	srv.on("POST", "/v1/issues/CLI-1/comments", canned{status: 201, body: `{"id":11}`})
+	srv.on("PATCH", "/v1/sessions/claude/sess-1", canned{body: `{"location_conflicts":[]}`})
 	h := newHarness(t, srv, false)
 	if code := h.run("issue", "comment", "CLI-1", "--status", "done", "--repo", dir, "--body", "끝냈습니다."); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
 	}
 	var patches []map[string]any
 	var comment struct{ Body string }
+	var refsIfMatch string
 	for _, r := range srv.reqs {
-		switch r.Method {
-		case "PATCH":
+		switch {
+		case r.Method == "PATCH" && r.Path == "/v1/issues/CLI-1":
 			var p map[string]any
 			json.Unmarshal([]byte(r.Body), &p)
 			patches = append(patches, p)
-		case "POST":
+			refsIfMatch = r.Header.Get("If-Match")
+		case r.Method == "POST" && r.Path == "/v1/issues/CLI-1/comments":
 			json.Unmarshal([]byte(r.Body), &comment)
 		}
 	}
@@ -75,8 +78,8 @@ func TestDoneLinksTheMergeOfTheWorkBranch(t *testing.T) {
 	if refs, _ := json.Marshal(patches[1]["refs"]); string(refs) != `["commit:`+merge+`"]` {
 		t.Errorf("refs patch = %s", refs)
 	}
-	if v := srv.reqs[len(srv.reqs)-2].Header.Get("If-Match"); v != `"4"` {
-		t.Errorf("refs patch If-Match = %q", v)
+	if refsIfMatch != `"4"` {
+		t.Errorf("refs patch If-Match = %q", refsIfMatch)
 	}
 	// --repo also attaches the location, so the merges come after it.
 	_, merges, _ := strings.Cut(comment.Body, "\n\n## 병합\n")
@@ -96,6 +99,7 @@ func TestDoneWithoutALocationSkipsLinking(t *testing.T) {
 	srv.on("PATCH", "/v1/issues/CLI-1", canned{body: reasonIssueJSON})
 	srv.on("GET", "/v1/issues/CLI-1/activity", canned{body: activityJSON("위치 없는 댓글")})
 	srv.on("POST", "/v1/issues/CLI-1/comments", canned{status: 201, body: `{"id":11}`})
+	srv.on("PATCH", "/v1/sessions/claude/sess-1", canned{body: `{"location_conflicts":[]}`})
 	h := newHarness(t, srv, false)
 	if code := h.run("issue", "comment", "CLI-1", "--status", "done", "--repo", dir, "--body", "끝"); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, h.stderr)
@@ -105,7 +109,7 @@ func TestDoneWithoutALocationSkipsLinking(t *testing.T) {
 	}
 	n := 0
 	for _, r := range srv.reqs {
-		if r.Method == "PATCH" {
+		if r.Method == "PATCH" && r.Path == "/v1/issues/CLI-1" {
 			n++
 		}
 	}
@@ -122,6 +126,35 @@ func TestLocationRecordsTheRemoteWithoutCredentials(t *testing.T) {
 	}
 	if !strings.Contains(loc, "- 원격: https://example.com/o/r.git\n") || strings.Contains(loc, "secret") {
 		t.Errorf("location:\n%s", loc)
+	}
+}
+
+func TestRemoteURLStripsCredentials(t *testing.T) {
+	for name, c := range map[string]struct {
+		raw  string
+		want string
+	}{
+		"https userinfo":         {"https://user:secret@example.com/o/r.git", "https://example.com/o/r.git"},
+		"https special password": {"https://user:p@ss@example.com/o/r.git", "https://example.com/o/r.git"},
+		"https malformed escape": {"https://user:secret@example.com/%ZZ", "https://example.com/%ZZ"},
+		"https bad port":         {"https://user:secret@example.com:badport/o/r.git", "https://example.com:badport/o/r.git"},
+		"scp user token":         {"user:secret@example.com:o/r.git", "example.com:o/r.git"},
+		"scp git user":           {"git@example.com:o/r.git", "example.com:o/r.git"},
+		"no origin":              {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := gitRepo(t)
+			if c.raw != "" {
+				gitRun(t, dir, "remote", "add", "origin", c.raw)
+			}
+			got := remoteURL(dir)
+			if got != c.want {
+				t.Errorf("remoteURL(%q) = %q, want %q", c.raw, got, c.want)
+			}
+			if strings.Contains(got, "secret") || strings.Contains(got, "p@ss") {
+				t.Errorf("remoteURL(%q) leaked credential: %q", c.raw, got)
+			}
+		})
 	}
 }
 

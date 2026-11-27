@@ -11,11 +11,13 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 ## 무엇을 하는가
 
 - 프로젝트별로 이슈를 만들고 상태(백로그, 진행, 검토, 완료, 취소, 삭제)를 옮기며, 댓글과 변경 이력을 남깁니다.
-- 모든 쓰기에 행위자(사용자 또는 에이전트), 세션 ID, 기기 이름을 남깁니다. 어느 세션이 어떤 이슈를 진행 중인지(`holder`), 그 세션이 2시간 넘게 활동이 없는지(`stale`)를 활동 기록으로 계산해, 멈춘 작업을 다른 세션이 이어받을 수 있게 합니다.
-- 사용자가 답할 것(검토 대기, 결정이 필요한 질문, 아직 확인하지 않은 이슈, 사용자가 직접 할 일)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`).
+- 모든 쓰기에 행위자(사용자 또는 에이전트), 세션 ID, 기기 이름을 남깁니다. 이슈 점유(`issue_claim`)를 저장해 어느 세션이 어떤 이슈를 맡고 있는지(`holder`)와 만료 여부(`stale`)를 관리합니다. 점유는 점유 세션의 마지막 호출에서 30분(대기 상태에서는 24시간) 동안 유효하고, 유효한 점유가 있는 이슈는 다른 에이전트 세션의 점유·상태 변경을 409로 막으며 만료된 점유는 바로 이어받을 수 있습니다(점유가 없는 진행 이슈는 활동 기록으로 대체 계산).
+- 인증된 요청의 행위자와 세션 ID를 세션으로 자동 등록하고 마지막 호출 시각(1분 단위)을 갱신합니다. 마지막 호출에서 30분이 지나면 멈춤(`stale`)으로 표시하며, 부모·자식 세션 관계와 역할·이슈·작업 위치(`location`)·대기 상태(`waiting_approval`, `waiting_input`, `waiting_external`)를 남깁니다(`agb session`). 같은 저장소·브랜치(원격 URL 정규화 기준, 원격이 없으면 호스트·워크트리·브랜치 기준)를 쓰는 활성 또는 대기 유효 세션은 읽을 때 `location_conflicts`로 계산해 알립니다(`agb issue comment --location`도 현재 세션의 작업 위치를 함께 갱신하고 충돌 시 경고합니다). 대기 중인 세션이 다음 쓰기 요청을 성공시키면 대기 상태는 자동으로 풀립니다. 맥락의 단위는 여전히 이슈입니다.
+- 사용자가 답할 것(검토 대기, 결정이 필요한 질문과 그 이슈를 기다리는 활성 대기 세션 `decisions.items[].waiting_sessions`, 검증 필요 이슈, 사용자가 직접 할 일, 대기 세션)과 에이전트가 집어 갈 다음 작업(우선순위 큐)을 나눠 보여 줍니다(`agb agenda`, `agb project overview`).
 - 결정, 사고, 보고 같은 마크다운 기록 문서를 원문 그대로 보관합니다. 올린 원문은 고칠 수 없고, 아카이브 표시와 문서 사이의 관계(대체, 관련, 이슈 연결)만 바꿀 수 있습니다.
 - 이슈, 댓글, 기록 문서를 키워드(SQLite FTS5)로 찾고, 임베딩 API를 설정하면 의미 검색을 섞어 찾습니다. 이슈와 문서의 연결을 따라가 선례를 모아 봅니다(`agb recall`, `agb graph`).
-- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
+- 다른 세션이나 기기에 짧은 맥락을 넘기는 만료형 메시지 공간을 둡니다(`agb msg`). `--to` 라벨, 특정 세션(`--to-session`), 역할(`--to-role`), 이슈(`--issue`), 답장(`--reply-to`)을 지정할 수 있고, 세션 지정 메시지는 해당 세션의 기본·미확인 목록과 세션 시작 훅에만 나타납니다. 한 메시지를 여러 쪽이 읽을 수 있고, 읽은 쪽은 처리한 뒤 자기 이름으로 확인 표시를 남겨 확인하지 않은 메시지만 받아 봅니다.
+- 모든 도메인 쓰기를 단조 증가하는 통합 이벤트 스트림으로 저장하고, 조회(`GET /v1/events`)와 SSE 구독(`GET /v1/events/stream`, `agb watch`)을 제공합니다.
 
 ## 설계 원칙
 
@@ -32,7 +34,6 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 세션 안의 작업 큐(에이전트 도구의 할 일 목록)를 대신하지 않습니다.
 - 다른 팀 트래커와 동기화하지 않습니다.
 - 담당자 지정, 사이클(스프린트), 알림, 모바일 화면을 두지 않습니다.
-- 세션을 저장 단위로 두지 않습니다. 세션 ID는 추적 정보이고, 맥락의 단위는 이슈입니다.
 
 ## 핵심 개념과 데이터 모델
 
@@ -45,18 +46,21 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 | 주제 (topic) | `name`, `parent`, `path`(`대주제/주제`) | `active`, `deleted` | 프로젝트 안 두 단계 분류. 이슈가 하나를 가리킴 |
 | 마일스톤 (milestone) | `name`, `description`, `target_date`, `progress` | `open`, `closed`, `deleted` | 이슈가 하나를 가리킴. 진행률은 읽을 때 계산 |
 | 이슈 (issue) | `key`(`APP-12` 형식), `title`, `body`, `type`, `priority`, `labels`, `refs`, `decision_needed`, `recheck_condition`, `version` | `backlog`, `doing`, `review`, `done`, `cancelled`, `deleted` | 상위 이슈(`parent`), 선행 이슈(`depends_on`), 참조(`refs`), 주제, 마일스톤 |
+| 이슈 점유 (issue_claim) | `issue`, `actor`, `session_id`, `claimed_at`, `released_at`, `outcome`, `reason`, `active` | 활성·만료(계산값), 해제(`done`/`abandoned`/`expired`/`taken_over`) | 이슈 하나당 미해제 점유는 최대 하나. 점유 세션의 마지막 호출(30분)·대기 상태(24시간)로 유효성을 판정 |
 | 활동 (activity) | `kind`(`created`/`updated`/`commented`), `changes`, `summary`, `comment_kind`, `body` | 추가만 함 | 이슈 하나에 속함. 댓글도 활동 행 |
 | 기록 문서 (document) | `name`, `kind`, `date`, `title`, `tags`, `archived`, `imported`, `sha256`, 원문 | `current`, `superseded`, `archived`(계산값) | `supersedes`, `related`(문서), `about`(이슈) |
-| 메시지 (message) | `to`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함 |
+| 메시지 (message) | `to`, `to_session`, `to_role`, `issue`, `reply_to`, `reply_count`, `replies`, `title`, `body`, `expires_at`, `reads`(읽은 쪽별 확인 표시) | `active`, `expired`, `deleted` | 프로젝트에 속함. 세션·이슈·상위 메시지를 가리킬 수 있음 |
 | 토큰 (token) | `actor`, `client_host`, `last_used_at`, `revoked_at` | 활성, 폐기 | 에이전트 행위자 하나 |
+| 세션 (session) | `actor`, `session_id`, `named`, `first_seen_at`, `last_seen_at`, `last_host`, `last_project`, `parent`, `role`, `issue`, `location`, `location_conflicts`(계산값), `state`, `state_reason`, `state_at`, `stale` | 활성, 멈춤(계산값), 대기(`waiting_approval`/`waiting_input`/`waiting_external`) | 행위자 하나에 속함. 부모 세션과 이슈를 가리킴 |
+| 이벤트 (event) | `id`, `at`, `project`, `kind`, `subject`, `actor`, `session_id`, `data` | 추가만 함 | 프로젝트에 속하거나(`project`), 프로젝트 무관(`null`, 세션 이벤트) |
 | 임베딩, 유사 문서 | 청크별 벡터, 문서 쌍과 점수 | 파생 데이터 | 의미 검색과 `similar` 그래프 간선 |
 
 ### 이슈
 
 - 종류: `feature`, `bug`, `design`, `idea`, `observation`. `observation`은 다시 볼 조건(`recheck_condition`)이 필수입니다.
-- 종류, 상태, 결정 필요, 확인은 서로 독립된 네 축입니다.
-  - 결정 필요(`decision_needed`): 사용자의 답을 기다리는 질문 한 문장입니다.
-  - 확인(`ack`): 사용자가 지금의 이슈 내용을 알고 있는지 나타냅니다. 작업 흐름을 막지 않으며, 제목·본문·종류가 바뀌거나 `review`에서 `doing`으로 돌아가면 다시 미확인이 됩니다. 사용자가 만든 이슈는 만들 때 확인된 것으로 표시됩니다.
+- 종류, 상태, 결정 필요, 사용자 검증은 서로 독립된 네 축입니다.
+  - 결정 필요(`decision_needed`): 사용자의 답을 기다리는 질문 한 문장입니다. 현황과 아젠다의 `decisions.items[].waiting_sessions`에는 그 이슈를 점유 중이거나 지정한 활성 대기 세션(대기 상태 설정 후 24시간 이내)이 함께 붙습니다.
+  - 사용자 검증(`verification_state`): 기본값은 `none`이며, 화면·사용감·실기기 확인처럼 사용자가 직접 확인해야 하는 항목만 선택적으로 `pending`과 검증 메모(`verification_note`)를 붙입니다. 코드·테스트·조사 항목은 기본값 `none`으로 둡니다. 검증 완료(`verified`)는 `agb issue verify`로 기록하며, 이후 이슈를 수정해도 자동으로 되돌아가지 않습니다. 취소·삭제되지 않은 `pending` 항목이 남아 있으면 마일스톤을 닫을 수 없고(`409 unverified_issues`), `agb release check`가 종료 코드 1로 알립니다.
 - 우선순위: `P0`~`P3`. 지정하지 않으면 `bug`는 P1, `idea`와 `observation`은 P3, 나머지는 P2입니다. P0(장애, 데이터 손실, 보안 결함)은 서버가 자동으로 매기지 않습니다.
 - 에이전트가 만드는 이슈는 본문이 종류별 템플릿(`agb template show <종류>`)의 `##` 제목을 순서대로 모두 갖춰야 합니다.
 - `cancelled`와 `deleted`로 바꿀 때는 사유가 필수입니다. 삭제는 상태 변경이며 다른 상태로 되돌릴 수 있습니다.
@@ -73,6 +77,13 @@ agent-board(`agb`)는 사용자 한 사람과 그 사용자의 AI 코딩 에이�
 - 같은 이름에 다른 원문을 올리면 409(`immutable`)로 거절합니다. 1MiB를 넘는 문서와 `_`로 시작하거나 `.example.md`로 끝나는 서식 파일은 받지 않습니다.
 - 상태는 저장하지 않고 계산합니다. 아카이브 표시가 있으면 `archived`, 다른 문서의 `supersedes`가 가리키면 `superseded`, 아니면 `current`입니다.
 - 어떤 저장소의 어떤 파일을 올릴지는 그 저장소 최상위의 `.agb.json`이 정합니다. 이 파일은 CLI만 읽고 서버는 모릅니다. 형식은 `agb help repo-config`에 있습니다.
+
+### 메시지
+
+- `--to`는 받는 쪽을 가리키는 자유 라벨 관례로, 에이전트 이름(`codex`), 역할·자리(`reviewer`, `desk`)처럼 공백 없는 1~64자 문자열을 씁니다. `--to` 필터와 확인 표시(`agb msg ack`, `--unread`, `--as`)의 이름 비교는 영문 대소문자를 구분하지 않으며, 처음 저장한 원문 표기는 유지됩니다.
+- 특정 세션(`--to-session <행위자/세션>`), 대상 역할(`--to-role`: `main`, `subagent`, `runner`), 같은 프로젝트 이슈(`--issue <KEY>`), 같은 프로젝트 메시지에 대한 답장(`--reply-to <ID>`)을 지정할 수 있습니다. 대상 세션이 아직 서버에 등록되지 않았더라도 선언된 행위자이면 보낼 수 있고, 만료·삭제된 같은 프로젝트 메시지에도 답장할 수 있습니다.
+- `to_session`이 지정된 메시지는 해당 세션(`X-Actor`와 `X-Session-Id`)의 기본 목록과 `--unread` 목록(및 세션 시작 훅)에만 나오고 다른 세션에서는 가려집니다. `to_session`이 없는 브로드캐스트 메시지는 모든 세션에 나오며, `--all`이나 `--to-session` 필터로는 모든 대상을 조회할 수 있습니다.
+- `GET /v1/messages/{id}`와 `agb msg get <ID>`는 직계 답장을 시간 오름차순(`replies`)으로 함께 반환하고, 목록과 단건 응답 모두 `reply_count`를 포함합니다.
 
 ### 인증
 
@@ -169,9 +180,9 @@ agb setup claude --actor <ID>     # AGB_ACTOR 가 있으면 --actor 없이 실�
 
 - 플러그인은 훅 설정만 담습니다. 스킬과 실행 파일은 담지 않으며, 훅은 `PATH`의 `agb`를 셸 없이 직접 실행합니다. Windows에서는 `agb.exe`가 `PATH`에 있어야 합니다.
 - 세션을 시작할 때(새 세션, 재개, `/clear`, 압축 뒤) `agb hook session-start --tool claude`를 부릅니다. 이 명령은 세션의 작업 폴더가 속한 저장소의 `.agb.json`에서 프로젝트를 찾아, 그 프로젝트 키가 확인하지 않은 메시지를 최대 20건 알립니다. `agb msg list --unread`와 같은 조회이고 확인 표시를 만들지 않습니다.
-- 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값, 설정 파일의 `actor` 순서로 정합니다. Claude Code가 훅을 직접 실행하므로 평소에는 `agb setup claude`가 저장한 훅 행위자로 조회합니다.
+- 훅의 행위자는 `--actor`, `AGB_ACTOR`, 설정 파일 `hook_actors`의 `claude` 값(도구 이름 영문 대소문자 무시), 설정 파일의 `actor` 순서로 정합니다. Claude Code가 훅을 직접 실행하므로 평소에는 `agb setup claude`가 저장한 훅 행위자로 조회합니다.
 - 훅은 Claude Code가 표준 입력으로 준 `session_id`를 요청의 세션 ID로 씁니다. 세션 ID 형식(영숫자로 시작하는 영숫자, `.`, `_`, `-` 1~128자)에 맞지 않으면 `AGB_SESSION_ID`, 설정 파일의 `session_id`, 기본값 순서로 정합니다.
-- `.agb.json`이 없거나, 설정이나 행위자나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
+- `.agb.json`이 있는 저장소에서 서버 주소는 있으나 행위자가 비어 있으면(`hook_actors` 미설정 등), 미확인 메시지를 확인하지 못했다는 안내 1줄(`agb setup <도구> --actor <ID>` 안내 포함)을 출력합니다. `.agb.json`이 없거나, 서버 주소나 토큰이 없거나, 서버가 5초 안에 답하지 않거나 오류를 돌려주거나, 확인하지 않은 메시지가 없으면 아무것도 출력하지 않습니다. 세션 시작을 막지 않습니다.
 - 알림이 나오지 않으면 다음을 확인합니다.
   1. 세션의 작업 폴더에서 `agb setup claude --actor <ID>`를 다시 실행해 `훅 점검:` 줄을 봅니다.
   2. `agb config show`의 `hook_actors`에 `claude=<ID>`가 있고 `actor_tokens`에 그 행위자가 있는지 봅니다.
@@ -314,14 +325,18 @@ agb recall "목록 정렬"                # 시작 전에 관련 결정과 사�
 agb template show bug > body.md      # 본문 템플릿을 파일로 받아 각 제목 아래를 채움
 agb issue create -p APP --type bug -t "목록 화면에서 정렬이 풀리는 문제 수정" --body-file body.md
 agb issue update APP-12 --status doing
+agb session set --location                          # 현재 저장소 작업 위치 기록 및 충돌 확인
+agb session start --role subagent --issue APP-12   # 서브에이전트용 자식 세션 ID 발급
+agb session set --state waiting_input --reason "정렬 기준 확인 필요"   # 사용자 입력 대기 표시
 agb issue comment APP-12 --kind decision --summary "정렬 기준 결정" --body "..."
 agb issue comment APP-12 --status done --body "..."
 ```
 
-사용자는 `agb agenda`의 사용자 차례(검토 대기, 결정 필요, 미확인)를 에이전트에게 말해 답하거나, 웹이나 CLI에서 직접 처리합니다.
+사용자는 `agb agenda`의 사용자 차례(검토 대기, 결정 필요, 검증 필요, 대기 세션)를 에이전트에게 말해 답하거나, 웹이나 CLI에서 직접 처리합니다.
 
 ```bash
-agb --actor owner issue ack APP-12
+agb --actor owner issue verify APP-12
+agb release check -p APP --milestone v1.0
 ```
 
 기록 문서와 검색:
@@ -338,9 +353,12 @@ agb graph APP-12 --depth 2
 기타:
 
 ```bash
-agb msg put -p APP --to codex -t "배포 끝" --ttl 3d
-agb msg list -p APP --unread          # 내가 확인하지 않은 메시지
+agb msg put -p APP --to codex --to-session codex/s1 --to-role runner --issue APP-12 -t "배포 끝" --ttl 3d
+agb msg put -p APP --reply-to 12 -t "확인 완료"
+agb msg list -p APP --unread          # 내 세션의 브로드캐스트 + 내 세션 지정 미확인 메시지
+agb msg list -p APP --issue APP-12    # --to, --to-session, --to-role, --issue, --reply-to 지원
 agb msg ack 12 13                     # 처리한 뒤 확인 표시
+agb watch -p APP --kind issue.,message. --timeout 5m   # 조건에 맞는 첫 이벤트까지 대기
 agb digest --since 3d
 agb stats
 ```
@@ -356,18 +374,20 @@ agb stats
 | 영역 | 경로 |
 |---|---|
 | 상태 | `GET /health`, `GET /stats`, `GET /actors`, `GET /actors/me` |
+| 세션 | `GET, POST /sessions`, `GET, PATCH /sessions/{actor}/{session_id}` |
 | 프로젝트 | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{key}`, `GET /projects/{key}/activity`, `GET /projects/{key}/overview` |
 | 주제 | `GET, POST /projects/{key}/topics`, `PATCH, DELETE /topics/{id}` |
 | 마일스톤 | `GET, POST /projects/{key}/milestones`, `GET, PATCH, DELETE /milestones/{id}` |
-| 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/acknowledge`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
+| 이슈 | `GET, POST /issues`, `GET, PATCH, DELETE /issues/{key}`, `POST, DELETE /issues/{key}/verify`, `POST, DELETE /issues/{key}/claim`, `GET /issues/{key}/claims`, `POST /issues/{key}/comments`, `GET /issues/{key}/activity`, `GET /activity` |
 | 기록 문서 | `GET /projects/{key}/documents`, `POST /projects/{key}/documents:batch`, `GET /documents`(검색), `GET, PUT /projects/{key}/documents/{name}`, `POST, DELETE .../{name}/archive`, `POST, DELETE .../{name}/relations`, `GET .../{name}/activity` |
 | 메시지 | `GET, POST /projects/{key}/messages`, `GET, DELETE /messages/{id}`, `POST /messages/{id}/ack` |
+| 이벤트 | `GET /events`, `GET /events/stream`(SSE, `Last-Event-ID` 지원) |
 | 조회 | `GET /board`, `GET /queue`, `GET /labels`, `GET /agenda`, `GET /digest`, `GET /search`, `GET /graph`, `GET /templates` |
 | 로그인과 토큰 | `POST /device-authorizations`, `GET, PATCH /device-authorizations/{user_code}`(사용자 전용), `GET /tokens`(사용자 전용), `POST /tokens`, `DELETE /tokens/current`, `DELETE /tokens/{id}`(사용자 전용) |
 
 - 오류는 `{"error": {"code", "message", "details": [{"field", "reason", "message"}]}}` 형태입니다. 지원하지 않는 메서드는 `Allow` 헤더와 함께 405입니다.
 - 문서 이름에는 `/`가 들어갈 수 있으므로, 문서 경로는 이름 뒤의 접미어(`/archive`, `/relations`, `/activity`)로 하위 리소스를 구분합니다.
-- 서버는 라우트별 요청 수, 5xx 수, 처리 시간 분포를 메모리에 모아 `/v1/stats`로 보여 줍니다. 다시 시작하면 0부터 셉니다.
+- 서버는 라우트별 요청 수, 5xx 수, 처리 시간 분포를 메모리에 모아 `/v1/stats`로 보여 줍니다. 장시간 연결되는 SSE 스트림(`/v1/events/stream`)은 일반 `routes` 분포와 분리해 `streams`로 집계합니다. 다시 시작하면 0부터 셉니다.
 
 ## 웹 클라이언트
 

@@ -23,17 +23,11 @@ var activityCmd = &command{
   --sort <at|-at>         기본 -at (최신 먼저)
   --limit <N>, --offset <N>
 
-주의: --actor 와 --client-host 는 이 명령에서는 필터입니다. 요청 헤더의 행위자는 AGB_ACTOR 나 설정 파일로 정합니다.
+주의: --actor 와 --client-host 는 이 명령 뒤에서는 필터입니다. 요청의 행위자와 기기 이름은 명령 앞 --actor·--client-host, 환경변수(AGB_ACTOR, AGB_CLIENT_HOST), 설정 파일(기기 이름은 기본 호스트 이름) 순으로 정합니다.
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
-		fs := newFlagSet("activity")
-		// --actor and --client-host filter here, so only the other globals
-		// are shared.
-		fs.BoolVar(&g.json, "json", g.json, "")
-		fs.BoolVar(&g.table, "table", g.table, "")
-		fs.StringVar(&g.url, "url", g.url, "")
-		fs.StringVar(&g.sessionID, "session-id", g.sessionID, "")
-		fs.StringVar(&g.config, "config", g.config, "")
+		// --actor and --client-host filter here, so skip them from globals.
+		fs := leafFlags("activity", g, "actor", "client-host")
 		var f client.ActivityFilter
 		fs.StringVar(&f.Project, "project", "", "")
 		fs.StringVar(&f.Project, "p", "", "")
@@ -145,7 +139,7 @@ var agendaCmd = &command{
 	usage: `사용법: agb agenda [--project <P>] [--limit <N>]
 
 프로젝트마다 세 묶음을 보입니다.
-  사용자 차례   검토, 결정 필요, 미확인, 사용자 할 일(라벨 user-task)
+  사용자 차례   검토, 결정 필요, 검증 필요, 사용자 할 일(라벨 user-task), 대기 세션
   에이전트      진행 중(점유 세션), 다음 할 일(착수할 수 있는 백로그, 큐 순서)
   대기          막힌 이슈, 외부 대기 이슈(라벨 external)
 오래된 이슈가 있는 프로젝트는 마지막에 오래됨 개수를 한 줄로 보입니다. 30일 넘게 활동(수정, 댓글)이 없는 열린
