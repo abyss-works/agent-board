@@ -2,6 +2,65 @@
 
 버전마다 바뀐 점을 적는다. 버전은 `vX.Y.Z` 형식이며 `main` 브랜치의 병합 커밋 이름과 같다.
 
+## v0.16.0 (2026-11-27)
+
+### 운영자 확인 사항
+
+- 호환 단절: 구 이슈 확인 표시 API(`POST /v1/issues/{key}/acknowledge`, `DELETE /v1/issues/{key}/acknowledge`), CLI(`agb issue ack`, `agb issue unack`), 응답 필드(`acknowledged`, `acknowledged_at`, `acknowledged_by`, `agenda`의 `unacknowledged`)를 제거하고 opt-in 사용자 검증 게이트(`verification_state`, `POST`/`DELETE /v1/issues/{key}/verify`, `agb issue verify`/`unverify`, `agb release check`)로 대체한다. 이전 판의 CLI나 클라이언트가 구 확인 표시 경로를 호출하면 404를 받으며 `agb issue ack`/`unack`은 동작하지 않는다. 서버를 먼저 갱신한 뒤 모든 기기의 CLI와 스킬을 함께 갱신한다.
+- 서버가 시작할 때 스키마 19에서 20(`session`), 21(`session` 대기 상태), 22(`issue_claim`), 23(`event`), 24(`message` 라우팅·답장), 25(`issue` 검증 상태), 26(`activity`·`issue_claim` 세션 인덱스)으로 차례로 이관한다. SQL 한 파일이 한 트랜잭션이고 파일마다 커밋한다. 이전 바이너리는 더 새로운 스키마를 만나면 시작을 거부하므로 태그만 되돌려서는 롤백할 수 없다. 배포 직전에 운영 데이터베이스의 SQLite 스냅샷을 떠 두고, 롤백은 스냅샷으로 복원한 뒤 이전 태그로 띄운다.
+
+### 배포
+
+- 배포 워크플로(`.github/workflows/deploy.yml`)의 컨테이너 이미지 빌드를 `linux/amd64`(`ubuntu-24.04`) 환경으로 전환하고, 릴리즈 이력에서 최신 `vX.Y.Z` 커밋 제목을 읽어 `RELEASE` 빌드 인자로 전달한다. 배포 잡을 자체 호스트 러너의 Docker Compose 배포 방식으로 전환한다.
+- `k8s/prod/ingress.yaml`에 SSE 이벤트 스트림 전달을 위한 `nginx.ingress.kubernetes.io/proxy-buffering: "off"` 주석을 더한다.
+
+### 서버와 API
+
+- 에이전트 세션 등록과 부모·자식 트리, 대기 상태를 더한다.
+  - 인증된 요청의 `X-Actor`와 `X-Session-Id`를 `session` 표(마이그레이션 20)에 자동 등록하고 마지막 호출 시각(`last_seen_at`, 1분 단위)과 호스트(`last_host`)를 갱신한다. 마지막 호출에서 30분이 지나면 `stale: true`로 계산한다.
+  - `GET /v1/sessions`, `POST /v1/sessions`, `GET /v1/sessions/{actor}/{session_id}`, `PATCH /v1/sessions/{actor}/{session_id}`를 더한다. 부모·자식 세션 관계, 역할(`main`, `subagent`, `runner`), 맡은 이슈, 작업 위치(`location`)를 관리하며 자기 자신이나 자손을 부모로 지정하는 순환을 막는다. `last_project` 계산에 활동·문서·자원 활동과 이슈 점유 기록을 포함하며 조회 성능을 위해 `activity`·`issue_claim`에 `(actor_id, session_id)` 복합 인덱스를 더한다(마이그레이션 26).
+  - 세션 대기 상태(`waiting_approval`, `waiting_input`, `waiting_external`)와 사유(`state_reason`, `state_at`)를 더한다(마이그레이션 21). 대기 중인 세션이 다음 쓰기 요청을 성공시키면 대기 상태는 자동으로 풀린다. `GET /v1/sessions?waiting=true` 필터와 `GET /v1/agenda`의 `waiting_sessions`(24시간 이내 유효 대기 세션), 결정 필요 항목별 `decisions.items[].waiting_sessions`를 돌려준다.
+  - 세션 `location`의 원격 URL에서 자격 증명을 제거하고 저장소·브랜치를 정규화한다(원격이 없으면 호스트·워크트리·브랜치 기준). 같은 작업 위치를 쓰는 다른 활성·유효 대기 세션을 읽을 때 `location_conflicts`로 계산해 세션 응답에 포함한다.
+- 만료가 있는 저장형 이슈 점유를 더한다.
+  - `issue_claim` 표(마이그레이션 22)와 `POST /v1/issues/{key}/claim`, `DELETE /v1/issues/{key}/claim`, `GET /v1/issues/{key}/claims`를 더한다. 점유는 점유 세션의 마지막 호출에서 30분(대기 상태에서는 24시간) 동안 유효하다.
+  - 유효한 점유가 있는 이슈는 다른 에이전트 세션의 점유나 상태 변경을 409로 막고, 만료된 점유는 바로 이어받을 수 있다(`taken_over`). 이슈 상태를 `doing`으로 옮기거나 `doing`에서 벗어나면 점유를 같은 트랜잭션에서 동기화하며 비활성 프로젝트의 점유를 차단한다. `holder`와 `stale`은 저장형 점유를 우선 쓰고, 점유가 없는 진행 이슈는 활동 기록으로 대체 계산한다.
+- 통합 이벤트 스트림과 실시간 SSE 구독을 더한다.
+  - 이슈, 프로젝트, 주제, 마일스톤, 기록 문서, 메시지, 세션, 점유의 모든 쓰기를 단조 증가 ID의 `event` 표(마이그레이션 23)에 같은 트랜잭션으로 저장한다.
+  - 이벤트 조회 `GET /v1/events`와 SSE 구독 `GET /v1/events/stream`(`Last-Event-ID`, `project`, `kind` 접두사 필터, 20초 keepalive ping)을 더한다. 초기 검증 오류 시 JSON 오류 헤더를 유지하고 `Last-Event-ID` 오류 코드를 통일한다.
+  - `GET /v1/stats` 응답에 장시간 SSE 연결 지표를 일반 `routes` 분포와 분리한 `streams` 필드를 더한다.
+- 메시지 대상 지정·답장과 대소문자 정규화를 더한다.
+  - 메시지에 대상 세션(`to_actor`, `to_session_id`), 대상 역할(`to_role`), 관련 이슈(`issue_id`), 답장 대상(`reply_to_id`)을 더한다(마이그레이션 24). `GET /v1/projects/{key}/messages`에서 `to_session`, `to_role`, `issue`, `reply_to` 필터를 지원하고, `to_session`이 지정된 메시지는 해당 세션의 기본·미확인 목록에만 보인다. 단건 조회(`GET /v1/messages/{id}`)는 직계 답장 배열 `replies`를, 목록과 단건 응답 모두 `reply_count`를 포함한다.
+  - 메시지 프로젝트 키를 대문자로 정규화하고, `to` 필터와 확인 표시(`reader`, `unread_by`)의 이름 비교를 영문 대소문자 무시로 바꾼다(처음 저장한 원문 표기는 유지).
+- opt-in 사용자 검증 게이트와 마일스톤 닫기 차단을 더한다.
+  - 구 `acknowledge` 경로와 필드를 제거하고 이슈에 `verification_state`(`none`, `pending`, `verified`), `verification_note`, `verified_at`, `verified_by`를 더한다(마이그레이션 25).
+  - `POST /v1/issues/{key}/verify`와 `DELETE /v1/issues/{key}/verify`를 더한다. 취소·삭제되지 않은 `pending` 이슈가 남아 있으면 마일스톤 닫기를 `409 unverified_issues`로 막는다. `GET /v1/agenda`와 `GET /v1/projects/{key}/overview`에 검증 필요 목록을 반영한다.
+- 기기 승인 시 미선언 `agent` 행위자의 자동 등록을 더한다.
+  - 서버에 미리 선언되지 않은 유효한 `agent` ID(영문 소문자·숫자 1~32자, `user` 행위자 제외)로도 `POST /v1/device-authorizations`를 요청할 수 있다. 사용자가 승인(`PATCH /v1/device-authorizations/{user_code}`)하면 해당 ID를 `agent` 행위자로 데이터베이스와 메모리 목록에 자동 등록하며 서버 재기동 뒤에도 유지된다. 승인 대기 조회 응답에 `new_actor` 필드를 더한다.
+- `GET /v1/activity`의 `project` 쿼리에 프로젝트 키 정규화와 형식 검증을 적용하고, 세션 자동 등록의 동시 첫 요청 경합과 저장소 오류 전파를 보완한다.
+
+### CLI
+
+- 에이전트 세션 관리 명령 `agb session list`, `get`, `set`, `start`를 더한다. 부모, 역할, 이슈, 대기 상태(`--state`, `--reason`, `--reason none`), 작업 위치(`--location`, `--repo`, `--clear-location`)를 설정하고 자식 세션 ID를 발급한다. 자식·대기 세션 표에 `ACTOR`, `STATE`, 충돌 건수 열을 보인다.
+- `agb issue comment --location`이 현재 세션의 작업 위치도 함께 갱신하고, 같은 작업 위치를 쓰는 다른 세션이 있으면 충돌 경고를 출력한다.
+- 이슈 점유 명령 `agb issue claim <KEY>`, `agb issue unclaim <KEY> [--outcome done|abandoned] [--reason <사유>]`, `agb issue claims <KEY>`를 더한다. `claims` 표에 `ACTIVE` 열을 보인다.
+- 이벤트 스트림 구독 명령 `agb watch [-p <KEY>] [--kind <접두사>] [--after <id>] [--timeout <기간>]`을 더한다. 조건에 맞는 첫 이벤트를 출력하고 종료 코드 0으로 끝난다.
+- `agb msg put`과 `agb msg list`에 `--to-session`, `--to-role`, `--issue`, `--reply-to` 옵션을 더하고, 표 출력에 답장 수와 답장 상태를 보인다. 메시지 명령의 프로젝트 키를 정규화·검증하며 빈 `--as ""` 입력을 사용법 오류로 거절한다.
+- 구 `agb issue ack`와 `agb issue unack`을 제거한다. `agb issue create`/`update`에 `--verification`, `--verify-note`를, `agb issue list`에 `--verification` 필터를 더한다. 사용자 검증 명령 `agb issue verify <KEY>...`, `agb issue unverify <KEY>...`와 미검증 항목 잔존 시 종료 코드 1로 알리는 `agb release check [-p <KEY>] [--milestone <M>]`를 더한다.
+- `agb activity` 등 하위 명령 뒤에서도 공통 옵션(`--json`, `--fields`, `--text` 등)을 받을 수 있게 플래그 등록을 통합한다.
+- `agb agenda` 표 출력에 대기 세션 목록과 결정 필요 항목별 대기 세션을 보인다.
+- `agb hook session-start`가 `hook_actors`의 도구 이름을 대소문자 무시로 찾고, `.agb.json`과 서버 주소는 있으나 행위자가 비어 있으면 미확인 메시지를 확인하지 못했다는 안내 1줄을 출력한다. 훅 설정·안내에서 제어 문자를 치환한다.
+
+### 웹
+
+- 호스트별 세션과 부모·자식 서브에이전트 트리를 보여 주는 세션 관제 화면(`/sessions`)을 더한다. 상태 필터, 대기 상태 배지, 부모·자식 세션 작업 위치 충돌 경고 배지, 타임라인을 제공한다. 현황 화면에 대기 세션 카드와 결정 필요 항목별 대기 세션 표시, 대기 세션 전체 보기 링크(`/sessions?status=waiting`), 조회 오류 표시를 더한다.
+- 주기 폴링을 `fetch` 기반 SSE 이벤트 스트림 구독으로 전환하고 사이드바에 실시간 연결 상태를 표시한다. 스트림이 끊겼을 때만 폴백 폴링을 켜며, 재연결 시 캐시 무효화 범위와 다중 마운트 처리를 보완한다.
+- 구 확인 표시 UI를 제거하고 이슈 상세 화면의 사용자 검증 패널, 목록·보드 카드의 검증 필요 배지 및 필터, 현황 화면의 검증 필요·릴리즈 차단 표시를 더한다. 검증 요청 실패 시 입력 중인 메모를 유지한다.
+- 기기 승인 화면(`/device`)에 미선언 에이전트 요청의 `신규 에이전트` 배지와 자동 등록 안내를 보이고, 승인 후 행위자 목록 캐시를 무효화한다.
+
+### 스킬과 문서
+
+- 내장 스킬 `tool-agb`(`SKILL.md`, `references/setup.md`)와 `README.md`에 세션·대기 상태, 작업 위치 충돌, 저장형 이슈 점유, 이벤트 스트림(`agb watch`), 메시지 대상 지정·답장·대소문자 무시 비교, opt-in 사용자 검증 게이트·`agb release check`, 미선언 `agent` 기기 승인 자동 등록, `find`/`recall`의 `semantic` 응답 필드 설명, 세션 시작 훅 행위자 미설정 안내를 반영한다.
+
 ## v0.15.1 (2026-11-17)
 
 ### 서버와 API
@@ -232,7 +291,7 @@
 - 마이그레이션 18: `resource_activity` 표와 `(project_id, id)`, `(resource, resource_id, id)` 인덱스를 더하고, `token`에 `revoked_session`, `revoked_host` 열을 더한다. 변경 지문이 이 기록을 포함한다.
 - 문서 관계를 제거해도 행을 지우지 않는다. `document_relation` 행에 제거 시각, 제거한 행위자, 세션, 기기를 적고, 조회, 그래프, 문서 상태, 유일성 검사에는 제거되지 않은 관계만 쓴다. 같은 관계를 다시 더하면 제거 표시를 풀어 되살린다. 문서를 올릴 때 이미 풀린 관계와 겹쳐 지워지던 가져온 문서의 풀리지 않은 관계도 같은 방식으로 제거 표시를 하고, 그때 풀리거나 제거된 관계의 이전 값과 새 값을 해당 문서의 활동 기록에 남긴다(전에는 풀리는 관계는 기록이 없었다). 마이그레이션 17: `document_relation`에 `removed_at`, `removed_by`, `removed_session`, `removed_host` 열을 더하고 다섯 인덱스를 제거되지 않은 행에만 걸리게 다시 만든다.
 - 열린 이슈(`backlog`, `doing`, `review`)가 30일을 넘게 활동이 없으면 이슈 응답에 `dormant: true`를 붙인다. 이슈 단건, 목록, 보드, 큐, 현황, 안건이 같은 필드를 가진다. 마지막 활동은 `updated_at`과 마지막 활동 기록 중 늦은 쪽이라 댓글만 단 이슈도 최근으로 본다. 읽을 때 계산하며 저장하거나 이슈를 닫지 않는다. `GET /v1/issues?dormant=true`가 오래된 이슈만 거르고(`true`만 받는다), 안건의 프로젝트 항목에 오래된 이슈 수 `dormant`가 붙는다. 스키마 변경은 없다.
-- 프로젝트별 메시지 공간을 더한다. 다른 호스트·세션·에이전트에 짧은 작업 맥락을 넘기는 임시 쪽지이고, 이슈나 기록 문서와 별개다. `POST`·`GET /v1/projects/{key}/messages`(목록은 `to`, `all`, `limit`, `offset`), `GET`·`DELETE /v1/messages/{id}`. 메시지는 받는 쪽 라벨(`to`, 공백 없는 1~64자, 선택), 제목(1~200자), 본문(64KiB 이하), 만료 시각을 가진다. 만료 기간(`ttl`)은 `24h`, `30m`, `3d` 형식이고 1분 이상 90일 이하이며 기본은 7일이다. 보낸 행위자, 세션, 기기를 함께 남긴다.
+- 프로젝트별 메시지 공간을 더한다. 다른 호스트·세션·에이전트에 짧은 작업 맥락을 넘기는 임시 쪽지이고, 이슈나 기록 문서와 별개다. `POST`·`GET /v1/projects/{key}/messages`(목록은 `to`, `all`, `limit`, `offset`), `GET`·`DELETE /v1/messages/{id}`. 메시지는 받는 쪽 라벨(`to`, 공백 없는 1자 이상 64자 이하, 선택), 제목(1자 이상 200자 이하), 본문(64KiB 이하), 만료 시각을 가진다. 만료 기간(`ttl`)은 `24h`, `30m`, `3d` 형식이고 1분 이상 90일 이하이며 기본은 7일이다. 보낸 행위자, 세션, 기기를 함께 남긴다.
 - 기간이 지난 메시지와 지운 메시지는 지워지지 않는다. 기본 목록(최신 순)에서만 빠지고, `all=true`로 목록에 넣을 수 있으며, 단건 조회는 `state`(`active`, `expired`, `deleted`)와 함께 항상 돌려준다. 삭제는 `deleted_at`을 적는 soft delete이고 영구 삭제나 주기적 정리는 없다. 목록 항목에는 본문이 없고 넣은 뒤 지난 시간 `age`가 있다.
 - 마이그레이션 16: `message` 표와 `(project_id, deleted_at, expires_at)` 인덱스를 더한다. 변경 지문과 스냅샷이 메시지를 포함한다.
 - 기록 문서의 종류(`kind`)를 고정 목록 대신 문자열로 받는다. 종류는 영문 소문자로 시작하고 영문 소문자, 숫자, `_`로 이루어진 1~32자다. 하이픈은 쓸 수 없다(파일명 `yyyy-mm-dd-HHMM-<종류>-<slug>.md`에서 종류와 slug를 가르기 위해서다). `other`는 전과 같이 가져온 문서에만 쓴다. `lesson` 같은 종류의 기록을 올리고 `?kind=lesson`으로 조회할 수 있다. 형식에 맞지 않는 `kind`는 전과 같이 422(올릴 때)와 400(`?kind=` 조회)이다.
