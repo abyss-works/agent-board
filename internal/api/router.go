@@ -48,6 +48,12 @@ type Options struct {
 	// SSEPingInterval is how often an open event stream sends a keepalive
 	// comment. Zero uses the default (20 seconds).
 	SSEPingInterval time.Duration
+	// MaxSSEConnections caps concurrent SSE event streams across the server.
+	// Zero uses the default (64).
+	MaxSSEConnections int
+	// MaxSSEConnectionsPerActor caps concurrent SSE event streams per actor.
+	// Zero uses the default (16).
+	MaxSSEConnectionsPerActor int
 }
 
 type handler struct {
@@ -85,7 +91,7 @@ func New(o Options) http.Handler {
 		actors: map[string]model.Actor{},
 		store:  o.Store,
 		stats:  newStatsCollector(),
-		broker: newEventBroker(),
+		broker: newEventBroker(o.MaxSSEConnections, o.MaxSSEConnectionsPerActor),
 		seen:   map[string]time.Time{},
 	}
 	if h.store != nil {

@@ -355,3 +355,193 @@ func TestEventStreamInitialReadFailureReturnsJSONError(t *testing.T) {
 		t.Errorf("failed stream stats = %+v, want Requests=1 Errors=1 Active=0", st.Streams)
 	}
 }
+
+func waitStreamEOF(t *testing.T, r io.Reader, timeout time.Duration) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, r)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("stream ended with error %v, want clean EOF", err)
+		}
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for SSE stream to close")
+	}
+}
+
+func TestEventStreamConnectionLimits(t *testing.T) {
+	if b := newEventBroker(0, 0); b.maxTotal != defaultMaxSSEConnections || b.maxPerActor != defaultMaxSSEConnectionsPerActor {
+		t.Fatalf("default limits = (%d, %d), want (%d, %d)", b.maxTotal, b.maxPerActor, defaultMaxSSEConnections, defaultMaxSSEConnectionsPerActor)
+	}
+
+	e := newEnvWith(t, loginActors, func(o *Options) {
+		o.MaxSSEConnections = 3
+		o.MaxSSEConnectionsPerActor = 2
+	})
+	srv := httptest.NewServer(e.h)
+	t.Cleanup(func() {
+		if c, ok := e.h.(io.Closer); ok {
+			_ = c.Close()
+		}
+		srv.Close()
+	})
+
+	claude := e.login(t, "claude", "desk", "owner")
+
+	// Open 2 streams as owner (reaches per-actor cap = 2).
+	r1, c1 := openStream(t, srv.URL, "/v1/events/stream", map[string]string{"X-Actor": "owner"})
+	defer func() { c1(); r1.Body.Close() }()
+	if r1.StatusCode != 200 {
+		t.Fatalf("owner stream 1 = %d", r1.StatusCode)
+	}
+	r2, c2 := openStream(t, srv.URL, "/v1/events/stream", map[string]string{"X-Actor": "owner"})
+	defer func() { c2(); r2.Body.Close() }()
+	if r2.StatusCode != 200 {
+		t.Fatalf("owner stream 2 = %d", r2.StatusCode)
+	}
+
+	// 3rd stream for owner is rejected with 429 too_many_requests.
+	rOverActor, cOverActor := openStream(t, srv.URL, "/v1/events/stream", map[string]string{"X-Actor": "owner"})
+	defer func() { cOverActor(); rOverActor.Body.Close() }()
+	if rOverActor.StatusCode != 429 {
+		t.Fatalf("owner stream 3 status = %d, want 429", rOverActor.StatusCode)
+	}
+	var ebActor errorBody
+	if err := json.NewDecoder(rOverActor.Body).Decode(&ebActor); err != nil || ebActor.Error.Code != "too_many_requests" {
+		t.Fatalf("owner stream 3 error = %+v (err=%v), want too_many_requests", ebActor, err)
+	}
+
+	// Another actor can still open a stream up to the global cap = 3.
+	r3, c3 := openStream(t, srv.URL, "/v1/events/stream", withToken(claude.Secret, "claude"))
+	defer func() { c3(); r3.Body.Close() }()
+	if r3.StatusCode != 200 {
+		t.Fatalf("claude stream 1 = %d", r3.StatusCode)
+	}
+
+	// 4th global stream is rejected with 429 too_many_requests even though claude only has 1.
+	rOverGlobal, cOverGlobal := openStream(t, srv.URL, "/v1/events/stream", withToken(claude.Secret, "claude"))
+	defer func() { cOverGlobal(); rOverGlobal.Body.Close() }()
+	if rOverGlobal.StatusCode != 429 {
+		t.Fatalf("claude stream 2 status = %d, want 429", rOverGlobal.StatusCode)
+	}
+	var ebGlobal errorBody
+	if err := json.NewDecoder(rOverGlobal.Body).Decode(&ebGlobal); err != nil || ebGlobal.Error.Code != "too_many_requests" {
+		t.Fatalf("claude stream 2 error = %+v (err=%v), want too_many_requests", ebGlobal, err)
+	}
+
+	// Closing one owner stream frees a slot so claude can connect.
+	c1()
+	r1.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r4, c4 := openStream(t, srv.URL, "/v1/events/stream", withToken(claude.Secret, "claude"))
+		if r4.StatusCode == 200 {
+			c4()
+			r4.Body.Close()
+			break
+		}
+		c4()
+		r4.Body.Close()
+		if time.Now().After(deadline) {
+			t.Fatalf("slot was not freed after closing stream (last status=%d)", r4.StatusCode)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+}
+
+func TestEventStreamDisconnectedOnTokenRevocation(t *testing.T) {
+	e := newEnvWith(t, loginActors, func(o *Options) {
+		o.SSEPingInterval = time.Hour
+	})
+	srv := httptest.NewServer(e.h)
+	t.Cleanup(func() {
+		if c, ok := e.h.(io.Closer); ok {
+			_ = c.Close()
+		}
+		srv.Close()
+	})
+
+	owner := map[string]string{"X-Actor": "owner"}
+	if r := e.do(t, "POST", "/v1/projects", `{"key":"AAA","name":"App A"}`, owner); r.Code != 201 {
+		t.Fatalf("create project: %d", r.Code)
+	}
+
+	// Keep a shared-token stream open throughout to verify it is never disconnected.
+	sharedResp, sharedCancel := openStream(t, srv.URL, "/v1/events/stream?project=AAA&kind=issue.", owner)
+	defer func() { sharedCancel(); sharedResp.Body.Close() }()
+	if sharedResp.StatusCode != 200 {
+		t.Fatalf("shared stream = %d", sharedResp.StatusCode)
+	}
+	sharedRd := bufio.NewReader(sharedResp.Body)
+
+	// 1. DELETE /v1/tokens/{id} closes the stream authenticated with that token.
+	tokByID := e.login(t, "claude", "desk", "owner")
+	otherActor := e.login(t, "codex", "desk", "owner")
+
+	respByID, cancelByID := openStream(t, srv.URL, "/v1/events/stream", withToken(tokByID.Secret, "claude"))
+	defer func() { cancelByID(); respByID.Body.Close() }()
+	if respByID.StatusCode != 200 {
+		t.Fatalf("tokByID stream = %d", respByID.StatusCode)
+	}
+	otherResp, otherCancel := openStream(t, srv.URL, "/v1/events/stream?project=AAA&kind=issue.", withToken(otherActor.Secret, "codex"))
+	defer func() { otherCancel(); otherResp.Body.Close() }()
+	if otherResp.StatusCode != 200 {
+		t.Fatalf("otherActor stream = %d", otherResp.StatusCode)
+	}
+	otherRd := bufio.NewReader(otherResp.Body)
+
+	if rec := e.do(t, "DELETE", "/v1/tokens/"+strconv.FormatInt(tokByID.ID, 10), "", owner); rec.Code != 200 {
+		t.Fatalf("revoke by id: %d %s", rec.Code, rec.Body.String())
+	}
+	waitStreamEOF(t, respByID.Body, 2*time.Second)
+
+	// 2. DELETE /v1/tokens/current closes the stream authenticated with that token.
+	tokCurrent := e.login(t, "claude", "laptop", "owner")
+	respCurrent, cancelCurrent := openStream(t, srv.URL, "/v1/events/stream", withToken(tokCurrent.Secret, "claude"))
+	defer func() { cancelCurrent(); respCurrent.Body.Close() }()
+	if respCurrent.StatusCode != 200 {
+		t.Fatalf("tokCurrent stream = %d", respCurrent.StatusCode)
+	}
+	if rec := e.do(t, "DELETE", "/v1/tokens/current", "", withToken(tokCurrent.Secret, "claude")); rec.Code != 200 {
+		t.Fatalf("revoke current: %d %s", rec.Code, rec.Body.String())
+	}
+	waitStreamEOF(t, respCurrent.Body, 2*time.Second)
+
+	// 3. Re-issuing a token for the same (actor, client_host) closes the replaced token's stream,
+	// while keeping the stream for another device open.
+	tokOld := e.login(t, "claude", "host-a", "owner")
+	tokOtherHost := e.login(t, "claude", "host-b", "owner")
+	respOld, cancelOld := openStream(t, srv.URL, "/v1/events/stream", withToken(tokOld.Secret, "claude"))
+	defer func() { cancelOld(); respOld.Body.Close() }()
+	if respOld.StatusCode != 200 {
+		t.Fatalf("tokOld stream = %d", respOld.StatusCode)
+	}
+	respOtherHost, cancelOtherHost := openStream(t, srv.URL, "/v1/events/stream?project=AAA&kind=issue.", withToken(tokOtherHost.Secret, "claude"))
+	defer func() { cancelOtherHost(); respOtherHost.Body.Close() }()
+	if respOtherHost.StatusCode != 200 {
+		t.Fatalf("tokOtherHost stream = %d", respOtherHost.StatusCode)
+	}
+	otherHostRd := bufio.NewReader(respOtherHost.Body)
+
+	_ = e.login(t, "claude", "host-a", "owner")
+	waitStreamEOF(t, respOld.Body, 2*time.Second)
+
+	// Unrelated streams (shared token, other actor, other device) still receive live events.
+	if r := e.do(t, "POST", "/v1/issues", `{"project":"AAA","title":"still alive"}`, owner); r.Code != 201 {
+		t.Fatalf("create issue: %d", r.Code)
+	}
+	for name, rd := range map[string]*bufio.Reader{
+		"shared":     sharedRd,
+		"otherActor": otherRd,
+		"otherHost":  otherHostRd,
+	} {
+		f := readSSEEvent(t, rd, 2*time.Second)
+		if f.Event != "issue.created" {
+			t.Errorf("%s stream got event %q, want issue.created", name, f.Event)
+		}
+	}
+}

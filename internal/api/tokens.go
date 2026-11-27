@@ -65,11 +65,14 @@ func (h *handler) exchangeToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.storeError(r, err))
 		return
 	}
-	tok, err := h.store.CreateToken(r.Context(), store.TokenInput{Actor: d.actor, ClientHost: d.clientHost, Secret: secret, CreatedBy: d.approvedBy,
+	tok, revokedIDs, err := h.store.CreateTokenReplacing(r.Context(), store.TokenInput{Actor: d.actor, ClientHost: d.clientHost, Secret: secret, CreatedBy: d.approvedBy,
 		ApprovedSession: d.approvedSession, ApprovedHost: d.approvedHost})
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
+	}
+	for _, rid := range revokedIDs {
+		h.broker.DisconnectToken(rid)
 	}
 	writeJSON(w, http.StatusCreated, model.IssuedToken{Token: *tok, Secret: secret})
 }
@@ -121,6 +124,7 @@ func (h *handler) revokeToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.storeError(r, err))
 		return
 	}
+	h.broker.DisconnectToken(tok.ID)
 	writeJSON(w, http.StatusOK, tok)
 }
 
@@ -143,5 +147,6 @@ func (h *handler) revokeCurrentToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.storeError(r, err))
 		return
 	}
+	h.broker.DisconnectToken(tok.ID)
 	writeJSON(w, http.StatusOK, tok)
 }

@@ -129,6 +129,35 @@ func TestLocationRecordsTheRemoteWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestRemoteURLStripsCredentials(t *testing.T) {
+	for name, c := range map[string]struct {
+		raw  string
+		want string
+	}{
+		"https userinfo":         {"https://user:secret@example.com/o/r.git", "https://example.com/o/r.git"},
+		"https special password": {"https://user:p@ss@example.com/o/r.git", "https://example.com/o/r.git"},
+		"https malformed escape": {"https://user:secret@example.com/%ZZ", "https://example.com/%ZZ"},
+		"https bad port":         {"https://user:secret@example.com:badport/o/r.git", "https://example.com:badport/o/r.git"},
+		"scp user token":         {"user:secret@example.com:o/r.git", "example.com:o/r.git"},
+		"scp git user":           {"git@example.com:o/r.git", "example.com:o/r.git"},
+		"no origin":              {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := gitRepo(t)
+			if c.raw != "" {
+				gitRun(t, dir, "remote", "add", "origin", c.raw)
+			}
+			got := remoteURL(dir)
+			if got != c.want {
+				t.Errorf("remoteURL(%q) = %q, want %q", c.raw, got, c.want)
+			}
+			if strings.Contains(got, "secret") || strings.Contains(got, "p@ss") {
+				t.Errorf("remoteURL(%q) leaked credential: %q", c.raw, got)
+			}
+		})
+	}
+}
+
 func TestFindMerge(t *testing.T) {
 	dir, base, merge := mergedRepo(t)
 	tip := gitRun(t, dir, "rev-parse", merge+"^2")

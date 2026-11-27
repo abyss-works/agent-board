@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -56,11 +55,7 @@ func remoteURL(dir string) string {
 	if err != nil {
 		return ""
 	}
-	if u, err := url.Parse(raw); err == nil && u.User != nil {
-		u.User = nil
-		return u.String()
-	}
-	return raw
+	return model.StripRemoteUserinfo(raw)
 }
 
 // mergeLink is a merge commit of a work branch with the commits it brought.

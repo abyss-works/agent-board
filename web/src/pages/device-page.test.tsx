@@ -44,7 +44,7 @@ function authFixture(partial: Partial<DeviceAuthorization> = {}): DeviceAuthoriz
   return {
     user_code: 'BDFG-HJKL',
     actor: 'codex',
-    client_host: 'DESKTOP-RPLTFHM',
+    client_host: 'host-a',
     status: 'pending',
     new_actor: false,
     created_at: '2026-10-19T01:20:00.000Z',

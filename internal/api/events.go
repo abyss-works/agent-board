@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,44 +18,112 @@ import (
 )
 
 const (
-	streamEventsPattern    = "/v1/events/stream"
-	defaultSSEPingInterval = 20 * time.Second
+	streamEventsPattern              = "/v1/events/stream"
+	defaultSSEPingInterval           = 20 * time.Second
+	defaultMaxSSEConnections         = 64
+	defaultMaxSSEConnectionsPerActor = 16
 )
+
+var (
+	errBrokerClosed   = errors.New("event broker closed")
+	errTooManyStreams = errors.New("too many event streams")
+	errTooManyByActor = errors.New("too many event streams for actor")
+)
+
+type eventSub struct {
+	notify  chan struct{}
+	closed  chan struct{}
+	actor   string
+	tokenID int64
+}
 
 // eventBroker fans out commit notifications from Store.SetEventHook to active
 // SSE subscribers. Subscribers drain the database on each notification so no
 // event is ever lost to a full buffer or race window.
 type eventBroker struct {
-	mu     sync.Mutex
-	closed bool
-	done   chan struct{}
-	subs   map[chan struct{}]struct{}
+	mu          sync.Mutex
+	closed      bool
+	done        chan struct{}
+	subs        map[*eventSub]struct{}
+	perActor    map[string]int
+	maxTotal    int
+	maxPerActor int
 }
 
-func newEventBroker() *eventBroker {
+func newEventBroker(maxTotal, maxPerActor int) *eventBroker {
+	if maxTotal <= 0 {
+		maxTotal = defaultMaxSSEConnections
+	}
+	if maxPerActor <= 0 {
+		maxPerActor = defaultMaxSSEConnectionsPerActor
+	}
 	return &eventBroker{
-		done: make(chan struct{}),
-		subs: map[chan struct{}]struct{}{},
+		done:        make(chan struct{}),
+		subs:        map[*eventSub]struct{}{},
+		perActor:    map[string]int{},
+		maxTotal:    maxTotal,
+		maxPerActor: maxPerActor,
 	}
 }
 
-func (b *eventBroker) Subscribe() (<-chan struct{}, func(), bool) {
+func (b *eventBroker) removeLocked(sub *eventSub) {
+	if _, ok := b.subs[sub]; !ok {
+		return
+	}
+	delete(b.subs, sub)
+	if sub.actor != "" {
+		if n := b.perActor[sub.actor] - 1; n > 0 {
+			b.perActor[sub.actor] = n
+		} else {
+			delete(b.perActor, sub.actor)
+		}
+	}
+	close(sub.closed)
+}
+
+func (b *eventBroker) Subscribe(actor string, tokenID int64) (*eventSub, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
-		return nil, func() {}, false
+		return nil, func() {}, errBrokerClosed
 	}
-	ch := make(chan struct{}, 1)
-	b.subs[ch] = struct{}{}
+	if len(b.subs) >= b.maxTotal {
+		return nil, func() {}, errTooManyStreams
+	}
+	if actor != "" && b.perActor[actor] >= b.maxPerActor {
+		return nil, func() {}, errTooManyByActor
+	}
+	sub := &eventSub{
+		notify:  make(chan struct{}, 1),
+		closed:  make(chan struct{}),
+		actor:   actor,
+		tokenID: tokenID,
+	}
+	b.subs[sub] = struct{}{}
+	if actor != "" {
+		b.perActor[actor]++
+	}
 	unsub := func() {
 		b.mu.Lock()
-		if _, ok := b.subs[ch]; ok {
-			delete(b.subs, ch)
-			close(ch)
-		}
+		b.removeLocked(sub)
 		b.mu.Unlock()
 	}
-	return ch, unsub, true
+	return sub, unsub, nil
+}
+
+// DisconnectToken immediately cancels and removes all active SSE subscribers
+// authenticated with tokenID. A non-positive tokenID (shared token) is ignored.
+func (b *eventBroker) DisconnectToken(tokenID int64) {
+	if tokenID <= 0 {
+		return
+	}
+	b.mu.Lock()
+	for sub := range b.subs {
+		if sub.tokenID == tokenID {
+			b.removeLocked(sub)
+		}
+	}
+	b.mu.Unlock()
 }
 
 func (b *eventBroker) Notify(_ []model.Event) {
@@ -62,9 +132,9 @@ func (b *eventBroker) Notify(_ []model.Event) {
 		b.mu.Unlock()
 		return
 	}
-	for ch := range b.subs {
+	for sub := range b.subs {
 		select {
-		case ch <- struct{}{}:
+		case sub.notify <- struct{}{}:
 		default:
 		}
 	}
@@ -81,9 +151,8 @@ func (b *eventBroker) Close() {
 	}
 	b.closed = true
 	close(b.done)
-	for ch := range b.subs {
-		delete(b.subs, ch)
-		close(ch)
+	for sub := range b.subs {
+		b.removeLocked(sub)
 	}
 	b.mu.Unlock()
 }
@@ -181,9 +250,20 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Subscribe before reading LatestEventID or draining so no event committed
 	// during setup can be missed.
-	ch, unsub, ok := h.broker.Subscribe()
-	if !ok {
-		writeError(w, &apiError{Status: http.StatusServiceUnavailable, Code: "shutting_down", Message: "서버가 종료 중입니다."})
+	actor := TraceFrom(r.Context()).Actor
+	cred := credentialFrom(r.Context())
+	sub, unsub, err := h.broker.Subscribe(actor, cred.tokenID)
+	if err != nil {
+		switch {
+		case errors.Is(err, errBrokerClosed):
+			writeError(w, &apiError{Status: http.StatusServiceUnavailable, Code: "shutting_down", Message: "서버가 종료 중입니다."})
+		case errors.Is(err, errTooManyByActor):
+			writeError(w, tooManyRequests("행위자당 동시 이벤트 스트림 연결이 너무 많습니다."))
+		case errors.Is(err, errTooManyStreams):
+			writeError(w, tooManyRequests("동시 이벤트 스트림 연결이 너무 많습니다."))
+		default:
+			writeError(w, errInternal)
+		}
 		return
 	}
 	defer unsub()
@@ -208,6 +288,17 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, h.storeError(r, err))
 		return
+	}
+
+	select {
+	case <-sub.closed:
+		if cred.tokenID > 0 {
+			writeError(w, errUnauthorized)
+		} else {
+			writeError(w, &apiError{Status: http.StatusServiceUnavailable, Code: "shutting_down", Message: "서버가 종료 중입니다."})
+		}
+		return
+	default:
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -243,6 +334,11 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 	drain := func() error {
 		for {
+			select {
+			case <-sub.closed:
+				return context.Canceled
+			default:
+			}
 			items, nextAfter, err := h.store.ListEvents(r.Context(), store.EventFilter{
 				After:   cursor,
 				Project: project,
@@ -286,9 +382,13 @@ func (h *handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-h.broker.Done():
 			return
-		case _, ok := <-ch:
-			if !ok {
+		case <-sub.closed:
+			return
+		case <-sub.notify:
+			select {
+			case <-sub.closed:
 				return
+			default:
 			}
 			if err := drain(); err != nil {
 				return
