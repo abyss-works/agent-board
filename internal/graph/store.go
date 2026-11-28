@@ -29,6 +29,9 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+// Compile-time check that Store implements pg.GraphStore.
+var _ pg.GraphStore = (*Store)(nil)
+
 // NewStore returns a graph store backed by pool.
 func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
@@ -258,10 +261,22 @@ func (s *Store) ListEdgesForSource(ctx context.Context, sourceType model.GraphNo
 
 // ListCandidates lists candidate edges matching filter in reverse chronological order.
 func (s *Store) ListCandidates(ctx context.Context, filter pg.CandidateFilter) ([]pg.EdgeCandidate, error) {
+	items, _, err := s.ListCandidatesPaged(ctx, filter)
+	return items, err
+}
+
+// ListCandidatesPaged lists candidate edges matching filter together with the
+// total matching count before pagination.
+func (s *Store) ListCandidatesPaged(ctx context.Context, filter pg.CandidateFilter) ([]pg.EdgeCandidate, int, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
 	args := []any{}
 	conds := []string{"e.status = 'candidate'"}
 	if strings.TrimSpace(filter.Project) != "" {
@@ -272,8 +287,29 @@ func (s *Store) ListCandidates(ctx context.Context, filter pg.CandidateFilter) (
 		args = append(args, string(filter.Kind))
 		conds = append(conds, fmt.Sprintf("e.kind = $%d", len(args)))
 	}
-	args = append(args, limit)
-	limitArg := fmt.Sprintf("$%d", len(args))
+	if filter.SourceType != "" {
+		args = append(args, string(filter.SourceType))
+		conds = append(conds, fmt.Sprintf("e.source_type = $%d", len(args)))
+	}
+	if filter.SourceID > 0 {
+		args = append(args, filter.SourceID)
+		conds = append(conds, fmt.Sprintf("e.source_id = $%d", len(args)))
+	}
+
+	whereClause := strings.Join(conds, " AND ")
+	var total int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM graph_edge e
+		JOIN project p ON p.id = e.project_id
+		WHERE `+whereClause, args...,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, limit, offset)
+	limitArg := fmt.Sprintf("$%d", len(args)-1)
+	offsetArg := fmt.Sprintf("$%d", len(args))
 
 	query := `
 		SELECT e.id, e.project_id, p.key, e.source_type, e.source_id,
@@ -310,13 +346,13 @@ func (s *Store) ListCandidates(ctx context.Context, filter pg.CandidateFilter) (
 		LEFT JOIN spec_document tsp ON e.target_type = 'spec' AND e.target_id = tsp.id
 		LEFT JOIN record_document trd ON e.target_type = 'record' AND e.target_id = trd.id
 		LEFT JOIN epic tep ON e.target_type = 'epic' AND e.target_id = tep.id
-		WHERE ` + strings.Join(conds, " AND ") + `
+		WHERE ` + whereClause + `
 		ORDER BY e.created_at DESC, e.id DESC
-		LIMIT ` + limitArg
+		LIMIT ` + limitArg + ` OFFSET ` + offsetArg
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -338,7 +374,7 @@ func (s *Store) ListCandidates(ctx context.Context, filter pg.CandidateFilter) (
 			&ec.DecidedBy, &decidedAt, &createdAt,
 			&ec.SourceKeyOrName, &ec.TargetKeyOrName,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		ec.SourceType = model.GraphNodeType(sourceType)
 		if targetType != nil {
@@ -352,7 +388,55 @@ func (s *Store) ListCandidates(ctx context.Context, filter pg.CandidateFilter) (
 		ec.CreatedAt = model.NewTime(createdAt)
 		out = append(out, ec)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// RemoveEdge transitions an existing edge to status='removed'. Removing an
+// already-removed edge is idempotent and returns the current row.
+func (s *Store) RemoveEdge(ctx context.Context, actorID string, edgeID int64) (model.Edge, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Edge{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	cur, err := getEdgeForUpdateTx(ctx, tx, edgeID)
+	if err != nil {
+		return model.Edge{}, err
+	}
+	if cur.Status == model.EdgeStatusRemoved {
+		if err := tx.Commit(ctx); err != nil {
+			return model.Edge{}, err
+		}
+		return cur, nil
+	}
+
+	var decidedBy *string
+	if strings.TrimSpace(actorID) != "" {
+		a := strings.TrimSpace(actorID)
+		decidedBy = &a
+	}
+	row := tx.QueryRow(ctx, `
+		UPDATE graph_edge e
+		SET status = 'removed',
+		    decided_by = $2,
+		    decided_at = now()
+		FROM project p
+		WHERE e.id = $1 AND p.id = e.project_id
+		RETURNING e.id, e.project_id, p.key, e.source_type, e.source_id,
+		          e.target_type, e.target_id, e.unresolved_target_text,
+		          e.kind, e.origin, e.status, e.confidence, e.evidence,
+		          e.decided_by, e.decided_at, e.created_at`,
+		edgeID, decidedBy,
+	)
+	updated, err := scanEdge(row)
+	if err != nil {
+		return model.Edge{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.Edge{}, err
+	}
+	return updated, nil
 }
 
 // ConfirmEdge transitions a candidate edge to confirmed, returning

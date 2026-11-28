@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/model"
+	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
 
 var srvTestDBSeq atomic.Int64
@@ -96,6 +98,50 @@ func TestPostgresServerStartsServesStatsAndStops(t *testing.T) {
 	}
 	if err := json.NewDecoder(resp2.Body).Decode(&stats); err != nil || stats.DBBytes <= 0 {
 		t.Fatalf("/v1/stats db_bytes = %d, err = %v", stats.DBBytes, err)
+	}
+
+	// Verify background ingest worker + ?wait=true + /v1/context/query end-to-end.
+	doJSON := func(method, path, payload string) (*http.Response, []byte) {
+		t.Helper()
+		var body io.Reader
+		if payload != "" {
+			body = bytes.NewBufferString(payload)
+		}
+		r, err := http.NewRequest(method, "http://"+addr+path, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("Authorization", "Bearer "+testToken)
+		r.Header.Set("X-Actor", "owner")
+		r.Header.Set("X-Session-Id", "pg-srv")
+		r.Header.Set("X-Client-Host", "devbox")
+		if payload != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		res, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		return res, raw
+	}
+
+	if res, raw := doJSON("POST", "/v1/projects", `{"key":"SRV","name":"Server E2E"}`); res.StatusCode != 201 {
+		t.Fatalf("create project = %d %s", res.StatusCode, raw)
+	}
+	resRec, rawRec := doJSON("POST", "/v1/projects/SRV/records?wait=true&wait_timeout_ms=5000",
+		`{"name":"2026-11-01-1000-decision-shutdown.md","kind":"decision","title":"우아한 종료 절차","content":"# 우아한 종료\n서버 종료 시 백그라운드 워커와 큐 리스너를 먼저 정리한다."}`)
+	if resRec.StatusCode != 201 || !strings.Contains(string(rawRec), `"ingest_status":"done"`) {
+		t.Fatalf("create record wait=true = %d %s", resRec.StatusCode, rawRec)
+	}
+	resCtx, rawCtx := doJSON("POST", "/v1/context/query", `{"query":"백그라운드 워커를","project":"SRV"}`)
+	if resCtx.StatusCode != 200 {
+		t.Fatalf("context query = %d %s", resCtx.StatusCode, rawCtx)
+	}
+	var ctxBody pgstore.ContextQueryResponse
+	if err := json.Unmarshal(rawCtx, &ctxBody); err != nil || len(ctxBody.Items) == 0 {
+		t.Fatalf("context query body = %s, err = %v", rawCtx, err)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

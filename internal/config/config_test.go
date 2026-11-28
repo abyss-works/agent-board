@@ -357,3 +357,80 @@ func TestLoadDatabaseConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadContextEngineConfig(t *testing.T) {
+	base := map[string]string{"AGB_TOKEN": testToken, "AGB_ACTORS": "owner:user"}
+	with := func(kv ...string) func(string) string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return env(m)
+	}
+
+	// Defaults without Voyage credentials.
+	cfg, err := Load(with())
+	if err != nil {
+		t.Fatalf("defaults: %v", err)
+	}
+	if cfg.ContextEngine.VoyageEnabled() ||
+		cfg.ContextEngine.ContextConfidenceCutoff != DefaultContextConfidenceCutoff ||
+		cfg.ContextEngine.RerankTimeout != DefaultRerankTimeout {
+		t.Fatalf("unexpected defaults: %+v", cfg.ContextEngine)
+	}
+
+	// Valid overrides.
+	cfg, err = Load(with(
+		"AGB_VOYAGE_API_KEY", "  test-voyage-key-value  ",
+		"AGB_VOYAGE_BASE_URL", "https://api.voyageai.com/v1",
+		"AGB_VOYAGE_EMBED_MODEL", "voyage-4",
+		"AGB_VOYAGE_RERANK_MODEL", "rerank-3-lite",
+		"AGB_CONTEXT_CONFIDENCE_CUTOFF", "0.25",
+		"AGB_RERANK_TIMEOUT", "2s",
+	))
+	if err != nil {
+		t.Fatalf("overrides: %v", err)
+	}
+	ce := cfg.ContextEngine
+	if !ce.VoyageEnabled() || ce.VoyageAPIKey != "test-voyage-key-value" ||
+		ce.VoyageBaseURL != "https://api.voyageai.com/v1" ||
+		ce.VoyageEmbedModel != "voyage-4" ||
+		ce.VoyageRerankModel != "rerank-3-lite" ||
+		ce.ContextConfidenceCutoff != 0.25 ||
+		ce.RerankTimeout != 2*time.Second {
+		t.Fatalf("unexpected overrides: %+v", ce)
+	}
+
+	// Control characters in API key and bad URLs must fail without leaking secrets.
+	const secretKey = "pa-ultra-secret-key-999"
+	_, err = Load(with("AGB_VOYAGE_API_KEY", secretKey+"\ninjected"))
+	if err == nil || !strings.Contains(err.Error(), "AGB_VOYAGE_API_KEY") || strings.Contains(err.Error(), secretKey) {
+		t.Fatalf("control-char key err = %v, want AGB_VOYAGE_API_KEY without leaking secret", err)
+	}
+
+	for name, badURL := range map[string]string{
+		"ftp scheme":  "ftp://example.com/v1",
+		"userinfo":    "https://user:" + secretKey + "@example.com/v1",
+		"query param": "https://example.com/v1?key=" + secretKey,
+		"missinghost": "https:///v1",
+	} {
+		_, err := Load(with("AGB_VOYAGE_BASE_URL", badURL))
+		if err == nil || !strings.Contains(err.Error(), "AGB_VOYAGE_BASE_URL") || strings.Contains(err.Error(), secretKey) {
+			t.Errorf("%s: err = %v, want AGB_VOYAGE_BASE_URL without leaking secret", name, err)
+		}
+	}
+
+	for _, bad := range []string{"-0.1", "1.5", "NaN", "abc"} {
+		if _, err := Load(with("AGB_CONTEXT_CONFIDENCE_CUTOFF", bad)); err == nil || !strings.Contains(err.Error(), "AGB_CONTEXT_CONFIDENCE_CUTOFF") {
+			t.Errorf("cutoff %q: err = %v", bad, err)
+		}
+	}
+	for _, bad := range []string{"0s", "-100ms", "soon"} {
+		if _, err := Load(with("AGB_RERANK_TIMEOUT", bad)); err == nil || !strings.Contains(err.Error(), "AGB_RERANK_TIMEOUT") {
+			t.Errorf("rerank timeout %q: err = %v", bad, err)
+		}
+	}
+}

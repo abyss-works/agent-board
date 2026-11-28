@@ -14,7 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wsk0715/agent-board/internal/graph"
+	"github.com/wsk0715/agent-board/internal/ingest"
 	"github.com/wsk0715/agent-board/internal/model"
+	"github.com/wsk0715/agent-board/internal/search"
 	"github.com/wsk0715/agent-board/internal/store"
 	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
@@ -29,10 +32,13 @@ type Options struct {
 	Version string
 	// Release is the release the binary was built for, such as v0.8.1. Empty
 	// when unknown; health then omits it.
-	Release string
-	Logger  *slog.Logger
-	Store   *store.Store
-	PGStore *pgstore.Store
+	Release       string
+	Logger        *slog.Logger
+	Store         *store.Store
+	PGStore       *pgstore.Store
+	GraphStore    *graph.Store
+	IngestQueue   *ingest.Queue
+	ContextEngine pgstore.ContextEngine
 	// Web is the built web client. When set, every path outside /v1 is served
 	// from it without authentication. When nil those paths belong to the API.
 	Web fs.FS
@@ -59,16 +65,19 @@ type Options struct {
 }
 
 type handler struct {
-	opts       Options
-	actorsMu   sync.RWMutex
-	actors     map[string]model.Actor
-	actorOrder []model.Actor
-	store      *store.Store
-	pgStore    *pgstore.Store
-	devices    *deviceStore
-	stats      *statsCollector
-	broker     *eventBroker
-	started    time.Time
+	opts          Options
+	actorsMu      sync.RWMutex
+	actors        map[string]model.Actor
+	actorOrder    []model.Actor
+	store         *store.Store
+	pgStore       *pgstore.Store
+	graphStore    *graph.Store
+	ingestQueue   *ingest.Queue
+	contextEngine pgstore.ContextEngine
+	devices       *deviceStore
+	stats         *statsCollector
+	broker        *eventBroker
+	started       time.Time
 
 	// seen holds, per actor and session ID, when this process last wrote the
 	// call of that session.
@@ -90,16 +99,32 @@ func (c *closeableHandler) Close() error {
 // io.Closer to close open SSE streams before server shutdown.
 func New(o Options) http.Handler {
 	h := &handler{
-		opts:    o,
-		actors:  map[string]model.Actor{},
-		store:   o.Store,
-		pgStore: o.PGStore,
-		stats:   newStatsCollector(),
-		broker:  newEventBroker(o.MaxSSEConnections, o.MaxSSEConnectionsPerActor),
-		seen:    map[string]time.Time{},
+		opts:          o,
+		actors:        map[string]model.Actor{},
+		store:         o.Store,
+		pgStore:       o.PGStore,
+		graphStore:    o.GraphStore,
+		ingestQueue:   o.IngestQueue,
+		contextEngine: o.ContextEngine,
+		stats:         newStatsCollector(),
+		broker:        newEventBroker(o.MaxSSEConnections, o.MaxSSEConnectionsPerActor),
+		seen:          map[string]time.Time{},
+	}
+	if h.opts.Logger == nil {
+		h.opts.Logger = slog.Default()
 	}
 	if h.pgStore != nil {
 		h.pgStore.SetEventHook(h.broker.Notify)
+		if h.graphStore == nil {
+			h.graphStore = graph.NewStore(h.pgStore.Pool())
+		}
+		if h.contextEngine == nil {
+			h.contextEngine = search.NewEngine(search.EngineConfig{
+				Pool:       h.pgStore.Pool(),
+				GraphStore: h.graphStore,
+				Logger:     h.opts.Logger,
+			})
+		}
 	} else if h.store != nil {
 		h.store.SetEventHook(h.broker.Notify)
 	}
@@ -108,9 +133,6 @@ func New(o Options) http.Handler {
 			h.actorOrder = append(h.actorOrder, a)
 		}
 		h.actors[a.ID] = a
-	}
-	if h.opts.Logger == nil {
-		h.opts.Logger = slog.Default()
 	}
 	if h.opts.Now == nil {
 		h.opts.Now = time.Now

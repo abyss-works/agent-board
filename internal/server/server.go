@@ -20,6 +20,9 @@ import (
 	"github.com/wsk0715/agent-board/internal/backup"
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/embed"
+	"github.com/wsk0715/agent-board/internal/graph"
+	"github.com/wsk0715/agent-board/internal/ingest"
+	"github.com/wsk0715/agent-board/internal/search"
 	"github.com/wsk0715/agent-board/internal/store"
 	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
@@ -32,25 +35,34 @@ type Options struct {
 	Release     string
 	Logger      *slog.Logger
 	BackupStore backup.ObjectStore
+	// PGEmbedder and PGReranker optionally override the Voyage AI adapters in
+	// PostgreSQL mode (primarily for tests and custom wiring).
+	PGEmbedder pgstore.Embedder
+	PGReranker pgstore.Reranker
 }
 
 // Server is a configured, not yet listening, API server.
 type Server struct {
-	cfg     *config.Config
-	opts    Options
-	store   *store.Store
-	pgStore *pgstore.Store
-	http    *http.Server
-	ln      net.Listener
-	cancel  context.CancelFunc
-	done    chan struct{}
-	bg      sync.WaitGroup
+	cfg          *config.Config
+	opts         Options
+	store        *store.Store
+	pgStore      *pgstore.Store
+	ingestQueue  *ingest.Queue
+	ingestWorker *ingest.Worker
+	http         *http.Server
+	ln           net.Listener
+	cancel       context.CancelFunc
+	done         chan struct{}
+	bg           sync.WaitGroup
 	// embedder and searcher are set only when the search by meaning is enabled.
 	embedder *embed.Runner
 	searcher *embed.Searcher
 }
 
 func (s *Server) closeStore() error {
+	if s.ingestQueue != nil {
+		s.ingestQueue.Close()
+	}
 	if s.pgStore != nil {
 		return s.pgStore.Close()
 	}
@@ -168,19 +180,65 @@ func newPostgresServer(cfg *config.Config, opts Options) (*Server, error) {
 	if cfg.WebDir != "" {
 		web = os.DirFS(cfg.WebDir)
 	}
+
+	graphStore := graph.NewStore(pgs.Pool())
+	ingestQueue := ingest.NewQueue(pgs.Pool(), ingest.QueueConfig{})
+
+	pgEmbedder := opts.PGEmbedder
+	pgReranker := opts.PGReranker
+	if cfg.ContextEngine.VoyageEnabled() {
+		if pgEmbedder == nil {
+			pgEmbedder = embed.NewVoyageEmbedder(embed.VoyageEmbedderConfig{
+				BaseURL: cfg.ContextEngine.VoyageBaseURL,
+				APIKey:  cfg.ContextEngine.VoyageAPIKey,
+				Model:   cfg.ContextEngine.VoyageEmbedModel,
+			})
+		}
+		if pgReranker == nil {
+			pgReranker = embed.NewVoyageReranker(embed.VoyageRerankerConfig{
+				BaseURL: cfg.ContextEngine.VoyageBaseURL,
+				APIKey:  cfg.ContextEngine.VoyageAPIKey,
+				Model:   cfg.ContextEngine.VoyageRerankModel,
+				Timeout: cfg.ContextEngine.RerankTimeout,
+			})
+		}
+	}
+
+	ingestWorker := ingest.NewWorker(ingest.WorkerConfig{
+		Pool:       pgs.Pool(),
+		Queue:      ingestQueue,
+		GraphStore: graphStore,
+		Embedder:   pgEmbedder,
+		Logger:     opts.Logger,
+	})
+	contextEngine := search.NewEngine(search.EngineConfig{
+		Pool:            pgs.Pool(),
+		GraphStore:      graphStore,
+		Embedder:        pgEmbedder,
+		Reranker:        pgReranker,
+		CutoffThreshold: cfg.ContextEngine.ContextConfidenceCutoff,
+		RerankTimeout:   cfg.ContextEngine.RerankTimeout,
+		Logger:          opts.Logger,
+	})
+
 	h := api.New(api.Options{
-		Token:   cfg.Token,
-		Actors:  persisted,
-		Version: opts.Version,
-		Release: opts.Release,
-		Logger:  opts.Logger,
-		PGStore: pgs,
-		Web:     web,
+		Token:         cfg.Token,
+		Actors:        persisted,
+		Version:       opts.Version,
+		Release:       opts.Release,
+		Logger:        opts.Logger,
+		PGStore:       pgs,
+		GraphStore:    graphStore,
+		IngestQueue:   ingestQueue,
+		ContextEngine: contextEngine,
+		Web:           web,
 	})
 	return &Server{
-		cfg:     cfg,
-		opts:    opts,
-		pgStore: pgs,
+		cfg:          cfg,
+		opts:         opts,
+		pgStore:      pgs,
+		ingestQueue:  ingestQueue,
+		ingestWorker: ingestWorker,
 		http: &http.Server{
 			Handler:           h,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -237,6 +295,9 @@ func (s *Server) startBackground(ctx context.Context) {
 		s.bg.Go(func() { s.embedder.Run(ctx) })
 	} else if s.store != nil {
 		s.opts.Logger.Info("semantic search disabled: AGB_EMBEDDING_API_KEY is empty")
+	}
+	if s.ingestWorker != nil {
+		s.bg.Go(func() { _ = s.ingestWorker.Run(ctx) })
 	}
 }
 

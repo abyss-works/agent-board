@@ -4,6 +4,7 @@ package pg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -455,9 +456,12 @@ type UpsertEdgeInput struct {
 
 // CandidateFilter narrows candidate graph edge queries.
 type CandidateFilter struct {
-	Project string
-	Kind    model.EdgeKind
-	Limit   int
+	Project    string
+	Kind       model.EdgeKind
+	SourceType model.GraphNodeType
+	SourceID   int64
+	Limit      int
+	Offset     int
 }
 
 // EdgeCandidate enriches a candidate Edge with display metadata.
@@ -467,25 +471,29 @@ type EdgeCandidate struct {
 	TargetKeyOrName string `json:"target_key_or_name,omitempty"`
 }
 
-// ExpandOptions configures 1-hop neighborhood expansion.
+// ExpandOptions configures neighborhood expansion.
 type ExpandOptions struct {
-	IncludeContent bool
-	MaxPerSeed     int
+	IncludeContent  bool
+	MaxHops         int
+	MaxPerSeed      int
+	MaxContentRunes int
 }
 
-// NeighborSummary describes a 1-hop neighbor connected to a seed node.
+// NeighborSummary describes a neighbor connected to a seed node.
 type NeighborSummary struct {
-	EdgeID    int64               `json:"edge_id"`
-	Direction string              `json:"direction"`
-	Kind      model.EdgeKind      `json:"kind"`
-	Origin    model.EdgeOrigin    `json:"origin"`
-	Status    model.EdgeStatus    `json:"status"`
-	NodeType  model.GraphNodeType `json:"node_type"`
-	NodeID    int64               `json:"node_id"`
-	KeyOrName string              `json:"key_or_name"`
-	Title     string              `json:"title"`
-	Summary   string              `json:"summary"`
-	Content   *string             `json:"content"`
+	EdgeID     int64               `json:"edge_id"`
+	Direction  string              `json:"direction"`
+	Kind       model.EdgeKind      `json:"kind"`
+	Origin     model.EdgeOrigin    `json:"origin"`
+	Status     model.EdgeStatus    `json:"status"`
+	NodeType   model.GraphNodeType `json:"node_type"`
+	NodeID     int64               `json:"node_id"`
+	KeyOrName  string              `json:"key_or_name"`
+	Title      string              `json:"title"`
+	NodeStatus string              `json:"node_status,omitempty"`
+	Summary    string              `json:"summary"`
+	Content    *string             `json:"content"`
+	Hop        int                 `json:"hop,omitempty"`
 }
 
 // ReadyFilter narrows deterministic ready-queue queries.
@@ -495,6 +503,7 @@ type ReadyFilter struct {
 	Label          string
 	IncludeClaimed bool
 	Limit          int
+	Offset         int
 }
 
 // ReadyIssue is an executable issue returned by the ready queue.
@@ -613,16 +622,40 @@ type Reranker interface {
 
 // --- ContextEngine shared contract ---
 
+// ExpandHops configures graph neighborhood expansion depth. In JSON it accepts
+// either a boolean (false -> 0, true -> 1) or an integer hop depth (0..2).
+type ExpandHops int
+
+// UnmarshalJSON parses either a boolean or an integer hop depth.
+func (e *ExpandHops) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		if b {
+			*e = 1
+		} else {
+			*e = 0
+		}
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*e = ExpandHops(n)
+		return nil
+	}
+	return errors.New("expand_hops must be a boolean or integer")
+}
+
 // ContextQueryRequest configures a single-call context retrieval query.
 type ContextQueryRequest struct {
-	Query            string   `json:"query"`
-	Project          string   `json:"project,omitempty"`
-	IncludeGlobal    *bool    `json:"include_global,omitempty"`
-	SourceTypes      []string `json:"source_types,omitempty"`
-	MaxResults       int      `json:"max_results,omitempty"`
-	ConfidenceCutoff *float64 `json:"confidence_cutoff,omitempty"`
-	ExpandHops       bool     `json:"expand_hops,omitempty"`
-	IncludeArchived  bool     `json:"include_archived,omitempty"`
+	Query             string     `json:"query"`
+	Project           string     `json:"project,omitempty"`
+	IncludeGlobal     *bool      `json:"include_global,omitempty"`
+	SourceTypes       []string   `json:"source_types,omitempty"`
+	MaxResults        int        `json:"max_results,omitempty"`
+	ConfidenceCutoff  *float64   `json:"confidence_cutoff,omitempty"`
+	ExpandHops        ExpandHops `json:"expand_hops,omitempty"`
+	IncludeArchived   bool       `json:"include_archived,omitempty"`
+	IncludeSuperseded bool       `json:"include_superseded,omitempty"`
 }
 
 // ContextTiming records latency breakdown in milliseconds.
@@ -654,6 +687,10 @@ type ContextQueryResponse struct {
 	CutoffApplied   bool          `json:"cutoff_applied"`
 	CutoffThreshold float64       `json:"cutoff_threshold"`
 	ScoreGap12      float64       `json:"score_gap_1_2"`
+	ConfidenceGap   float64       `json:"confidence_gap"`
+	CacheHit        bool          `json:"cache_hit"`
+	Reranked        bool          `json:"reranked"`
+	FallbackUsed    bool          `json:"fallback_used"`
 	FallbackMode    string        `json:"fallback_mode"`
 	TimingMS        ContextTiming `json:"timing_ms"`
 	Items           []ContextItem `json:"items"`

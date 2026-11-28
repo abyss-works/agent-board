@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/wsk0715/agent-board/internal/graph"
+	"github.com/wsk0715/agent-board/internal/ingest"
 	"github.com/wsk0715/agent-board/internal/model"
 	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
@@ -72,6 +74,15 @@ func (h *handler) registerPGRoutes(mux *http.ServeMux) {
 		}
 		recByPart[""](w, r)
 	})
+
+	// Context retrieval, ready queue, and graph edge review
+	route(mux, "/v1/context/query", methods{"POST": h.pgContextQuery})
+	route(mux, "/v1/projects/{key}/ready", methods{"GET": h.pgReadyIssues})
+	route(mux, "/v1/edges", methods{"POST": h.pgCreateEdge})
+	route(mux, "/v1/edges/candidates", methods{"GET": h.pgListEdgeCandidates})
+	route(mux, "/v1/edges/{id}", methods{"DELETE": h.pgRemoveEdge})
+	route(mux, "/v1/edges/{id}/confirm", methods{"POST": h.pgConfirmEdge})
+	route(mux, "/v1/edges/{id}/reject", methods{"POST": h.pgRejectEdge})
 
 	// Sessions, messages, events, devices, tokens
 	route(mux, "/v1/sessions", methods{"GET": h.pgListSessions, "POST": h.pgStartSession})
@@ -162,6 +173,8 @@ func (h *handler) pgStoreError(r *http.Request, err error) *apiError {
 			Code:    "edge_already_decided",
 			Message: "이미 결정 처리된 간선입니다.",
 		}
+	case errors.Is(err, graph.ErrCycle):
+		return conflict("cycle", "간선 관계가 순환합니다.")
 	case errors.As(err, &cerr):
 		return &apiError{
 			Status:  http.StatusConflict,
@@ -1104,8 +1117,8 @@ func (h *handler) pgReleaseClaim(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) pgUpsertSpec(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	_ = parseBool(q, "wait")
-	_ = q.intRange("wait_timeout_ms", 15000, 100, 30000)
+	waitParam := parseBool(q, "wait")
+	waitTimeoutMS := q.intRange("wait_timeout_ms", 15000, 100, 30000)
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
 		return
@@ -1133,25 +1146,48 @@ func (h *handler) pgUpsertSpec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
+
+	ingestStatus := string(res.IngestStatus)
+	supersedesCandidates := []pgstore.SupersedesCandidate{}
+	if waitParam != nil && *waitParam && res.IngestJobID > 0 {
+		wRes, wErr := h.waitIngestJob(r.Context(), res.IngestJobID, time.Duration(waitTimeoutMS)*time.Millisecond)
+		if wErr != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			h.opts.Logger.Warn("spec ingest wait failed", "job_id", res.IngestJobID, "err", wErr)
+		} else {
+			if wRes.TimedOut {
+				ingestStatus = "timeout"
+			} else {
+				ingestStatus = string(wRes.Status)
+			}
+			if wRes.SupersedesCandidates != nil {
+				supersedesCandidates = wRes.SupersedesCandidates
+			}
+		}
+	}
+
 	status := http.StatusOK
 	if res.Created {
 		status = http.StatusCreated
 		w.Header().Set("Location", "/v1/projects/"+res.Spec.Project+"/specs/"+res.Spec.Slug)
 	}
 	writeJSON(w, status, map[string]any{
-		"id":                  res.Spec.ID,
-		"project":             res.Spec.Project,
-		"slug":                res.Spec.Slug,
-		"kind":                res.Spec.Kind,
-		"title":               res.Spec.Title,
-		"tags":                res.Spec.Tags,
-		"current_revision_no": res.Spec.CurrentRevisionNo,
-		"sha256":              res.Spec.SHA256,
-		"size_bytes":          res.Spec.SizeBytes,
-		"archived":            res.Spec.Archived,
-		"ingest_job_id":       res.IngestJobID,
-		"ingest_status":       res.IngestStatus,
-		"updated_at":          res.Spec.UpdatedAt,
+		"id":                    res.Spec.ID,
+		"project":               res.Spec.Project,
+		"slug":                  res.Spec.Slug,
+		"kind":                  res.Spec.Kind,
+		"title":                 res.Spec.Title,
+		"tags":                  res.Spec.Tags,
+		"current_revision_no":   res.Spec.CurrentRevisionNo,
+		"sha256":                res.Spec.SHA256,
+		"size_bytes":            res.Spec.SizeBytes,
+		"archived":              res.Spec.Archived,
+		"ingest_job_id":         res.IngestJobID,
+		"ingest_status":         ingestStatus,
+		"supersedes_candidates": supersedesCandidates,
+		"updated_at":            res.Spec.UpdatedAt,
 	})
 }
 
@@ -1230,8 +1266,8 @@ func (h *handler) pgSetSpecArchived(w http.ResponseWriter, r *http.Request, arch
 
 func (h *handler) pgCreateRecord(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	_ = parseBool(q, "wait")
-	_ = q.intRange("wait_timeout_ms", 15000, 100, 30000)
+	waitParam := parseBool(q, "wait")
+	waitTimeoutMS := q.intRange("wait_timeout_ms", 15000, 100, 30000)
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
 		return
@@ -1273,6 +1309,31 @@ func (h *handler) pgCreateRecord(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
+
+	ingestStatus := string(res.IngestStatus)
+	supersedesCandidates := res.SupersedesCandidates
+	if supersedesCandidates == nil {
+		supersedesCandidates = []pgstore.SupersedesCandidate{}
+	}
+	if waitParam != nil && *waitParam && res.IngestJobID > 0 {
+		wRes, wErr := h.waitIngestJob(r.Context(), res.IngestJobID, time.Duration(waitTimeoutMS)*time.Millisecond)
+		if wErr != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			h.opts.Logger.Warn("record ingest wait failed", "job_id", res.IngestJobID, "err", wErr)
+		} else {
+			if wRes.TimedOut {
+				ingestStatus = "timeout"
+			} else {
+				ingestStatus = string(wRes.Status)
+			}
+			if wRes.SupersedesCandidates != nil {
+				supersedesCandidates = wRes.SupersedesCandidates
+			}
+		}
+	}
+
 	status := http.StatusOK
 	if res.Created {
 		status = http.StatusCreated
@@ -1289,10 +1350,19 @@ func (h *handler) pgCreateRecord(w http.ResponseWriter, r *http.Request) {
 		"size_bytes":            res.Record.SizeBytes,
 		"archived":              res.Record.Archived,
 		"ingest_job_id":         res.IngestJobID,
-		"ingest_status":         res.IngestStatus,
-		"supersedes_candidates": res.SupersedesCandidates,
+		"ingest_status":         ingestStatus,
+		"supersedes_candidates": supersedesCandidates,
 		"created_at":            res.Record.CreatedAt,
 	})
+}
+
+func (h *handler) waitIngestJob(ctx context.Context, jobID int64, timeout time.Duration) (ingest.WaitResult, error) {
+	if h.ingestQueue != nil {
+		return h.ingestQueue.Wait(ctx, jobID, timeout)
+	}
+	q := ingest.NewQueue(h.pgStore.Pool(), ingest.QueueConfig{})
+	defer q.Close()
+	return q.Wait(ctx, jobID, timeout)
 }
 
 func (h *handler) pgGetRecord(w http.ResponseWriter, r *http.Request) {
@@ -2059,4 +2129,348 @@ func (h *handler) pgRevokeCurrentToken(w http.ResponseWriter, r *http.Request) {
 	}
 	h.broker.DisconnectToken(tok.ID)
 	writeJSON(w, http.StatusOK, tok)
+}
+
+// --- Context Retrieval, Ready Queue, and Graph Edges ---
+
+var pgContextQueryFields = map[string]bool{
+	"query":              true,
+	"project":            true,
+	"include_global":     true,
+	"source_types":       true,
+	"max_results":        true,
+	"limit":              true,
+	"confidence_cutoff":  true,
+	"expand_hops":        true,
+	"include_archived":   true,
+	"include_superseded": true,
+}
+
+func (h *handler) pgContextQuery(w http.ResponseWriter, r *http.Request) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	b, aerr := readBody(w, r, pgContextQueryFields)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var (
+		req      pgstore.ContextQueryRequest
+		limitVal int
+		hasMax   bool
+		hasLimit bool
+	)
+	if aerr := firstError(
+		decodeField(b, "query", &req.Query),
+		decodeField(b, "project", &req.Project),
+		decodeOptional(b, "include_global", &req.IncludeGlobal),
+		decodeList(b, "source_types", &req.SourceTypes),
+		decodeOptional(b, "confidence_cutoff", &req.ConfidenceCutoff),
+		decodeField(b, "expand_hops", &req.ExpandHops),
+		decodeField(b, "include_archived", &req.IncludeArchived),
+		decodeField(b, "include_superseded", &req.IncludeSuperseded),
+	); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	if p, n, err := field(b, "max_results", &req.MaxResults); err != nil {
+		writeError(w, err)
+		return
+	} else if p {
+		if n {
+			writeError(w, validationFailed([]Detail{{Field: "max_results", Reason: "invalid_value", Message: "null일 수 없습니다."}}))
+			return
+		}
+		hasMax = true
+	}
+	if p, n, err := field(b, "limit", &limitVal); err != nil {
+		writeError(w, err)
+		return
+	} else if p {
+		if n {
+			writeError(w, validationFailed([]Detail{{Field: "limit", Reason: "invalid_value", Message: "null일 수 없습니다."}}))
+			return
+		}
+		hasLimit = true
+	}
+	if !hasMax && hasLimit {
+		req.MaxResults = limitVal
+	}
+
+	res, err := h.contextEngine.Query(r.Context(), req)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) pgReadyIssues(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	f := pgstore.ReadyFilter{
+		EpicKey: q.one("epic"),
+		Label:   q.one("label"),
+		Limit:   q.limit(20, 100),
+		Offset:  q.offset(),
+	}
+	if v := q.one("milestone_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			q.add("milestone_id", "1 이상의 정수여야 합니다.")
+		} else {
+			f.MilestoneID = &id
+		}
+	}
+	if inc := parseBool(q, "include_claimed"); inc != nil {
+		f.IncludeClaimed = *inc
+	}
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+
+	projKey, items, total, err := h.graphStore.ReadyIssuesByProjectKey(r.Context(), r.PathValue("key"), f)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project": projKey,
+		"items":   items,
+		"total":   total,
+		"limit":   f.Limit,
+		"offset":  f.Offset,
+	})
+}
+
+func (h *handler) pgListEdgeCandidates(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	f := pgstore.CandidateFilter{
+		Project: q.one("project"),
+		Limit:   q.limit(50, 200),
+		Offset:  q.offset(),
+	}
+	if f.Project != "" && !model.ValidProjectKey(f.Project) {
+		q.add("project", "프로젝트 키 형식이 아닙니다.")
+	}
+	if v := q.one("kind"); v != "" {
+		k, ok := model.ParseEdgeKind(v)
+		if !ok {
+			q.add("kind", "supersedes, about, depends_on, related 중 하나여야 합니다.")
+		} else {
+			f.Kind = k
+		}
+	}
+	if v := q.one("source_type"); v != "" {
+		st, ok := model.ParseGraphNodeType(v)
+		if !ok {
+			q.add("source_type", "issue, spec, record, epic 중 하나여야 합니다.")
+		} else {
+			f.SourceType = st
+		}
+	}
+	if v := q.one("source_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			q.add("source_id", "1 이상의 정수여야 합니다.")
+		} else {
+			f.SourceID = id
+		}
+	}
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+
+	items, total, err := h.graphStore.ListCandidatesPaged(r.Context(), f)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
+}
+
+var pgCreateEdgeFields = map[string]bool{
+	"project":                true,
+	"source_type":            true,
+	"source_id":              true,
+	"target_type":            true,
+	"target_id":              true,
+	"unresolved_target_text": true,
+	"kind":                   true,
+	"confidence":             true,
+	"evidence":               true,
+}
+
+func (h *handler) pgCreateEdge(w http.ResponseWriter, r *http.Request) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	b, aerr := readBody(w, r, pgCreateEdgeFields)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var (
+		projectKey     string
+		sourceTypeRaw  string
+		sourceID       int64
+		targetTypeRaw  *string
+		targetID       *int64
+		unresolvedText *string
+		kindRaw        string
+		confidence     *float64
+		evidence       *string
+	)
+	if aerr := firstError(
+		decodeField(b, "project", &projectKey),
+		decodeField(b, "source_type", &sourceTypeRaw),
+		decodeField(b, "source_id", &sourceID),
+		decodeOptional(b, "target_type", &targetTypeRaw),
+		decodeOptional(b, "target_id", &targetID),
+		decodeOptional(b, "unresolved_target_text", &unresolvedText),
+		decodeField(b, "kind", &kindRaw),
+		decodeOptional(b, "confidence", &confidence),
+		decodeOptional(b, "evidence", &evidence),
+	); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+
+	var details []Detail
+	srcType, ok := model.ParseGraphNodeType(sourceTypeRaw)
+	if !ok {
+		details = append(details, Detail{Field: "source_type", Reason: "invalid_value", Message: "issue, spec, record, epic 중 하나여야 합니다."})
+	}
+	if sourceID < 1 {
+		details = append(details, Detail{Field: "source_id", Reason: "invalid_value", Message: "1 이상의 정수여야 합니다."})
+	}
+	kind, ok := model.ParseEdgeKind(kindRaw)
+	if !ok {
+		details = append(details, Detail{Field: "kind", Reason: "invalid_value", Message: "supersedes, about, depends_on, related 중 하나여야 합니다."})
+	}
+
+	var targetRef *pgstore.NodeRef
+	hasTargetPair := targetTypeRaw != nil || targetID != nil
+	hasUnresolved := unresolvedText != nil && strings.TrimSpace(*unresolvedText) != ""
+	if hasTargetPair == hasUnresolved {
+		details = append(details, Detail{Field: "target", Reason: "invalid_value", Message: "target_type/target_id 또는 unresolved_target_text 중 하나만 지정해야 합니다."})
+	} else if hasTargetPair {
+		if targetTypeRaw == nil || targetID == nil {
+			details = append(details, Detail{Field: "target", Reason: "invalid_value", Message: "target_type과 target_id를 함께 지정해야 합니다."})
+		} else {
+			tt, ok := model.ParseGraphNodeType(*targetTypeRaw)
+			if !ok {
+				details = append(details, Detail{Field: "target_type", Reason: "invalid_value", Message: "issue, spec, record, epic 중 하나여야 합니다."})
+			}
+			if *targetID < 1 {
+				details = append(details, Detail{Field: "target_id", Reason: "invalid_value", Message: "1 이상의 정수여야 합니다."})
+			}
+			if ok && *targetID >= 1 {
+				targetRef = &pgstore.NodeRef{Type: tt, ID: *targetID}
+			}
+		}
+	}
+	if confidence != nil && (*confidence < 0 || *confidence > 1) {
+		details = append(details, Detail{Field: "confidence", Reason: "invalid_value", Message: "0.0~1.0 사이여야 합니다."})
+	}
+	if len(details) > 0 {
+		writeError(w, validationFailed(details))
+		return
+	}
+
+	var projectID int64
+	if strings.TrimSpace(projectKey) != "" {
+		proj, err := h.pgStore.GetProject(r.Context(), projectKey)
+		if err != nil {
+			writeError(w, h.pgStoreError(r, err))
+			return
+		}
+		projectID = proj.ID
+	} else {
+		pid, err := h.graphStore.ResolveNodeProjectID(r.Context(), pgstore.NodeRef{Type: srcType, ID: sourceID})
+		if err != nil {
+			writeError(w, h.pgStoreError(r, err))
+			return
+		}
+		projectID = pid
+	}
+
+	edge, err := h.graphStore.UpsertExplicitEdge(r.Context(), pgstore.UpsertEdgeInput{
+		ProjectID:            projectID,
+		Source:               pgstore.NodeRef{Type: srcType, ID: sourceID},
+		Target:               targetRef,
+		UnresolvedTargetText: unresolvedText,
+		Kind:                 kind,
+		Confidence:           confidence,
+		Evidence:             evidence,
+	})
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	w.Header().Set("Location", fmt.Sprintf("/v1/edges/%d", edge.ID))
+	writeJSON(w, http.StatusCreated, edge)
+}
+
+func edgeIDPath(r *http.Request) (int64, *apiError) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		return 0, badRequest("간선 ID는 1 이상의 정수여야 합니다.", Detail{Field: "id", Reason: "invalid_path"})
+	}
+	return id, nil
+}
+
+func (h *handler) pgRemoveEdge(w http.ResponseWriter, r *http.Request) {
+	id, aerr := edgeIDPath(r)
+	if aerr == nil {
+		aerr = newQuery(r).finish()
+	}
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	edge, err := h.graphStore.RemoveEdge(r.Context(), TraceFrom(r.Context()).Actor, id)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, edge)
+}
+
+func (h *handler) pgConfirmEdge(w http.ResponseWriter, r *http.Request) {
+	id, aerr := edgeIDPath(r)
+	if aerr == nil {
+		aerr = newQuery(r).finish()
+	}
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	edge, err := h.graphStore.ConfirmEdge(r.Context(), TraceFrom(r.Context()).Actor, id)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, edge)
+}
+
+func (h *handler) pgRejectEdge(w http.ResponseWriter, r *http.Request) {
+	id, aerr := edgeIDPath(r)
+	if aerr == nil {
+		aerr = newQuery(r).finish()
+	}
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	edge, err := h.graphStore.RejectEdge(r.Context(), TraceFrom(r.Context()).Actor, id)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, edge)
 }

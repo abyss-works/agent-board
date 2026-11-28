@@ -17,8 +17,10 @@ import (
 // DefaultDBMaxConns is the default PostgreSQL connection pool size when
 // AGB_DATABASE_URL is configured and AGB_DB_MAX_CONNS is unset.
 const (
-	DefaultDBMaxConns = 16
-	MaxDBMaxConns     = 1000
+	DefaultDBMaxConns              = 16
+	MaxDBMaxConns                  = 1000
+	DefaultContextConfidenceCutoff = 0.15
+	DefaultRerankTimeout           = 1500 * time.Millisecond
 )
 
 // Config is the complete server configuration.
@@ -33,11 +35,27 @@ type Config struct {
 	Backup      Backup
 	// Embedding configures the search by meaning; it is off without an API key.
 	Embedding Embedding
+	// ContextEngine configures PostgreSQL hybrid retrieval, embedding, and reranking.
+	ContextEngine ContextEngine
 	// SeedTokens are per-actor secrets a local server registers at startup,
 	// so agent actors can authenticate without a browser login. Empty for a
 	// remote server.
 	SeedTokens map[string]string
 }
+
+// ContextEngine configures optional external model adapters and retrieval
+// tuning for the PostgreSQL context query engine.
+type ContextEngine struct {
+	VoyageAPIKey            string
+	VoyageBaseURL           string
+	VoyageEmbedModel        string
+	VoyageRerankModel       string
+	ContextConfidenceCutoff float64
+	RerankTimeout           time.Duration
+}
+
+// VoyageEnabled reports whether Voyage AI credentials are configured.
+func (c ContextEngine) VoyageEnabled() bool { return c.VoyageAPIKey != "" }
 
 // UsePostgres reports whether the server is configured to run on PostgreSQL.
 func (c *Config) UsePostgres() bool { return c.DatabaseURL != "" }
@@ -104,6 +122,14 @@ func Load(getenv func(string) string) (*Config, error) {
 			QueryPrefix:  strings.ReplaceAll(getenv("AGB_EMBEDDING_QUERY_PREFIX"), `\n`, "\n"),
 			Interval:     time.Minute,
 			QueryTimeout: 10 * time.Second,
+		},
+		ContextEngine: ContextEngine{
+			VoyageAPIKey:            strings.TrimSpace(getenv("AGB_VOYAGE_API_KEY")),
+			VoyageBaseURL:           strings.TrimSpace(getenv("AGB_VOYAGE_BASE_URL")),
+			VoyageEmbedModel:        strings.TrimSpace(getenv("AGB_VOYAGE_EMBED_MODEL")),
+			VoyageRerankModel:       strings.TrimSpace(getenv("AGB_VOYAGE_RERANK_MODEL")),
+			ContextConfidenceCutoff: DefaultContextConfidenceCutoff,
+			RerankTimeout:           DefaultRerankTimeout,
 		},
 	}
 	if cfg.Addr == "" {
@@ -205,6 +231,30 @@ func Load(getenv func(string) string) (*Config, error) {
 			errs = append(errs, errors.New("AGB_EMBEDDING_MODEL is required when AGB_EMBEDDING_API_KEY is set"))
 		}
 	}
+	if strings.ContainsAny(cfg.ContextEngine.VoyageAPIKey, "\r\n\x00") {
+		errs = append(errs, errors.New("AGB_VOYAGE_API_KEY must not contain control characters"))
+	}
+	if cfg.ContextEngine.VoyageBaseURL != "" {
+		if err := validateHTTPBaseURL("AGB_VOYAGE_BASE_URL", cfg.ContextEngine.VoyageBaseURL); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if v := strings.TrimSpace(getenv("AGB_CONTEXT_CONFIDENCE_CUTOFF")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f > 1 || f != f {
+			errs = append(errs, fmt.Errorf("AGB_CONTEXT_CONFIDENCE_CUTOFF must be a number between 0 and 1, got %q", previewValue(v)))
+		} else {
+			cfg.ContextEngine.ContextConfidenceCutoff = f
+		}
+	}
+	if v := strings.TrimSpace(getenv("AGB_RERANK_TIMEOUT")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("AGB_RERANK_TIMEOUT must be a positive duration, got %q", previewValue(v)))
+		} else {
+			cfg.ContextEngine.RerankTimeout = d
+		}
+	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -270,6 +320,31 @@ func validateDatabaseURL(raw string) error {
 	}
 	if u.Host == "" && u.Query().Get("host") == "" {
 		return errors.New("AGB_DATABASE_URL must include a database host")
+	}
+	return nil
+}
+
+// validateHTTPBaseURL checks that raw is a valid http:// or https:// base URL
+// without userinfo, query parameters, or fragments. Error messages never echo
+// raw values or credentials.
+func validateHTTPBaseURL(envName, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid http:// or https:// URL", envName)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return fmt.Errorf("%s must use the http:// or https:// scheme", envName)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s must include a host", envName)
+	}
+	if u.User != nil {
+		return fmt.Errorf("%s must not contain userinfo", envName)
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("%s must not contain query parameters or fragments", envName)
 	}
 	return nil
 }
