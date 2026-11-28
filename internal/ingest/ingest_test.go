@@ -308,6 +308,50 @@ func TestSemanticChunkerBoundsHugeTableHeaderAndUnterminatedFence(t *testing.T) 
 	}
 }
 
+func TestSemanticChunkerBoundsHugeHeadingStackAndMaxChunks(t *testing.T) {
+	chunker := NewSemanticChunker(ChunkerConfig{MaxChunkRunes: 1200})
+
+	var buf strings.Builder
+	buf.Grow(1024*1024 + 50000*6)
+	buf.WriteString("# ")
+	buf.WriteString(strings.Repeat("H", 1024*1024))
+	buf.WriteByte('\n')
+	for i := 0; i < 50000; i++ {
+		buf.WriteString("## x\n")
+	}
+	input := buf.String()
+
+	start := time.Now()
+	chunks := chunker.Chunk(ChunkInput{
+		Title:      "Heading Stress",
+		ProjectKey: "DEMO",
+		Kind:       "spec",
+		Body:       input,
+	})
+	elapsed := time.Since(start)
+
+	if len(chunks) == 0 || len(chunks) > maxChunksPerDocument {
+		t.Fatalf("chunk count = %d, want 1..%d", len(chunks), maxChunksPerDocument)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("chunking 1 MiB H1 + 50,000 headings took %v, expected fast bounded execution", elapsed)
+	}
+
+	var totalBytes int
+	for i, ch := range chunks {
+		if spRunes := len([]rune(ch.SectionPath)); spRunes > maxBreadcrumbTotalRunes {
+			t.Fatalf("chunk[%d].SectionPath rune len = %d, want <= %d", i, spRunes, maxBreadcrumbTotalRunes)
+		}
+		if hpRunes := len([]rune(ch.HeaderPrefix)); hpRunes > maxBreadcrumbTotalRunes {
+			t.Fatalf("chunk[%d].HeaderPrefix rune len = %d, want <= %d", i, hpRunes, maxBreadcrumbTotalRunes)
+		}
+		totalBytes += len(ch.SectionPath) + len(ch.HeaderPrefix) + len(ch.ChunkText) + len(ch.SearchText)
+	}
+	if maxAllowed := len(input) * 4; totalBytes > maxAllowed {
+		t.Fatalf("total chunk bytes = %d exceeds safe bound %d (input=%d)", totalBytes, maxAllowed, len(input))
+	}
+}
+
 // --- Real PostgreSQL 17 + PGroonga + pgvector Integration Tests ---
 
 // Test 1: Poison job dead-letter isolation with zero Head-of-Line Blocking.

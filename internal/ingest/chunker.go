@@ -17,6 +17,7 @@ const (
 	maxRepeatedPrefixCapRunes = 256
 	maxBreadcrumbPartRunes    = 128
 	maxBreadcrumbTotalRunes   = 256
+	maxChunksPerDocument      = 2048
 )
 
 // ChunkerConfig configures SemanticChunker behavior.
@@ -113,9 +114,15 @@ func (c *SemanticChunker) Chunk(in ChunkInput) []SemanticChunk {
 	var out []SemanticChunk
 
 	for _, sec := range sections {
+		if len(out) >= maxChunksPerDocument {
+			break
+		}
 		headerPrefix := buildBreadcrumb(in.Title, in.ProjectKey, in.Kind, sec.sectionPath)
 		pieces := packBlocks(sec.headingLine, sec.blocks, c.maxRunes)
 		for _, text := range pieces {
+			if len(out) >= maxChunksPerDocument {
+				break
+			}
 			text = strings.TrimSpace(text)
 			if text == "" {
 				continue
@@ -228,10 +235,14 @@ func parseMarkdownSections(body string) []mdSection {
 		curSection = &mdSection{}
 	)
 
-	pushSection := func() {
+	pushSection := func() bool {
 		if len(curSection.blocks) > 0 || curSection.headingLine != "" {
+			if len(sections) >= maxChunksPerDocument {
+				return false
+			}
 			sections = append(sections, *curSection)
 		}
+		return len(sections) < maxChunksPerDocument
 	}
 
 	sectionPathFromStack := func() string {
@@ -242,7 +253,7 @@ func parseMarkdownSections(body string) []mdSection {
 		for i, f := range stack {
 			names[i] = f.text
 		}
-		return strings.Join(names, " > ")
+		return truncateChunkRunes(strings.Join(names, " > "), maxBreadcrumbTotalRunes)
 	}
 
 	var proseBuf []string
@@ -284,9 +295,11 @@ func parseMarkdownSections(body string) []mdSection {
 		// Heading line starts a new semantic section.
 		if m := mdHeadingLineRE.FindStringSubmatch(trimmed); m != nil {
 			flushProse()
-			pushSection()
+			if !pushSection() {
+				return sections
+			}
 			level := len(m[1])
-			title := cleanInlineMarkdown(m[2])
+			title := truncateChunkRunes(cleanInlineMarkdown(m[2]), maxBreadcrumbPartRunes)
 			for len(stack) > 0 && stack[len(stack)-1].level >= level {
 				stack = stack[:len(stack)-1]
 			}
