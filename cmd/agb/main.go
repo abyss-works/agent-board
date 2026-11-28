@@ -41,6 +41,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return 0
 	case "serve":
 		return serve(stdout, stderr, args[1:], getenv)
+	case "migrate":
+		return runMigrate(stdout, stderr, args[1:], getenv)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
