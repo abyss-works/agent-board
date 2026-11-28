@@ -35,6 +35,8 @@ type Options struct {
 	Release     string
 	Logger      *slog.Logger
 	BackupStore backup.ObjectStore
+	// PGDumpBin overrides the pg_dump executable of the PostgreSQL backup.
+	PGDumpBin string
 	// PGEmbedder and PGReranker optionally override the Voyage AI adapters in
 	// PostgreSQL mode (primarily for tests and custom wiring).
 	PGEmbedder pgstore.Embedder
@@ -291,6 +293,9 @@ func (s *Server) startBackground(ctx context.Context) {
 	} else if s.store != nil {
 		s.opts.Logger.Info("backup disabled: AGB_BACKUP_BUCKET is empty")
 	}
+	if s.pgStore != nil {
+		s.startPGBackup(ctx)
+	}
 	if s.embedder != nil {
 		s.bg.Go(func() { s.embedder.Run(ctx) })
 	} else if s.store != nil {
@@ -299,6 +304,39 @@ func (s *Server) startBackground(ctx context.Context) {
 	if s.ingestWorker != nil {
 		s.bg.Go(func() { _ = s.ingestWorker.Run(ctx) })
 	}
+}
+
+// startPGBackup launches the pg_dump backup runner in PostgreSQL mode when a
+// bucket is configured.
+func (s *Server) startPGBackup(ctx context.Context) {
+	if !s.cfg.Backup.Enabled() {
+		s.opts.Logger.Info("backup disabled: AGB_BACKUP_BUCKET is empty")
+		return
+	}
+	if s.opts.BackupStore == nil {
+		s.opts.Logger.Error("backup disabled: no object store configured")
+		return
+	}
+	src, err := backup.NewPGSource(s.cfg.DatabaseURL)
+	if err != nil {
+		s.opts.Logger.Error("backup disabled", "err", err.Error())
+		return
+	}
+	src.DumpBin = s.opts.PGDumpBin
+	tmp := os.TempDir()
+	if s.cfg.DataDir != "" {
+		tmp = s.cfg.DataDir
+	}
+	r := &backup.Runner{
+		Store:     s.opts.BackupStore,
+		Source:    src,
+		Prefix:    s.cfg.Backup.Prefix,
+		Interval:  s.cfg.Backup.Interval,
+		Retention: s.cfg.Backup.Retention,
+		TempDir:   filepath.Join(tmp, "backup-tmp"),
+		Logger:    s.opts.Logger,
+	}
+	s.bg.Go(func() { r.Run(ctx) })
 }
 
 // Shutdown stops accepting connections, closes open SSE streams, waits for

@@ -17,6 +17,32 @@ ARG RELEASE=
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.release=${RELEASE}" -o /out/agb ./cmd/agb \
  && mkdir -p /out/data
 
+# PostgreSQL-mode runtime (build with --target runtime-pg). The server's backup runs pg_dump, so this image
+# carries the PostgreSQL 17 client. The default target below stays the distroless SQLite-mode image.
+FROM debian:bookworm-slim AS runtime-pg
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    install -d /usr/share/postgresql-common/pgdg; \
+    curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
+    . /etc/os-release; \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql-client-17; \
+    apt-get purge -y --auto-remove curl; \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
+COPY --from=build /out/agb /agb
+COPY --from=web /src/web/dist /web
+COPY --from=build --chown=65532:65532 /out/data /data
+ENV AGB_ADDR=0.0.0.0:3000 \
+    AGB_DATA_DIR=/data \
+    AGB_WEB_DIR=/web
+EXPOSE 3000
+VOLUME ["/data"]
+USER nonroot
+ENTRYPOINT ["/agb", "serve"]
+
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/agb /agb
 COPY --from=web /src/web/dist /web

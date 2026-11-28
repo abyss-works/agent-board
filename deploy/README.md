@@ -111,3 +111,19 @@ curl -fsS https://<서비스 도메인>/v1/health
 ```
 
 응답의 `version`이 배포한 태그와 같으면 새 이미지가 떠 있는 것이다.
+
+## PostgreSQL 모드 스택(전환 준비)
+
+`deploy/compose.pg.prod.yaml`은 PostgreSQL 모드 서버를 위한 별도 스택이다. SQLite 모드의 `compose.prod.yaml`과 볼륨 `agb-data`는 건드리지 않으므로, 되돌릴 때는 이 스택을 내리고 이전 구성을 다시 올린다.
+
+| 항목 | 내용 |
+|---|---|
+| 서비스 `pg` | `deploy/pg/Dockerfile`(PostgreSQL 17 + pgvector + PGroonga). 호스트 포트를 열지 않고 `agb` 서비스만 접속한다. 메모리 상한 1g. 데이터는 볼륨 `agb-pg-data`. |
+| 서비스 `agb` | 루트 `Dockerfile`의 `runtime-pg` 단계 이미지. 백업이 `pg_dump`를 실행하므로 PostgreSQL 17 클라이언트가 들어 있다. 기본 단계(distroless, SQLite 모드)와 별개다. 메모리 상한 512m. |
+| 환경 변수 | `AGB_PG_PASSWORD`(URL에 들어가므로 URL에 안전한 문자만), `AGB_TOKEN`, `AGB_ACTORS`, `AGB_IMAGE_TAG`, 선택 `AGB_VOYAGE_API_KEY`(없으면 키워드 검색만), `AGB_BACKUP_*`. 값은 배포 때 환경에서 읽고 파일에 적지 않는다. |
+| 백업 | `AGB_BACKUP_BUCKET`을 주면 한 시간마다(바뀐 것이 있을 때만) `pg_dump -Fc` 결과를 `<prefix>/agb-<시각>.pgdump`로 올리고 보존 기간이 지난 것을 지운다. 보존 기간 계산은 SQLite 스냅샷(`.db.gz`)과 같은 접두어 아래에서 함께 적용된다. |
+| 복원 | 객체를 내려받아 빈 데이터베이스에 `pg_restore --clean --if-exists --no-owner --dbname=<DB> < agb-<시각>.pgdump`. 확장(`vector`, `pgroonga`)은 아카이브가 만들므로 슈퍼유저 역할이 필요하다. |
+
+SQLite 데이터는 `agb migrate --source <SQLite 사본> --plan`으로 계획을 보고, `--target`(또는 `AGB_DATABASE_URL`)으로 적재한 뒤 검증 표가 모두 `PASS`인지 확인한다. 적재가 끝나면 서버가 `ingest_job`을 처리해 검색 색인을 채운다(`dead_letter`가 0인지 확인).
+
+전환 전에 확인할 것: PostgreSQL 모드 서버가 제공하는 API 범위가 SQLite 모드와 같지 않다(`/v1/activity`, `/v1/agenda`, `/v1/board`, `/v1/digest`, `/v1/documents`, `/v1/graph`, `/v1/labels`, `/v1/queue`, `/v1/search`, `/v1/templates`, `/v1/projects/{key}/topics|documents|overview|activity`, `/v1/issues/{key}/claims`는 404다). 이 경로를 쓰는 CLI 명령과 웹 화면은 PostgreSQL 모드에서 동작하지 않는다.

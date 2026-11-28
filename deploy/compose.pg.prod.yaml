@@ -1,0 +1,69 @@
+name: agb
+
+# PostgreSQL-mode stack. compose.prod.yaml (SQLite mode) stays as it is, so rolling back is
+# "stop this stack, start that one" on the untouched agb-data volume.
+#
+# Every secret is read from the environment at deploy time; nothing is written in this file.
+#   AGB_PG_PASSWORD   password of the database role agb (URL-safe characters only, it is placed in a URL)
+#   AGB_TOKEN, AGB_ACTORS            as in compose.prod.yaml
+#   AGB_VOYAGE_API_KEY               embeddings and reranking; leave empty to run keyword search only
+#   AGB_BACKUP_*                     object store of the pg_dump backups
+
+services:
+  pg:
+    # pgvector + PGroonga image, defined in deploy/pg/Dockerfile.
+    build:
+      context: ./pg
+    image: agb-pg17-pgroonga:${AGB_PG_IMAGE_TAG:-local}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agb
+      POSTGRES_DB: agb
+      POSTGRES_PASSWORD: ${AGB_PG_PASSWORD:?AGB_PG_PASSWORD is required}
+    volumes:
+      - agb-pg-data:/var/lib/postgresql/data
+    # PGroonga and the HNSW indexes need room; the upper bound is the planned 512Mi-1Gi range.
+    mem_limit: 1g
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agb -d agb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Never published on a host port: only the agb service reaches it.
+    expose:
+      - "5432"
+
+  agb:
+    # The PostgreSQL-mode image carries pg_dump for the backup (Dockerfile target runtime-pg).
+    build:
+      context: ..
+      target: runtime-pg
+    image: ghcr.io/abyss-works/agent-board:${AGB_IMAGE_TAG:?AGB_IMAGE_TAG is required}-pg
+    restart: unless-stopped
+    depends_on:
+      pg:
+        condition: service_healthy
+    ports:
+      - "${AGB_BIND:-127.0.0.1}:${AGB_PORT:-3000}:3000"
+    environment:
+      AGB_DATABASE_URL: postgres://agb:${AGB_PG_PASSWORD:?AGB_PG_PASSWORD is required}@pg:5432/agb?sslmode=disable
+      AGB_TOKEN: ${AGB_TOKEN:?AGB_TOKEN is required}
+      AGB_ACTORS: ${AGB_ACTORS:?AGB_ACTORS is required}
+      AGB_VOYAGE_API_KEY: ${AGB_VOYAGE_API_KEY:-}
+      AGB_VOYAGE_BASE_URL: ${AGB_VOYAGE_BASE_URL:-}
+      AGB_VOYAGE_EMBED_MODEL: ${AGB_VOYAGE_EMBED_MODEL:-}
+      AGB_VOYAGE_RERANK_MODEL: ${AGB_VOYAGE_RERANK_MODEL:-}
+      AGB_BACKUP_BUCKET: ${AGB_BACKUP_BUCKET:-}
+      AGB_BACKUP_ENDPOINT: ${AGB_BACKUP_ENDPOINT:-}
+      AGB_BACKUP_ACCESS_KEY_ID: ${AGB_BACKUP_ACCESS_KEY_ID:-}
+      AGB_BACKUP_SECRET_ACCESS_KEY: ${AGB_BACKUP_SECRET_ACCESS_KEY:-}
+      AGB_BACKUP_PREFIX: ${AGB_BACKUP_PREFIX:-}
+    volumes:
+      # Scratch space for the dump before it is uploaded.
+      - agb-data:/data
+    mem_limit: 512m
+
+volumes:
+  agb-pg-data:
+  agb-data:

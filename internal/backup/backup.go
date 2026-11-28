@@ -38,6 +38,14 @@ type Source interface {
 	FingerprintNow(ctx context.Context) (string, error)
 }
 
+// ArchiveSource is implemented by a Source whose snapshot is already a
+// compressed archive. The runner uploads such a snapshot as it is, under a
+// .pgdump key, instead of gzip-compressing it as a .db.gz SQLite file.
+type ArchiveSource interface {
+	Source
+	Archive() bool
+}
+
 // Runner performs one backup cycle per interval.
 type Runner struct {
 	Store     ObjectStore
@@ -63,11 +71,20 @@ type Result struct {
 
 const nameLayout = "20060102T1504Z"
 
-var nameRE = regexp.MustCompile(`^agb-(\d{8}T\d{4}Z)\.db\.gz$`)
+var nameRE = regexp.MustCompile(`^agb-(\d{8}T\d{4}Z)\.(?:db\.gz|pgdump)$`)
 
-// ObjectName is the object key for a snapshot taken at t.
+// ObjectName is the object key for a gzip-compressed SQLite snapshot taken at t.
 func ObjectName(prefix string, t time.Time) string {
-	return prefix + "/agb-" + t.UTC().Format(nameLayout) + ".db.gz"
+	return objectName(prefix, t, ".db.gz")
+}
+
+// PGObjectName is the object key for a pg_dump custom-format archive taken at t.
+func PGObjectName(prefix string, t time.Time) string {
+	return objectName(prefix, t, ".pgdump")
+}
+
+func objectName(prefix string, t time.Time, ext string) string {
+	return prefix + "/agb-" + t.UTC().Format(nameLayout) + ext
 }
 
 // ParseObjectTime extracts the snapshot time from an object key produced by
@@ -161,14 +178,22 @@ func (r *Runner) upload(ctx context.Context) (string, error) {
 	}
 	raw := filepath.Join(r.TempDir, "snapshot.db")
 	gz := raw + ".gz"
+	archive := false
+	if a, ok := r.Source.(ArchiveSource); ok && a.Archive() {
+		archive = true
+		raw = filepath.Join(r.TempDir, "snapshot.pgdump")
+		gz = raw
+	}
 	defer os.Remove(raw)
 	defer os.Remove(gz)
 	os.Remove(raw) // VACUUM INTO refuses to overwrite
 	if err := r.Source.Snapshot(ctx, raw); err != nil {
 		return "", fmt.Errorf("snapshot: %w", err)
 	}
-	if err := compress(raw, gz); err != nil {
-		return "", fmt.Errorf("compress: %w", err)
+	if !archive {
+		if err := compress(raw, gz); err != nil {
+			return "", fmt.Errorf("compress: %w", err)
+		}
 	}
 	f, err := os.Open(gz)
 	if err != nil {
@@ -180,6 +205,9 @@ func (r *Runner) upload(ctx context.Context) (string, error) {
 		return "", err
 	}
 	name := ObjectName(r.Prefix, start)
+	if archive {
+		name = PGObjectName(r.Prefix, start)
+	}
 	if err := r.Store.Put(ctx, name, f, info.Size()); err != nil {
 		return "", fmt.Errorf("upload %s: %w", name, err)
 	}
