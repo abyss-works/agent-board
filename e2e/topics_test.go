@@ -44,6 +44,9 @@ func topicPaths(items []topic) string {
 }
 
 func TestTopics(t *testing.T) {
+	if pgMode {
+		t.Skip("topics were folded into labels; TestPGClassicCompat covers the replacement")
+	}
 	p := createProject(t, "TP")
 	q := createProject(t, "TQ")
 	flow := createTopic(t, owner, p.Key, map[string]any{"name": "이슈 흐름"})

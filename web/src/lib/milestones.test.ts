@@ -8,6 +8,7 @@ import {
   milestoneListParams,
   milestoneNameMap,
   milestonePatchBody,
+  normalizeMilestone,
   parseMilestoneView,
   progressLabel,
   progressPercent,
@@ -217,5 +218,15 @@ describe('milestonePatchBody', () => {
   })
   it('여러 필드를 함께 바꿀 수 있다', () => {
     expect(milestonePatchBody(current, { name: 'v9', description: '', targetDate: '' })).toEqual({ name: 'v9', description: '', target_date: null })
+  })
+})
+
+describe('normalizeMilestone', () => {
+  const base = { id: 1, project: 'APP', name: 'm', description: '', target_date: null, progress: { total: 0, done: 0 }, closed_at: null, created_at: '', updated_at: '', created_by: '', updated_by: '' }
+  it('planned와 active는 열림으로 읽는다', () => {
+    expect(normalizeMilestone({ ...base, status: 'planned' as never }).status).toBe('open')
+    expect(normalizeMilestone({ ...base, status: 'active' as never }).status).toBe('open')
+    expect(normalizeMilestone({ ...base, status: 'closed' }).status).toBe('closed')
+    expect(normalizeMilestone({ ...base, status: 'open' }).status).toBe('open')
   })
 })

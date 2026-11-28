@@ -73,7 +73,7 @@ func hasItem(a contextAnswer, name string) bool {
 
 func TestPGSpecAndRecordWait(t *testing.T) {
 	requirePG(t)
-	p := createProject(t, "PS")
+	p := createProject(t, "XS")
 	specPath := "/v1/projects/" + p.Key + "/specs/api-contract?wait=true&wait_timeout_ms=15000"
 
 	first := decodeAs[ingestResult](t, owner.do(t, "PUT", specPath, map[string]any{
@@ -110,7 +110,7 @@ func TestPGSpecAndRecordWait(t *testing.T) {
 
 func TestPGContextQuery(t *testing.T) {
 	requirePG(t)
-	p := createProject(t, "PC")
+	p := createProject(t, "XC")
 	word := "zq" + strings.ToLower(runID)
 	for i, title := range []string{"락 경합 해소", "큐 적체 해소"} {
 		decodeAs[ingestResult](t, owner.do(t, "POST", fmt.Sprintf("/v1/projects/%s/records?wait=true&wait_timeout_ms=15000", p.Key), map[string]any{
@@ -135,7 +135,7 @@ func TestPGContextQuery(t *testing.T) {
 
 func TestPGEdgeConfirmRejectAndSupersedes(t *testing.T) {
 	requirePG(t)
-	p := createProject(t, "PE")
+	p := createProject(t, "XE")
 	tag := strings.ToLower(runID)
 	v1 := fmt.Sprintf("2026-10-01-1000-decision-cache-%s.md", tag)
 	v2 := fmt.Sprintf("2026-10-05-1000-decision-cache-v2-%s.md", tag)
@@ -208,7 +208,7 @@ func hasItemWithSuperseder(a contextAnswer) bool {
 
 func TestPGMilestoneScopeLockAndReadyQueue(t *testing.T) {
 	requirePG(t)
-	p := createProject(t, "PM")
+	p := createProject(t, "XM")
 	ms := decodeAs[milestone](t, owner.do(t, "POST", "/v1/projects/"+p.Key+"/milestones", map[string]any{"name": "v1.0"}), 201)
 	wantError(t, owner.do(t, "POST", "/v1/projects/"+p.Key+"/milestones", map[string]any{"name": "v1.0"}), 409, "conflict")
 	active := decodeAs[milestone](t, owner.do(t, "PATCH", fmt.Sprintf("/v1/milestones/%d", ms.ID), map[string]any{"status": "active"}), 200)
@@ -259,4 +259,78 @@ func TestPGMilestoneScopeLockAndReadyQueue(t *testing.T) {
 		t.Errorf("after %s is done %s must be ready: %+v", base.Key, next.Key, ready.Items)
 	}
 	wantError(t, owner.do(t, "GET", "/v1/projects/"+p.Key+"/ready?limit=1000", nil), 400, "bad_request")
+}
+
+func TestPGClassicCompat(t *testing.T) {
+	requirePG(t)
+	p := createProject(t, "XK")
+
+	t.Run("milestone open means planned or active and target_date is refused", func(t *testing.T) {
+		path := "/v1/projects/" + p.Key + "/milestones"
+		m := decodeAs[milestone](t, owner.do(t, "POST", path, map[string]any{"name": "classic", "status": "open", "target_date": nil}), 201)
+		if m.Status != "planned" || m.TargetDate != nil {
+			t.Errorf("milestone = %+v", m)
+		}
+		e := wantError(t, owner.do(t, "POST", path, map[string]any{"name": "dated", "target_date": "2026-12-01"}), 422, "validation_failed")
+		if !e.hasReason("target_date_removed") {
+			t.Errorf("details = %+v", e.Error.Details)
+		}
+		decodeAs[milestone](t, owner.do(t, "PATCH", fmt.Sprintf("/v1/milestones/%d", m.ID), map[string]any{"status": "active"}), 200)
+		kept := decodeAs[milestone](t, owner.do(t, "PATCH", fmt.Sprintf("/v1/milestones/%d", m.ID), map[string]any{"status": "open"}), 200)
+		if kept.Status != "active" {
+			t.Errorf("open must not demote an active milestone: %+v", kept)
+		}
+		open := decodeAs[milestoneList](t, owner.do(t, "GET", path+"?status=open", nil), 200)
+		if milestoneNames(open.Items) != "classic" {
+			t.Errorf("status=open lists %s", milestoneNames(open.Items))
+		}
+	})
+
+	t.Run("topics are read-only and empty", func(t *testing.T) {
+		got := decodeAs[struct {
+			Items []any `json:"items"`
+		}](t, owner.do(t, "GET", "/v1/projects/"+p.Key+"/topics", nil), 200)
+		if len(got.Items) != 0 {
+			t.Errorf("topics = %v", got.Items)
+		}
+		wantError(t, owner.do(t, "POST", "/v1/projects/"+p.Key+"/topics", map[string]any{"name": "x"}), 410, "topic_removed")
+		wantError(t, owner.do(t, "POST", "/v1/issues", map[string]any{"project": p.Key, "title": "주제", "topic": 3}), 422, "validation_failed")
+	})
+
+	t.Run("a parent is an epic of its children and dependencies are graph edges", func(t *testing.T) {
+		parent := createIssueRaw(t, map[string]any{"project": p.Key, "title": "상위"})
+		child := createIssueRaw(t, map[string]any{"project": p.Key, "title": "하위", "parent": parent.Key, "depends_on": []string{parent.Key}})
+		if child.Parent == nil || *child.Parent != parent.Key || len(child.DependsOn) != 1 || child.DependsOn[0] != parent.Key {
+			t.Errorf("child = %+v", child)
+		}
+		if child.EpicKey == nil || *child.EpicKey == "" {
+			t.Errorf("the parent must become an epic: %+v", child)
+		}
+		other := createIssueRaw(t, map[string]any{"project": p.Key, "title": "형제", "parent": parent.Key})
+		if other.EpicKey == nil || *other.EpicKey != *child.EpicKey {
+			t.Errorf("siblings share the epic: %v vs %v", other.EpicKey, child.EpicKey)
+		}
+		e := wantError(t, owner.do(t, "PATCH", "/v1/issues/"+parent.Key, map[string]any{"parent": child.Key}), 409, "conflict")
+		if !e.hasReason("cycle") {
+			t.Errorf("details = %+v", e.Error.Details)
+		}
+		wantError(t, owner.do(t, "PATCH", "/v1/issues/"+parent.Key, map[string]any{"depends_on": []string{child.Key}}), 409, "conflict")
+		cleared := patchIssue(t, owner, child.Key, map[string]any{"depends_on": []string{}, "parent": nil})
+		if cleared.Parent != nil || len(cleared.DependsOn) != 0 {
+			t.Errorf("cleared = %+v", cleared)
+		}
+		wantError(t, owner.do(t, "POST", "/v1/issues", map[string]any{"project": p.Key, "title": "없는 선행", "depends_on": []string{p.Key + "-999"}}), 422, "validation_failed")
+	})
+}
+
+type classicIssue struct {
+	Key       string   `json:"key"`
+	Parent    *string  `json:"parent"`
+	DependsOn []string `json:"depends_on"`
+	EpicKey   *string  `json:"epic_key"`
+}
+
+func createIssueRaw(t *testing.T, in map[string]any) classicIssue {
+	t.Helper()
+	return decodeAs[classicIssue](t, owner.do(t, "POST", "/v1/issues", in), 201)
 }

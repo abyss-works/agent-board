@@ -199,6 +199,9 @@ func dateFromName(name string) *string {
 	return &d
 }
 
+// DateFromName is dateFromName for callers outside the package.
+func DateFromName(name string) *string { return dateFromName(name) }
+
 // firstHeading is the text of the first "# " line of content.
 func firstHeading(content string) *string {
 	for _, line := range strings.Split(strings.TrimPrefix(content, "\xef\xbb\xbf"), "\n") {

@@ -32,6 +32,11 @@ const (
 	jsonType    = "application/json; charset=utf-8"
 )
 
+// pgMode is true when the server under test runs on PostgreSQL. A few classic
+// behaviours changed with the data model; tests that pin them skip in this mode
+// and the PostgreSQL cases cover the replacement.
+var pgMode bool
+
 var (
 	baseURL   string
 	token     string // the shared token; only user actors may use it
@@ -63,6 +68,9 @@ func TestMain(m *testing.M) {
 	if err := loginAgents(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
 		os.Exit(2)
+	}
+	if r, err := sendRaw("POST", "/v1/context/query", []byte(`{}`), owner.headers(true)); err == nil && r.status != 404 {
+		pgMode = true
 	}
 	os.Exit(m.Run())
 }

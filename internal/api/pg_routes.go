@@ -45,7 +45,6 @@ func (h *handler) registerPGRoutes(mux *http.ServeMux) {
 	route(mux, "/v1/issues/{key}", methods{"GET": h.pgGetIssue, "PATCH": h.pgPatchIssue, "DELETE": h.pgDeleteIssue})
 	route(mux, "/v1/issues/{key}/comments", methods{"POST": h.pgAddComment})
 	route(mux, "/v1/issues/{key}/activities", methods{"GET": h.pgListIssueActivities})
-	route(mux, "/v1/issues/{key}/activity", methods{"GET": h.pgListIssueActivities})
 	route(mux, "/v1/issues/{key}/claim", methods{"POST": h.pgClaimIssue, "DELETE": h.pgReleaseClaim})
 	route(mux, "/v1/issues/{key}/verify", methods{"POST": h.pgVerifyIssue, "DELETE": h.pgUnverifyIssue})
 
@@ -83,6 +82,8 @@ func (h *handler) registerPGRoutes(mux *http.ServeMux) {
 	route(mux, "/v1/edges/{id}", methods{"DELETE": h.pgRemoveEdge})
 	route(mux, "/v1/edges/{id}/confirm", methods{"POST": h.pgConfirmEdge})
 	route(mux, "/v1/edges/{id}/reject", methods{"POST": h.pgRejectEdge})
+
+	h.registerPGCompatRoutes(mux)
 
 	// Sessions, messages, events, devices, tokens
 	route(mux, "/v1/sessions", methods{"GET": h.pgListSessions, "POST": h.pgStartSession})
@@ -282,6 +283,8 @@ func readDocumentUTF8Body(w http.ResponseWriter, r *http.Request, allowed map[st
 
 func (h *handler) pgListProjects(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
+	sorts := q.sorts("key", "created_at", "updated_at")
+	limit, offset := q.limit(50, 200), q.offset()
 	var statuses []model.ProjectStatus
 	switch param := q.one("status"); param {
 	case "":
@@ -295,12 +298,16 @@ func (h *handler) pgListProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, err := h.pgStore.ListProjects(r.Context(), statuses)
+	cs := make([]pgstore.CompatSort, len(sorts))
+	for i, so := range sorts {
+		cs[i] = pgstore.CompatSort{Field: so.Field, Desc: so.Desc}
+	}
+	items, total, err := h.pgStore.CompatListProjects(r.Context(), statuses, cs, limit, offset)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	writeJSON(w, http.StatusOK, envelope(items, total, limit, offset))
 }
 
 func (h *handler) pgCreateProject(w http.ResponseWriter, r *http.Request) {
@@ -506,7 +513,8 @@ func (h *handler) pgListMilestones(w http.ResponseWriter, r *http.Request) {
 		statuses = []model.MilestoneStatus{model.MilestonePlanned, model.MilestoneActive}
 	} else {
 		var err error
-		statuses, err = model.ExpandMilestoneStageStatuses(param)
+		// The classic "open" means not closed: planned and active.
+		statuses, err = model.ExpandMilestoneStageStatuses(strings.ReplaceAll(param, "open", "planned,active"))
 		if err != nil {
 			q.add("status", "planned, active, closed, deleted, all 중 하나이거나 쉼표로 이은 목록이어야 합니다.")
 		}
@@ -524,7 +532,7 @@ func (h *handler) pgListMilestones(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) pgCreateMilestone(w http.ResponseWriter, r *http.Request) {
-	b, aerr := readBody(w, r, map[string]bool{"name": true, "description": true, "status": true})
+	b, aerr := readBody(w, r, map[string]bool{"name": true, "description": true, "status": true, "target_date": true})
 	if aerr != nil {
 		writeError(w, aerr)
 		return
@@ -534,9 +542,13 @@ func (h *handler) pgCreateMilestone(w http.ResponseWriter, r *http.Request) {
 		decodeField(b, "name", &in.Name),
 		decodeField(b, "description", &in.Description),
 		decodeField(b, "status", &in.Status),
+		milestoneTargetDateRemoved(b),
 	); aerr != nil {
 		writeError(w, aerr)
 		return
+	}
+	if in.Status == "open" {
+		in.Status = model.MilestonePlanned
 	}
 	m, err := h.pgStore.CreateMilestone(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), in)
 	if err != nil {
@@ -596,8 +608,12 @@ func (h *handler) pgPatchMilestoneCommon(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	b, aerr := readBody(w, r, map[string]bool{"name": true, "description": true, "status": true})
+	b, aerr := readBody(w, r, map[string]bool{"name": true, "description": true, "status": true, "target_date": true})
 	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	if aerr := milestoneTargetDateRemoved(b); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
@@ -631,6 +647,13 @@ func (h *handler) pgPatchMilestoneCommon(w http.ResponseWriter, r *http.Request,
 		if n {
 			writeError(w, validationFailed([]Detail{{Field: "status", Reason: "invalid_value", Message: "null일 수 없습니다."}}))
 			return
+		}
+		if status == "open" {
+			// The classic "open" means not closed: keep an active milestone active.
+			status = model.MilestonePlanned
+			if cur, err := h.pgStore.GetMilestone(r.Context(), id); err == nil && cur.Status == model.MilestoneActive {
+				status = model.MilestoneActive
+			}
 		}
 		patch.Status = &status
 	}
@@ -693,7 +716,7 @@ var pgIssueCreateFields = map[string]bool{
 	"force": true, "reason": true,
 }
 
-var pgIssuePatchFields = withFields(pgIssueCreateFields, "status_reason")
+var pgIssuePatchFields = withFields(pgIssueCreateFields, "status_reason", "depends_on", "parent", "topic")
 
 func (h *handler) pgCreateProjectIssue(w http.ResponseWriter, r *http.Request) {
 	b, aerr := readBody(w, r, pgIssueCreateFields)
@@ -956,13 +979,73 @@ func (h *handler) pgPatchIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var deps []string
+	depsPresent := false
+	if p, n, e := field(b, "depends_on", &deps); e != nil {
+		writeError(w, e)
+		return
+	} else if p {
+		if n {
+			writeError(w, validationFailed([]Detail{{Field: "depends_on", Reason: "invalid_value", Message: "null일 수 없습니다."}}))
+			return
+		}
+		depsPresent = true
+	}
+	var classic []Detail
+	if p, _, _ := field(b, "topic", new(json.RawMessage)); p {
+		if raw := b["topic"]; !isNull(raw) {
+			classic = append(classic, Detail{Field: "topic", Reason: "topic_removed", Message: "주제는 라벨로 대체되었습니다. labels를 쓰세요."})
+		}
+	}
+	if len(classic) > 0 {
+		writeError(w, validationFailed(classic))
+		return
+	}
+	if p, _, _ := field(b, "parent", new(json.RawMessage)); p {
+		patch.EpicID.Set = true
+		if raw := b["parent"]; !isNull(raw) {
+			var parentKey string
+			if e := decodeField(b, "parent", &parentKey); e != nil {
+				writeError(w, e)
+				return
+			}
+			issueKey := r.PathValue("key")
+			projectKey, _, _ := model.ParseIssueKey(issueKey)
+			epicID, err := h.epicOfParent(r, projectKey, issueKey, parentKey)
+			if err != nil {
+				writeError(w, h.pgStoreError(r, err))
+				return
+			}
+			patch.EpicID.Value = epicID
+		}
+	}
+
+	var plan *dependsPlan
+	if depsPresent {
+		var perr error
+		if plan, perr = h.planDependsOn(r, r.PathValue("key"), deps); perr != nil {
+			writeError(w, h.pgStoreError(r, perr))
+			return
+		}
+	}
 	res, err := h.pgStore.UpdateIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version, patch)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	w.Header().Set("ETag", etag(res.Issue.Version))
-	writeJSON(w, http.StatusOK, res.Issue)
+	issue := res.Issue
+	if plan != nil {
+		if err := h.applyDependsOn(r, issue.Key, plan); err != nil {
+			writeError(w, h.pgStoreError(r, err))
+			return
+		}
+		if issue, err = h.pgStore.GetIssue(r.Context(), issue.Key); err != nil {
+			writeError(w, h.pgStoreError(r, err))
+			return
+		}
+	}
+	w.Header().Set("ETag", etag(issue.Version))
+	writeJSON(w, http.StatusOK, issue)
 }
 
 func (h *handler) pgDeleteIssue(w http.ResponseWriter, r *http.Request) {
@@ -2473,4 +2556,14 @@ func (h *handler) pgRejectEdge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, edge)
+}
+
+// milestoneTargetDateRemoved accepts a null target_date, which the classic clients
+// send when they set none, and refuses a date: milestones no longer carry one.
+func milestoneTargetDateRemoved(b body) *apiError {
+	raw, ok := b["target_date"]
+	if !ok || isNull(raw) {
+		return nil
+	}
+	return validationFailed([]Detail{{Field: "target_date", Reason: "target_date_removed", Message: "마일스톤의 목표일은 설계에서 제거되었습니다. 설명(description)에 적으세요."}})
 }

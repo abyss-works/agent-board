@@ -135,3 +135,12 @@ export function milestonePatchBody(current: Milestone, form: MilestoneForm): Mil
     ...(targetDate !== current.target_date ? { target_date: targetDate } : {}),
   }
 }
+
+/**
+ * PostgreSQL mode keeps milestones in three stages (planned, active, closed). This screen shows two
+ * states, so a planned or active milestone reads as open here.
+ */
+export function normalizeMilestone(m: Milestone): Milestone {
+  const status = m.status as string
+  return status === 'planned' || status === 'active' ? { ...m, status: 'open' } : m
+}

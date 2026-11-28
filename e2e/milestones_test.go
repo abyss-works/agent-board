@@ -52,6 +52,9 @@ func milestoneNames(items []milestone) string {
 }
 
 func TestMilestones(t *testing.T) {
+	if pgMode {
+		t.Skip("milestones have planned, active and closed stages and no target date; TestPGClassicCompat and TestPGMilestoneScopeLockAndReadyQueue cover them")
+	}
 	p := createProject(t, "MS")
 	q := createProject(t, "MT")
 	v2 := createMilestone(t, owner, p.Key, map[string]any{"name": "v0.2.0", "description": "운영 안정화와 릴리즈 관리", "target_date": "2026-11-01"})

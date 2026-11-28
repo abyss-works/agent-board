@@ -60,6 +60,9 @@ func TestProjectValidation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if pgMode && c.name == "lowercase key" {
+				t.Skip("PostgreSQL mode reads a project key without regard to case")
+			}
 			e := wantError(t, owner.do(t, "POST", "/v1/projects", c.body), 422, "validation_failed")
 			if got := e.fields(); !equalStrings(got, c.fields) {
 				t.Errorf("fields = %v, want %v", got, c.fields)

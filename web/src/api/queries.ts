@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useApi } from '@/app/state'
-import { milestoneListParams } from '@/lib/milestones'
+import { milestoneListParams, normalizeMilestone } from '@/lib/milestones'
 import { issueListQuery, type IssueListFilters, type SessionListParams } from './client'
 import type {
   Activity,
@@ -235,6 +235,7 @@ export function useMilestones(projectKey: string | null, statuses: readonly Mile
   return useQuery({
     queryKey: [QUERY_ROOT, 'milestones', projectKey, params.status ?? 'open'],
     queryFn: ({ signal }) => api.get<{ items: Milestone[] }>(`/projects/${projectKey}/milestones`, params, signal),
+    select: (data) => ({ ...data, items: data.items.map(normalizeMilestone) }),
     enabled: projectKey !== null,
   })
 }

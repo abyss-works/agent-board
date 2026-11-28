@@ -18,7 +18,7 @@ const issueCols = `i.id, i.project_id, p.key, i.number, i.key, i.epic_id, e.key,
 	i.recheck_condition, i.decision_needed, i.status_reason,
 	i.verification_state, i.verification_note, i.verified_at, i.verified_by,
 	i.version, i.created_at, i.updated_at, i.closed_at,
-	i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by`
+	i.status_changed_at, i.status_changed_by, i.created_by, i.updated_by, e.source_issue_key`
 
 const issueFrom = ` FROM issue i
 	JOIN project p ON p.id = i.project_id
@@ -30,12 +30,16 @@ type issueRow struct {
 	projectID int64
 }
 
-func scanIssueRow(row pgx.Row) (issueRow, error) {
+func scanIssueRow(row pgx.Row) (issueRow, error) { return scanIssueRowExtra(row) }
+
+// scanIssueRowExtra scans the issue columns followed by extra destinations.
+func scanIssueRowExtra(row pgx.Row, extra ...any) (issueRow, error) {
 	var r issueRow
 	var typ, status, prio, verState string
 	var verifiedAt, closedAt *time.Time
 	var createdAt, updatedAt, statusChangedAt time.Time
-	if err := row.Scan(
+	var epicSource *string
+	dest := []any{
 		&r.detail.ID, &r.projectID, &r.detail.Project, &r.detail.Number, &r.detail.Key,
 		&r.detail.EpicID, &r.detail.EpicKey, &r.detail.Milestone, &r.detail.MilestoneName,
 		&r.detail.Title, &r.detail.Body, &typ, &status, &prio,
@@ -43,8 +47,14 @@ func scanIssueRow(row pgx.Row) (issueRow, error) {
 		&verState, &r.detail.VerificationNote, &verifiedAt, &r.detail.VerifiedBy,
 		&r.detail.Version, &createdAt, &updatedAt, &closedAt,
 		&statusChangedAt, &r.detail.StatusChangedBy, &r.detail.CreatedBy, &r.detail.UpdatedBy,
-	); err != nil {
+		&epicSource,
+	}
+	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return issueRow{}, err
+	}
+	// A promoted epic remembers the issue that used to be the parent of its children.
+	if epicSource != nil && *epicSource != r.detail.Key {
+		r.detail.Parent = epicSource
 	}
 	r.detail.Type = model.IssueType(typ)
 	r.detail.Status = model.IssueStatus(status)
@@ -115,7 +125,32 @@ func hydrateIssueCollections(ctx context.Context, q pgQuerier, details []*IssueD
 		}
 	}
 	refRows.Close()
-	return refRows.Err()
+	if err := refRows.Err(); err != nil {
+		return err
+	}
+
+	// Dependencies live in the graph as confirmed depends_on edges between issues.
+	depRows, err := q.Query(ctx, `SELECT ge.source_id, t.key
+		FROM graph_edge ge JOIN issue t ON t.id = ge.target_id
+		WHERE ge.kind = 'depends_on' AND ge.status = 'confirmed'
+		  AND ge.source_type = 'issue' AND ge.target_type = 'issue' AND ge.source_id = ANY($1)
+		ORDER BY t.key ASC`, ids)
+	if err != nil {
+		return err
+	}
+	for depRows.Next() {
+		var iid int64
+		var key string
+		if err := depRows.Scan(&iid, &key); err != nil {
+			depRows.Close()
+			return err
+		}
+		if d := byID[iid]; d != nil {
+			d.DependsOn = append(d.DependsOn, key)
+		}
+	}
+	depRows.Close()
+	return depRows.Err()
 }
 
 func checkEpicForIssueTx(ctx context.Context, tx pgx.Tx, projectID, epicID int64) error {
@@ -168,7 +203,12 @@ func (s *Store) CreateIssue(ctx context.Context, tr Trace, projectKey string, in
 		cand.VerificationState = model.DefaultVerificationState
 	}
 	model.NormalizeIssue(&cand)
-	if err := model.ValidateIssue(&cand); err != nil {
+	checks := []error{model.ValidateIssue(&cand)}
+	if s.isAgent(ctx, tr.Actor) {
+		// An agent writes every body to the template of its type; the user writes freely.
+		checks = append(checks, model.CheckTemplate(cand.Type, cand.Body))
+	}
+	if err := model.MergeValidation(checks...); err != nil {
 		return IssueWriteResult{}, err
 	}
 
@@ -258,6 +298,13 @@ func (s *Store) CreateIssue(ctx context.Context, tr Trace, projectKey string, in
 			"status":             makeChange(nil, cand.Status),
 			"priority":           makeChange(nil, cand.Priority),
 			"verification_state": makeChange(nil, cand.VerificationState),
+			"body":               makeChange(nil, cand.Body),
+			"labels":             makeChange(nil, nonNilStrings(cand.Labels)),
+			"refs":               makeChange(nil, nonNilStrings(cand.Refs)),
+			"parent":             makeChange(nil, nil),
+			"depends_on":         makeChange(nil, []string{}),
+			"recheck_condition":  makeChange(nil, cand.RecheckCondition),
+			"decision_needed":    makeChange(nil, cand.DecisionNeeded),
 		}
 		if in.EpicID != nil {
 			changes["epic_id"] = makeChange(nil, *in.EpicID)
@@ -510,7 +557,12 @@ func (s *Store) UpdateIssue(ctx context.Context, tr Trace, key string, expectedV
 		model.NormalizeIssue(&next.Issue)
 
 		reason, reasonErr := model.ResolveStatusReason(cur.Status, next.Status, patch.StatusReason)
-		if err := model.MergeValidation(model.ValidateIssue(&next.Issue), reasonErr); err != nil {
+		checks := []error{model.ValidateIssue(&next.Issue), reasonErr}
+		if (next.Body != cur.Body || next.Type != cur.Type) && s.isAgent(ctx, tr.Actor) {
+			// A new body or a new type puts the body to the template of the type it ends up with.
+			checks = append(checks, model.CheckTemplate(next.Type, next.Body))
+		}
+		if err := model.MergeValidation(checks...); err != nil {
 			return err
 		}
 		if next.EpicID != nil && !sameInt64Ptr(cur.EpicID, next.EpicID) {
@@ -593,10 +645,11 @@ func (s *Store) UpdateIssue(ctx context.Context, tr Trace, key string, expectedV
 			statusChangedAt = now
 			statusChangedBy = tr.Actor
 			statusReason = reason
-			if next.Status.Closed() {
-				closedAt = &now
-			} else {
+			switch {
+			case !next.Status.Closed():
 				closedAt = nil
+			case !cur.Status.Closed() || closedAt == nil:
+				closedAt = &now
 			}
 		}
 		var verifiedAt *time.Time
@@ -926,4 +979,20 @@ func (s *Store) ListIssueActivities(ctx context.Context, issueKey string, limit,
 		items = append(items, a)
 	}
 	return items, total, rows.Err()
+}
+
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// isAgent reports whether actor is an agent actor.
+func (s *Store) isAgent(ctx context.Context, actor string) bool {
+	var kind string
+	if err := s.pool.QueryRow(ctx, `SELECT kind FROM actor WHERE id = $1`, actor).Scan(&kind); err != nil {
+		return false
+	}
+	return model.ActorKind(kind) == model.ActorAgent
 }
