@@ -16,6 +16,7 @@ import (
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
+	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
 
 // APIVersion is the number in the /v1 path prefix.
@@ -31,6 +32,7 @@ type Options struct {
 	Release string
 	Logger  *slog.Logger
 	Store   *store.Store
+	PGStore *pgstore.Store
 	// Web is the built web client. When set, every path outside /v1 is served
 	// from it without authentication. When nil those paths belong to the API.
 	Web fs.FS
@@ -62,6 +64,7 @@ type handler struct {
 	actors     map[string]model.Actor
 	actorOrder []model.Actor
 	store      *store.Store
+	pgStore    *pgstore.Store
 	devices    *deviceStore
 	stats      *statsCollector
 	broker     *eventBroker
@@ -87,14 +90,17 @@ func (c *closeableHandler) Close() error {
 // io.Closer to close open SSE streams before server shutdown.
 func New(o Options) http.Handler {
 	h := &handler{
-		opts:   o,
-		actors: map[string]model.Actor{},
-		store:  o.Store,
-		stats:  newStatsCollector(),
-		broker: newEventBroker(o.MaxSSEConnections, o.MaxSSEConnectionsPerActor),
-		seen:   map[string]time.Time{},
+		opts:    o,
+		actors:  map[string]model.Actor{},
+		store:   o.Store,
+		pgStore: o.PGStore,
+		stats:   newStatsCollector(),
+		broker:  newEventBroker(o.MaxSSEConnections, o.MaxSSEConnectionsPerActor),
+		seen:    map[string]time.Time{},
 	}
-	if h.store != nil {
+	if h.pgStore != nil {
+		h.pgStore.SetEventHook(h.broker.Notify)
+	} else if h.store != nil {
 		h.store.SetEventHook(h.broker.Notify)
 	}
 	for _, a := range o.Actors {
@@ -120,20 +126,24 @@ func New(o Options) http.Handler {
 	route(protected, "/v1/actors", methods{"GET": h.listActors})
 	route(protected, "/v1/actors/me", methods{"GET": h.me})
 	route(protected, "/v1/stats", methods{"GET": h.serverStats})
-	h.registerProjects(protected)
-	h.registerIssues(protected)
-	h.registerTopics(protected)
-	h.registerMilestones(protected)
-	h.registerMessages(protected)
-	h.registerSessions(protected)
-	h.registerEvents(protected)
-	h.registerDocuments(protected)
-	h.registerSearch(protected)
-	h.registerGraph(protected)
-	h.registerTemplates(protected)
-	h.registerViews(protected)
-	h.registerDevices(protected)
-	h.registerTokens(protected)
+	if h.pgStore != nil {
+		h.registerPGRoutes(protected)
+	} else {
+		h.registerProjects(protected)
+		h.registerIssues(protected)
+		h.registerTopics(protected)
+		h.registerMilestones(protected)
+		h.registerMessages(protected)
+		h.registerSessions(protected)
+		h.registerEvents(protected)
+		h.registerDocuments(protected)
+		h.registerSearch(protected)
+		h.registerGraph(protected)
+		h.registerTemplates(protected)
+		h.registerViews(protected)
+		h.registerDevices(protected)
+		h.registerTokens(protected)
+	}
 	protected.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, notFound("경로가 없습니다."))
 	})
@@ -211,10 +221,22 @@ func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *handler) serverStats(w http.ResponseWriter, r *http.Request) {
-	size, err := h.store.FileSize()
-	if err != nil {
-		writeError(w, h.storeError(r, err))
-		return
+	var (
+		size int64
+		err  error
+	)
+	if h.pgStore != nil {
+		size, err = h.pgStore.DBSize(r.Context())
+		if err != nil {
+			writeError(w, h.pgStoreError(r, err))
+			return
+		}
+	} else {
+		size, err = h.store.FileSize()
+		if err != nil {
+			writeError(w, h.storeError(r, err))
+			return
+		}
 	}
 	writeJSON(w, 200, map[string]any{
 		"started_at": model.NewTime(h.started),
@@ -250,6 +272,20 @@ func (h *handler) actorMap() map[string]model.Actor {
 }
 
 func (h *handler) registerAgentActor(ctx context.Context, id string) (bool, error) {
+	if h.pgStore != nil {
+		created, err := h.pgStore.EnsureAgentActor(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		h.actorsMu.Lock()
+		if _, exists := h.actors[id]; !exists {
+			a := model.Actor{ID: id, Kind: model.ActorAgent}
+			h.actors[id] = a
+			h.actorOrder = append(h.actorOrder, a)
+		}
+		h.actorsMu.Unlock()
+		return created, nil
+	}
 	if h.store != nil {
 		created, err := h.store.EnsureAgentActor(ctx, id)
 		if err != nil {

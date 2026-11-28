@@ -74,6 +74,14 @@ func (h *handler) touchSession(next http.Handler) http.Handler {
 // clearWaiting clears the waiting state of the session of tr. A failed write
 // is logged and does not affect the HTTP response.
 func (h *handler) clearWaiting(ctx context.Context, tr model.Trace) (model.Time, bool) {
+	if h.pgStore != nil {
+		at, cleared, err := h.pgStore.ClearSessionWaiting(ctx, tr.Actor, tr.SessionID)
+		if err != nil {
+			h.opts.Logger.Warn("session waiting clear failed", "actor", tr.Actor, "session_id", truncate(tr.SessionID), "err", err.Error())
+			return model.Time{}, false
+		}
+		return at, cleared
+	}
 	at, cleared, err := h.store.ClearSessionWaiting(ctx, tr.Actor, tr.SessionID)
 	if err != nil {
 		h.opts.Logger.Warn("session waiting clear failed", "actor", tr.Actor, "session_id", truncate(tr.SessionID), "err", err.Error())
@@ -94,7 +102,13 @@ func (h *handler) recordCall(ctx context.Context, tr model.Trace) {
 		return
 	}
 	h.seenMu.Unlock()
-	if err := h.store.TouchSession(ctx, tr, now); err != nil {
+	var err error
+	if h.pgStore != nil {
+		err = h.pgStore.TouchSession(ctx, tr, now)
+	} else {
+		err = h.store.TouchSession(ctx, tr, now)
+	}
+	if err != nil {
 		h.opts.Logger.Warn("session write failed", "actor", tr.Actor, "session_id", truncate(tr.SessionID), "err", err.Error())
 		return
 	}

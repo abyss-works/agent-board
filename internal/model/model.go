@@ -96,12 +96,17 @@ type MilestoneStatus string
 
 const (
 	MilestoneOpen    MilestoneStatus = "open"
+	MilestonePlanned MilestoneStatus = "planned"
+	MilestoneActive  MilestoneStatus = "active"
 	MilestoneClosed  MilestoneStatus = "closed"
 	MilestoneDeleted MilestoneStatus = "deleted"
 )
 
-// MilestoneStatuses lists every milestone status.
+// MilestoneStatuses lists the legacy milestone statuses.
 var MilestoneStatuses = []MilestoneStatus{MilestoneOpen, MilestoneClosed, MilestoneDeleted}
+
+// MilestoneStageStatuses lists the three-stage milestone lifecycle statuses plus deleted.
+var MilestoneStageStatuses = []MilestoneStatus{MilestonePlanned, MilestoneActive, MilestoneClosed, MilestoneDeleted}
 
 // Priority orders issues in the queue. P0 is the most urgent.
 type Priority string

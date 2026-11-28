@@ -1,6 +1,22 @@
 name: agent-board
 
 services:
+  pg:
+    build:
+      context: ./deploy/pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AGB_PG_DB:-agb}
+      POSTGRES_USER: ${AGB_PG_USER:-agb}
+      POSTGRES_PASSWORD: ${AGB_PG_PASSWORD:-agb}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AGB_PG_USER:-agb} -d ${AGB_PG_DB:-agb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
   agb:
     build:
       context: .
@@ -13,6 +29,8 @@ services:
     environment:
       AGB_TOKEN: ${AGB_TOKEN:?AGB_TOKEN is required}
       AGB_ACTORS: ${AGB_ACTORS:?AGB_ACTORS is required}
+      AGB_DATABASE_URL: ${AGB_DATABASE_URL:-}
+      AGB_DB_MAX_CONNS: ${AGB_DB_MAX_CONNS:-}
       AGB_BACKUP_BUCKET: ${AGB_BACKUP_BUCKET:-}
       AGB_BACKUP_ENDPOINT: ${AGB_BACKUP_ENDPOINT:-}
       AGB_BACKUP_ACCESS_KEY_ID: ${AGB_BACKUP_ACCESS_KEY_ID:-}
@@ -29,3 +47,4 @@ services:
 
 volumes:
   agb-data:
+  pg-data:

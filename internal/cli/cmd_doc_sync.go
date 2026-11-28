@@ -138,7 +138,7 @@ func repoFiles(root string, cfg *repoConfig) (files []docFile, skipped []string,
 			skipped = append(skipped, rel+" (커밋하지 않았거나 커밋 뒤 바뀜)")
 			continue
 		case info.Size() > model.MaxDocumentBytes:
-			skipped = append(skipped, rel+" (1MB 초과)")
+			skipped = append(skipped, fmt.Sprintf("%s (%dMB 초과)", rel, model.MaxDocumentBytes>>20))
 			continue
 		}
 		name := rule.docName(rel)

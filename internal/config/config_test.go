@@ -283,3 +283,72 @@ func TestLoadTruncatesLongInvalidValues(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadDatabaseConfig(t *testing.T) {
+	base := map[string]string{"AGB_TOKEN": testToken, "AGB_ACTORS": "owner:user"}
+	with := func(kv ...string) func(string) string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return env(m)
+	}
+
+	// Default SQLite mode when AGB_DATABASE_URL is empty.
+	cfg, err := Load(with())
+	if err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	if cfg.UsePostgres() || cfg.DatabaseURL != "" || cfg.DBMaxConns != DefaultDBMaxConns {
+		t.Errorf("default db config = %+v", cfg)
+	}
+
+	// Valid postgres:// and postgresql:// URLs and custom max conns.
+	for _, u := range []string{
+		"postgres://agb:secret@127.0.0.1:5432/agb?sslmode=disable",
+		"postgresql://agb:secret@localhost:5432/agb",
+		"postgres:///agb?host=/var/run/postgresql",
+	} {
+		cfg, err := Load(with("AGB_DATABASE_URL", u, "AGB_DB_MAX_CONNS", "32"))
+		if err != nil {
+			t.Fatalf("valid url %q: %v", u, err)
+		}
+		if !cfg.UsePostgres() || cfg.DatabaseURL != u || cfg.DBMaxConns != 32 {
+			t.Errorf("cfg = %+v", cfg)
+		}
+	}
+
+	// Invalid URLs must reject and NEVER leak credentials or userinfo.
+	const secretPass = "super-secret-pg-pass-9876"
+	for name, badURL := range map[string]string{
+		"wrong scheme":  "mysql://admin:" + secretPass + "@127.0.0.1:3306/agb",
+		"http scheme":   "http://admin:" + secretPass + "@127.0.0.1:8080/agb",
+		"missing host":  "postgres://admin:" + secretPass + "@/agb",
+		"malformed url": "postgres://admin:" + secretPass + "@127.0.0.1:badport/agb",
+		"bare text":     "admin:" + secretPass + "@localhost",
+	} {
+		_, err := Load(with("AGB_DATABASE_URL", badURL))
+		if err == nil {
+			t.Errorf("%s: expected error", name)
+			continue
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "AGB_DATABASE_URL") {
+			t.Errorf("%s: error %q does not name AGB_DATABASE_URL", name, msg)
+		}
+		if strings.Contains(msg, secretPass) || strings.Contains(msg, "admin:") {
+			t.Errorf("%s: error leaked credentials: %q", name, msg)
+		}
+	}
+
+	// Invalid AGB_DB_MAX_CONNS values.
+	for _, bad := range []string{"0", "-4", "abc"} {
+		_, err := Load(with("AGB_DB_MAX_CONNS", bad))
+		if err == nil || !strings.Contains(err.Error(), "AGB_DB_MAX_CONNS") {
+			t.Errorf("AGB_DB_MAX_CONNS=%q: err = %v, want AGB_DB_MAX_CONNS error", bad, err)
+		}
+	}
+}

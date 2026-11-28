@@ -21,6 +21,7 @@ import (
 	"github.com/wsk0715/agent-board/internal/config"
 	"github.com/wsk0715/agent-board/internal/embed"
 	"github.com/wsk0715/agent-board/internal/store"
+	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
 
 // Options are the process level settings not read from the environment.
@@ -35,23 +36,37 @@ type Options struct {
 
 // Server is a configured, not yet listening, API server.
 type Server struct {
-	cfg    *config.Config
-	opts   Options
-	store  *store.Store
-	http   *http.Server
-	ln     net.Listener
-	cancel context.CancelFunc
-	done   chan struct{}
-	bg     sync.WaitGroup
+	cfg     *config.Config
+	opts    Options
+	store   *store.Store
+	pgStore *pgstore.Store
+	http    *http.Server
+	ln      net.Listener
+	cancel  context.CancelFunc
+	done    chan struct{}
+	bg      sync.WaitGroup
 	// embedder and searcher are set only when the search by meaning is enabled.
 	embedder *embed.Runner
 	searcher *embed.Searcher
+}
+
+func (s *Server) closeStore() error {
+	if s.pgStore != nil {
+		return s.pgStore.Close()
+	}
+	if s.store != nil {
+		return s.store.Close()
+	}
+	return nil
 }
 
 // New opens the store and prepares the HTTP server.
 func New(cfg *config.Config, opts Options) (*Server, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	if cfg.UsePostgres() {
+		return newPostgresServer(cfg, opts)
 	}
 	if cfg.Backup.Enabled() && opts.BackupStore == nil {
 		return nil, errors.New("AGB_BACKUP_BUCKET is set but this build has no object store adapter")
@@ -123,6 +138,57 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	}, nil
 }
 
+func newPostgresServer(cfg *config.Config, opts Options) (*Server, error) {
+	ctx := context.Background()
+	pgs, err := pgstore.Open(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres database: %w", err)
+	}
+	if err := pgs.EnsureActors(ctx, cfg.Actors); err != nil {
+		_ = pgs.Close()
+		return nil, fmt.Errorf("declare actors: %w", err)
+	}
+	for actor, secret := range cfg.SeedTokens {
+		if _, err := pgs.EnsureSeedToken(ctx, pgstore.CreateTokenInput{
+			Actor:      actor,
+			ClientHost: "local",
+			Secret:     secret,
+			CreatedBy:  "system",
+		}); err != nil {
+			_ = pgs.Close()
+			return nil, fmt.Errorf("seed token for %s: %w", actor, err)
+		}
+	}
+	persisted, err := pgs.ListActors(ctx)
+	if err != nil {
+		_ = pgs.Close()
+		return nil, fmt.Errorf("list actors: %w", err)
+	}
+	var web fs.FS
+	if cfg.WebDir != "" {
+		web = os.DirFS(cfg.WebDir)
+	}
+	h := api.New(api.Options{
+		Token:   cfg.Token,
+		Actors:  persisted,
+		Version: opts.Version,
+		Release: opts.Release,
+		Logger:  opts.Logger,
+		PGStore: pgs,
+		Web:     web,
+	})
+	return &Server{
+		cfg:     cfg,
+		opts:    opts,
+		pgStore: pgs,
+		http: &http.Server{
+			Handler:           h,
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+		done: make(chan struct{}),
+	}, nil
+}
+
 // Start binds the address and serves in the background. It returns the
 // bound address, which matters when the configured port is 0. When Start
 // fails it closes the store, so the Server is unusable and Shutdown must not
@@ -130,7 +196,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 func (s *Server) Start() (string, error) {
 	ln, err := net.Listen("tcp", s.cfg.Addr)
 	if err != nil {
-		s.store.Close()
+		_ = s.closeStore()
 		return "", err
 	}
 	s.ln = ln
@@ -153,7 +219,7 @@ func (s *Server) Start() (string, error) {
 // startBackground launches the backup runner when a bucket is configured and
 // the embedding runner when an embeddings API key is configured.
 func (s *Server) startBackground(ctx context.Context) {
-	if s.cfg.Backup.Enabled() {
+	if s.store != nil && s.cfg.Backup.Enabled() {
 		r := &backup.Runner{
 			Store:     s.opts.BackupStore,
 			Source:    s.store,
@@ -164,12 +230,12 @@ func (s *Server) startBackground(ctx context.Context) {
 			Logger:    s.opts.Logger,
 		}
 		s.bg.Go(func() { r.Run(ctx) })
-	} else {
+	} else if s.store != nil {
 		s.opts.Logger.Info("backup disabled: AGB_BACKUP_BUCKET is empty")
 	}
 	if s.embedder != nil {
 		s.bg.Go(func() { s.embedder.Run(ctx) })
-	} else {
+	} else if s.store != nil {
 		s.opts.Logger.Info("semantic search disabled: AGB_EMBEDDING_API_KEY is empty")
 	}
 }
@@ -187,7 +253,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	err := s.http.Shutdown(ctx)
 	<-s.done
 	s.bg.Wait()
-	if cerr := s.store.Close(); err == nil {
+	if cerr := s.closeStore(); err == nil {
 		err = cerr
 	}
 	return err

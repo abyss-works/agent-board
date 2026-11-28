@@ -11,6 +11,7 @@ import (
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store"
+	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
 
 const (
@@ -179,15 +180,32 @@ func (h *handler) auth(next http.Handler) http.Handler {
 		}
 		cred := credential{shared: true}
 		if subtle.ConstantTimeCompare([]byte(got), want) != 1 {
-			tok, err := h.store.AuthenticateToken(r.Context(), got)
-			if errors.Is(err, store.ErrNotFound) {
-				setReject(r, "unauthorized")
-				writeError(w, errUnauthorized)
-				return
-			}
-			if err != nil {
-				writeError(w, h.storeError(r, err))
-				return
+			var (
+				tok *model.Token
+				err error
+			)
+			if h.pgStore != nil {
+				tok, err = h.pgStore.AuthenticateToken(r.Context(), got)
+				if errors.Is(err, pgstore.ErrNotFound) {
+					setReject(r, "unauthorized")
+					writeError(w, errUnauthorized)
+					return
+				}
+				if err != nil {
+					writeError(w, h.pgStoreError(r, err))
+					return
+				}
+			} else {
+				tok, err = h.store.AuthenticateToken(r.Context(), got)
+				if errors.Is(err, store.ErrNotFound) {
+					setReject(r, "unauthorized")
+					writeError(w, errUnauthorized)
+					return
+				}
+				if err != nil {
+					writeError(w, h.storeError(r, err))
+					return
+				}
 			}
 			cred = credential{tokenID: tok.ID, actor: tok.Actor}
 			setTokenID(r, tok.ID)

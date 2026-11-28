@@ -20,8 +20,10 @@ type Trace struct {
 
 // Project is a project resource.
 type Project struct {
+	ID        int64         `json:"id,omitempty"`
 	Key       string        `json:"key"`
 	Name      string        `json:"name"`
+	ScopeKind ScopeKind     `json:"scope_kind,omitempty"`
 	Status    ProjectStatus `json:"status"`
 	CreatedAt Time          `json:"created_at"`
 	UpdatedAt Time          `json:"updated_at"`
@@ -133,6 +135,8 @@ type Issue struct {
 	DecisionNeeded    *string           `json:"decision_needed"`
 	Topic             *int64            `json:"topic"`
 	TopicPath         *string           `json:"topic_path"`
+	EpicID            *int64            `json:"epic_id,omitempty"`
+	EpicKey           *string           `json:"epic_key,omitempty"`
 	Milestone         *int64            `json:"milestone"`
 	MilestoneName     *string           `json:"milestone_name"`
 	StatusReason      *string           `json:"status_reason"`
@@ -169,6 +173,8 @@ type IssueSummary struct {
 	DecisionNeeded    *string           `json:"decision_needed"`
 	Topic             *int64            `json:"topic"`
 	TopicPath         *string           `json:"topic_path"`
+	EpicID            *int64            `json:"epic_id,omitempty"`
+	EpicKey           *string           `json:"epic_key,omitempty"`
 	Milestone         *int64            `json:"milestone"`
 	MilestoneName     *string           `json:"milestone_name"`
 	StatusReason      *string           `json:"status_reason"`
@@ -195,6 +201,7 @@ func (i *Issue) Summary() IssueSummary {
 		Type: i.Type, Status: i.Status, Priority: i.Priority,
 		Labels: i.Labels, Parent: i.Parent, DependsOn: i.DependsOn, Refs: i.Refs,
 		RecheckCondition: i.RecheckCondition, DecisionNeeded: i.DecisionNeeded, Topic: i.Topic, TopicPath: i.TopicPath,
+		EpicID: i.EpicID, EpicKey: i.EpicKey,
 		Milestone: i.Milestone, MilestoneName: i.MilestoneName, StatusReason: i.StatusReason,
 		VerificationState: i.VerificationState, VerificationNote: i.VerificationNote,
 		VerifiedAt: i.VerifiedAt, VerifiedBy: i.VerifiedBy, Version: i.Version,
@@ -277,12 +284,13 @@ type ResourceKind string
 
 const (
 	ResourceProject   ResourceKind = "project"
+	ResourceEpic      ResourceKind = "epic"
 	ResourceTopic     ResourceKind = "topic"
 	ResourceMilestone ResourceKind = "milestone"
 )
 
 // ResourceKinds lists every resource kind.
-var ResourceKinds = []ResourceKind{ResourceProject, ResourceTopic, ResourceMilestone}
+var ResourceKinds = []ResourceKind{ResourceProject, ResourceEpic, ResourceTopic, ResourceMilestone}
 
 // ParseResourceKind returns the resource kind named v.
 func ParseResourceKind(v string) (ResourceKind, bool) { return parseEnum(v, ResourceKinds) }

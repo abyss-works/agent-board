@@ -194,9 +194,9 @@ func TestValidateDocumentRules(t *testing.T) {
 	}
 }
 
-func TestMaxDocumentBytesIsOneMiB(t *testing.T) {
-	if MaxDocumentBytes != 1024*1024 {
-		t.Errorf("MaxDocumentBytes = %d, want %d", MaxDocumentBytes, 1024*1024)
+func TestMaxDocumentBytesIsTwoMiB(t *testing.T) {
+	if MaxDocumentBytes != 2*1024*1024 {
+		t.Errorf("MaxDocumentBytes = %d, want %d", MaxDocumentBytes, 2*1024*1024)
 	}
 }
 

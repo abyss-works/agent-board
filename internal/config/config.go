@@ -5,21 +5,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
+// DefaultDBMaxConns is the default PostgreSQL connection pool size when
+// AGB_DATABASE_URL is configured and AGB_DB_MAX_CONNS is unset.
+const DefaultDBMaxConns = 16
+
 // Config is the complete server configuration.
 type Config struct {
-	Addr    string
-	DataDir string
-	Token   string
-	Actors  []model.Actor
-	WebDir  string // folder with the built web client; empty means it is not served
-	Backup  Backup
+	Addr        string
+	DataDir     string
+	DatabaseURL string // PostgreSQL connection URL; empty keeps SQLite mode
+	DBMaxConns  int    // PostgreSQL connection pool limit
+	Token       string
+	Actors      []model.Actor
+	WebDir      string // folder with the built web client; empty means it is not served
+	Backup      Backup
 	// Embedding configures the search by meaning; it is off without an API key.
 	Embedding Embedding
 	// SeedTokens are per-actor secrets a local server registers at startup,
@@ -27,6 +35,9 @@ type Config struct {
 	// remote server.
 	SeedTokens map[string]string
 }
+
+// UsePostgres reports whether the server is configured to run on PostgreSQL.
+func (c *Config) UsePostgres() bool { return c.DatabaseURL != "" }
 
 // Backup configures the periodic snapshot upload. It is off until a bucket
 // is named.
@@ -68,10 +79,12 @@ const MinTokenLength = 32
 // Load reads the configuration through getenv (usually os.Getenv).
 func Load(getenv func(string) string) (*Config, error) {
 	cfg := &Config{
-		Addr:    getenv("AGB_ADDR"),
-		DataDir: getenv("AGB_DATA_DIR"),
-		Token:   getenv("AGB_TOKEN"),
-		WebDir:  getenv("AGB_WEB_DIR"),
+		Addr:        getenv("AGB_ADDR"),
+		DataDir:     getenv("AGB_DATA_DIR"),
+		DatabaseURL: strings.TrimSpace(getenv("AGB_DATABASE_URL")),
+		DBMaxConns:  DefaultDBMaxConns,
+		Token:       getenv("AGB_TOKEN"),
+		WebDir:      getenv("AGB_WEB_DIR"),
 		Backup: Backup{
 			Bucket:          getenv("AGB_BACKUP_BUCKET"),
 			Endpoint:        getenv("AGB_BACKUP_ENDPOINT"),
@@ -112,6 +125,20 @@ func Load(getenv func(string) string) (*Config, error) {
 		errs = append(errs, err)
 	}
 	cfg.Actors = actors
+
+	if cfg.DatabaseURL != "" {
+		if err := validateDatabaseURL(cfg.DatabaseURL); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if v := strings.TrimSpace(getenv("AGB_DB_MAX_CONNS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			errs = append(errs, fmt.Errorf("AGB_DB_MAX_CONNS must be a positive integer, got %q", previewValue(v)))
+		} else {
+			cfg.DBMaxConns = n
+		}
+	}
 
 	if cfg.WebDir != "" {
 		if info, err := os.Stat(cfg.WebDir); err != nil || !info.IsDir() {
@@ -224,4 +251,22 @@ func previewValue(s string) string {
 		n++
 	}
 	return strings.ToValidUTF8(s, "�")
+}
+
+// validateDatabaseURL checks that raw uses the postgres:// or postgresql://
+// scheme with a host. Error messages never echo raw values or credentials.
+func validateDatabaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("AGB_DATABASE_URL must be a valid postgres:// or postgresql:// URL")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "postgres", "postgresql":
+	default:
+		return errors.New("AGB_DATABASE_URL must use the postgres:// or postgresql:// scheme")
+	}
+	if u.Host == "" && u.Query().Get("host") == "" {
+		return errors.New("AGB_DATABASE_URL must include a database host")
+	}
+	return nil
 }
