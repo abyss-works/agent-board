@@ -126,4 +126,11 @@ curl -fsS https://<서비스 도메인>/v1/health
 
 SQLite 데이터는 `agb migrate --source <SQLite 사본> --plan`으로 계획을 보고, `--target`(또는 `AGB_DATABASE_URL`)으로 적재한 뒤 검증 표가 모두 `PASS`인지 확인한다. 적재가 끝나면 서버가 `ingest_job`을 처리해 검색 색인을 채운다(`dead_letter`가 0인지 확인).
 
-전환 전에 확인할 것: PostgreSQL 모드 서버가 제공하는 API 범위가 SQLite 모드와 같지 않다(`/v1/activity`, `/v1/agenda`, `/v1/board`, `/v1/digest`, `/v1/documents`, `/v1/graph`, `/v1/labels`, `/v1/queue`, `/v1/search`, `/v1/templates`, `/v1/projects/{key}/topics|documents|overview|activity`, `/v1/issues/{key}/claims`는 404다). 이 경로를 쓰는 CLI 명령과 웹 화면은 PostgreSQL 모드에서 동작하지 않는다.
+PostgreSQL 모드 서버는 SQLite 모드의 조회·목록·쓰기 경로를 같은 요청·응답 형태로 제공한다. 설계상 달라지는 점은 다음과 같다.
+
+- 프로젝트 키는 대소문자를 구분하지 않으며 프로젝트 목록에 GLOBAL은 나오지 않는다.
+- 주제(topic)는 라벨로 합쳐졌다. `/topics`는 읽기만 되고 쓰기는 `410 topic_removed`다.
+- 마일스톤 상태는 `planned`/`active`/`closed`다(`open`은 `planned`/`active`로 대응). `target_date`는 지원하지 않고 값을 주면 `422 target_date_removed`다.
+- 이슈의 `parent`는 `source_issue_key`를 가진 에픽으로, `depends_on`은 확정된 `depends_on` 간선으로 저장된다.
+- `acknowledged`는 지원하지 않는다.
+- 유사(`similar`) 간선과 의미 검색 결과는 임베딩이 켜져 있을 때만 나온다.
