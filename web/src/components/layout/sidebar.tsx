@@ -1,4 +1,4 @@
-import { ActivityIcon, BookOpenIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, TerminalIcon, Trash2Icon } from 'lucide-react'
+import { ActivityIcon, BookOpenIcon, FileTextIcon, GitPullRequestIcon, LayersIcon, SearchIcon, ChevronsUpDownIcon, FolderIcon, FolderTreeIcon, KanbanIcon, KeyRoundIcon, LayoutDashboardIcon, ListIcon, LogOutIcon, MilestoneIcon, PlusIcon, SettingsIcon, TerminalIcon, Trash2Icon } from 'lucide-react'
 import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router'
 import { useActors, useProjects } from '@/api/queries'
@@ -238,6 +238,22 @@ export function Sidebar() {
         <NavLink to="/documents" className={menuLinkClass}>
           <BookOpenIcon className="size-4" />
           <span className="flex-1">기록</span>
+        </NavLink>
+        <NavLink to="/context" className={menuLinkClass}>
+          <SearchIcon className="size-4" />
+          <span className="flex-1">통합 조회</span>
+        </NavLink>
+        <NavLink to="/stages" className={menuLinkClass}>
+          <LayersIcon className="size-4" />
+          <span className="flex-1">에픽·마일스톤</span>
+        </NavLink>
+        <NavLink to="/specs" className={menuLinkClass}>
+          <FileTextIcon className="size-4" />
+          <span className="flex-1">스펙</span>
+        </NavLink>
+        <NavLink to="/review" className={menuLinkClass}>
+          <GitPullRequestIcon className="size-4" />
+          <span className="flex-1">연결 검토</span>
         </NavLink>
         <NavLink to="/tokens" className={menuLinkClass}>
           <KeyRoundIcon className="size-4" />

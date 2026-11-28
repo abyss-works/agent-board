@@ -8,6 +8,7 @@ import { backgroundOf } from '@/lib/overlay'
 import { ActivityPage } from '@/pages/activity-page'
 import { ActorPage } from '@/pages/actor-page'
 import { BoardPage } from '@/pages/board-page'
+import { ContextPage } from '@/pages/context-page'
 import { DevicePage } from '@/pages/device-page'
 import { DocumentPage } from '@/pages/document-page'
 import { DocumentsPage } from '@/pages/documents-page'
@@ -16,7 +17,10 @@ import { IssuesPage } from '@/pages/issues-page'
 import { LoginPage } from '@/pages/login-page'
 import { MilestonesPage } from '@/pages/milestones-page'
 import { OverviewPage } from '@/pages/overview-page'
+import { ReviewPage } from '@/pages/review-page'
 import { SessionsPage } from '@/pages/sessions-page'
+import { SpecHistoryPage, SpecsPage } from '@/pages/specs-page'
+import { StagesPage } from '@/pages/stages-page'
 import { TokensPage } from '@/pages/tokens-page'
 
 // sonner는 px로 고정한 크기를 레이어 밖 CSS로 넣는다. 루트 글꼴 크기를 따르도록 기본 px 값을 rem(÷16)으로 덮어쓴다.
@@ -57,6 +61,11 @@ function Root() {
           <Route path="/sessions" element={<SessionsPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/documents/:project/:name" element={<DocumentPage />} />
+          <Route path="/context" element={<ContextPage />} />
+          <Route path="/review" element={<ReviewPage />} />
+          <Route path="/stages" element={<StagesPage />} />
+          <Route path="/specs" element={<SpecsPage />} />
+          <Route path="/specs/:project/:slug" element={<SpecHistoryPage />} />
           <Route path="/device" element={<DevicePage />} />
           <Route path="/tokens" element={<TokensPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
