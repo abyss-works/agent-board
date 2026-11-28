@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -276,5 +277,220 @@ func TestPGAPIHealthStatsAndDomainContracts(t *testing.T) {
 	rec = pgDo(h, "POST", "/v1/projects/CORE/records/2026-11-28-decision-1.md/archive", nil, "")
 	if rec.Code != 200 {
 		t.Fatalf("archive record = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPGAPIRegressionGuardsSessionsMessagesAndSSE(t *testing.T) {
+	baseDSN := strings.TrimSpace(os.Getenv("AGB_TEST_PG_DSN"))
+	if baseDSN == "" {
+		t.Skip("AGB_TEST_PG_DSN not set")
+	}
+	u, err := url.Parse(baseDSN)
+	if err != nil {
+		t.Fatalf("parse AGB_TEST_PG_DSN: %v", err)
+	}
+	ctx := context.Background()
+	dbName := fmt.Sprintf("agb_t_api_%d_%d", os.Getpid(), apiTestDBSeq.Add(1))
+	pool, err := pgxpool.New(ctx, baseDSN)
+	if err != nil {
+		t.Fatalf("connect admin pool: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
+		pool.Close()
+		t.Fatalf("CREATE DATABASE %s: %v", dbName, err)
+	}
+	pool.Close()
+	t.Cleanup(func() {
+		p, err := pgxpool.New(context.Background(), baseDSN)
+		if err != nil {
+			return
+		}
+		defer p.Close()
+		_, _ = p.Exec(context.Background(), `DROP DATABASE IF EXISTS `+dbName+` WITH (FORCE)`)
+	})
+	u.Path = "/" + dbName
+	pgs, err := pgstore.Open(ctx, u.String(), 8)
+	if err != nil {
+		t.Fatalf("pgstore.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = pgs.Close() })
+
+	actors := []model.Actor{
+		{ID: "owner", Kind: model.ActorUser},
+		{ID: "worker", Kind: model.ActorAgent},
+	}
+	if err := pgs.EnsureActors(ctx, actors); err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{
+		Token:           testToken,
+		Actors:          actors,
+		Version:         "test",
+		Logger:          slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		PGStore:         pgs,
+		SSEPingInterval: 25 * time.Millisecond,
+	})
+	t.Cleanup(func() {
+		if c, ok := h.(io.Closer); ok {
+			_ = c.Close()
+		}
+	})
+
+	// Setup project and issues.
+	if rec := pgDo(h, "POST", "/v1/projects", []byte(`{"key":"SEC","name":"Security"}`), ""); rec.Code != 201 {
+		t.Fatalf("create project = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := pgDo(h, "POST", "/v1/projects/SEC/issues", []byte(`{"title":"Item 1"}`), "")
+	if rec.Code != 201 {
+		t.Fatalf("create issue = %d %s", rec.Code, rec.Body.String())
+	}
+	var iss struct {
+		Key     string `json:"key"`
+		Version int64  `json:"version"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &iss)
+
+	// 1. pgPatchIssue rejects non-nullable null fields with 422.
+	rec = pgDo(h, "PATCH", "/v1/issues/"+iss.Key, []byte(`{"title":null,"status":null}`), "")
+	if rec.Code != 422 || decodeErr(t, rec).Error.Code != "validation_failed" {
+		t.Fatalf("patch null fields = %d %s, want 422 validation_failed", rec.Code, rec.Body.String())
+	}
+
+	// 2. pgVerifyIssue rejects verification_state=none with 422.
+	rec = pgDo(h, "POST", "/v1/issues/"+iss.Key+"/verify", nil, "")
+	if rec.Code != 422 || decodeErr(t, rec).Error.Code != "validation_failed" {
+		t.Fatalf("verify none issue = %d %s, want 422 validation_failed", rec.Code, rec.Body.String())
+	}
+
+	// 3. pgDeleteIssue honors If-Match (wrong version -> 412).
+	req := httptest.NewRequest("DELETE", "/v1/issues/"+iss.Key+"?reason=cleanup", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Actor", "owner")
+	req.Header.Set("X-Session-Id", "pg-api-test")
+	req.Header.Set("X-Client-Host", "devbox")
+	req.Header.Set("If-Match", `"999"`)
+	delRec := httptest.NewRecorder()
+	h.ServeHTTP(delRec, req)
+	if delRec.Code != 412 {
+		t.Fatalf("delete with wrong If-Match = %d %s, want 412", delRec.Code, delRec.Body.String())
+	}
+
+	// 4. Document body size bypass via oversized metadata (4 MiB JSON body -> 413), NUL in title -> 415.
+	metaBypass := []byte(`{"title":"` + strings.Repeat("a", 3*1024*1024+100) + `","content":"ok"}`)
+	rec = pgDo(h, "PUT", "/v1/projects/SEC/specs/meta-bypass", metaBypass, "application/json")
+	if rec.Code != 413 {
+		t.Fatalf("oversized metadata spec = %d %s, want 413", rec.Code, rec.Body.String())
+	}
+	rec = pgDo(h, "PUT", "/v1/projects/SEC/specs/nul-title", []byte(`{"title":"bad\u0000title","content":"ok"}`), "application/json")
+	if rec.Code != 415 {
+		t.Fatalf("NUL in spec title = %d %s, want 415", rec.Code, rec.Body.String())
+	}
+
+	// 5. Record name rejects ../ traversal and /archive suffix with 422.
+	for _, badName := range []string{"../escape.md", "sub/archive", "archive"} {
+		payload, _ := json.Marshal(map[string]any{"name": badName, "kind": "decision", "content": "ok"})
+		rec = pgDo(h, "POST", "/v1/projects/SEC/records", payload, "application/json")
+		if rec.Code != 422 {
+			t.Fatalf("bad record name %q = %d %s, want 422", badName, rec.Code, rec.Body.String())
+		}
+	}
+
+	// 6. Sessions POST /v1/sessions and PATCH /v1/sessions/{actor}/{session}.
+	rec = pgDo(h, "POST", "/v1/sessions", []byte(`{"session_id":"child-1","role":"subagent"}`), "")
+	if rec.Code != 201 {
+		t.Fatalf("POST /v1/sessions = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = pgDo(h, "PATCH", "/v1/sessions/owner/child-1", []byte(`{"state":"waiting_input","state_reason":"need review"}`), "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"waiting_input"`) {
+		t.Fatalf("PATCH /v1/sessions = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 7. Messages: to_session, missing reply_to -> 422, GET /v1/messages/{id}, ListMessages filters + total.
+	rec = pgDo(h, "POST", "/v1/projects/SEC/messages", []byte(`{"title":"Bad reply","body":"x","reply_to":99999}`), "")
+	if rec.Code != 422 {
+		t.Fatalf("missing reply_to = %d %s, want 422", rec.Code, rec.Body.String())
+	}
+	rec = pgDo(h, "POST", "/v1/projects/SEC/messages", []byte(fmt.Sprintf(
+		`{"title":"Targeted","body":"hi","to_session":{"actor":"worker","session_id":"w-1"},"issue":%q}`, iss.Key,
+	)), "")
+	if rec.Code != 201 {
+		t.Fatalf("create targeted message = %d %s", rec.Code, rec.Body.String())
+	}
+	var msg model.Message
+	_ = json.Unmarshal(rec.Body.Bytes(), &msg)
+
+	rec = pgDo(h, "GET", fmt.Sprintf("/v1/messages/%d", msg.ID), nil, "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Targeted"`) {
+		t.Fatalf("GET /v1/messages/{id} = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = pgDo(h, "POST", "/v1/projects/SEC/messages", []byte(fmt.Sprintf(`{"title":"Reply","body":"ack","reply_to":%d}`, msg.ID)), "")
+	if rec.Code != 201 {
+		t.Fatalf("create reply = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = pgDo(h, "GET", fmt.Sprintf("/v1/projects/SEC/messages?to_session=worker/w-1&issue=%s", iss.Key), nil, "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"total":1`) {
+		t.Fatalf("filtered messages = %d %s, want total=1", rec.Code, rec.Body.String())
+	}
+	rec = pgDo(h, "GET", fmt.Sprintf("/v1/projects/SEC/messages?reply_to=%d", msg.ID), nil, "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"total":1`) {
+		t.Fatalf("reply_to filtered messages = %d %s, want total=1", rec.Code, rec.Body.String())
+	}
+
+	// 8. SSE keepalive ping and immediate disconnect upon token revocation.
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	tok, err := pgs.CreateToken(ctx, pgstore.Trace{Actor: "owner"}, pgstore.CreateTokenInput{
+		Actor: "worker", ClientHost: "devbox", Secret: "agb_test_sse_token_secret_123456", CreatedBy: "owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sseCtx, sseCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer sseCancel()
+	sseReq, _ := http.NewRequestWithContext(sseCtx, "GET", ts.URL+"/v1/events/stream", nil)
+	sseReq.Header.Set("Authorization", "Bearer agb_test_sse_token_secret_123456")
+	sseReq.Header.Set("X-Actor", "worker")
+	sseReq.Header.Set("X-Session-Id", "w-sse")
+	sseReq.Header.Set("X-Client-Host", "devbox")
+	sseResp, err := http.DefaultClient.Do(sseReq)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer sseResp.Body.Close()
+	if sseResp.StatusCode != 200 {
+		t.Fatalf("SSE status = %d", sseResp.StatusCode)
+	}
+
+	// Read keepalive ping, then revoke token and assert stream closes promptly.
+	buf := make([]byte, 64)
+	n, err := sseResp.Body.Read(buf)
+	if err != nil || !strings.Contains(string(buf[:n]), ": ping") {
+		t.Fatalf("expected : ping keepalive, got %q err=%v", string(buf[:n]), err)
+	}
+	if rec := pgDo(h, "DELETE", fmt.Sprintf("/v1/tokens/%d", tok.ID), nil, ""); rec.Code != 200 {
+		t.Fatalf("revoke token = %d %s", rec.Code, rec.Body.String())
+	}
+	eofDone := make(chan error, 1)
+	go func() {
+		_, rerr := io.ReadAll(sseResp.Body)
+		eofDone <- rerr
+	}()
+	select {
+	case rerr := <-eofDone:
+		if rerr != nil {
+			t.Fatalf("SSE stream read after revoke = %v, want clean EOF", rerr)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("SSE stream stayed open after token revocation")
+	}
+
+	// Broker closed -> 503 shutting_down.
+	if c, ok := h.(io.Closer); ok {
+		_ = c.Close()
+	}
+	rec = pgDo(h, "GET", "/v1/events/stream", nil, "")
+	if rec.Code != 503 || decodeErr(t, rec).Error.Code != "shutting_down" {
+		t.Fatalf("stream after broker close = %d %s, want 503 shutting_down", rec.Code, rec.Body.String())
 	}
 }

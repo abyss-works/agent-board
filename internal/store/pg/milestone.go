@@ -338,7 +338,7 @@ func listUnverifiedMilestoneIssuesTx(ctx context.Context, tx pgx.Tx, milestoneID
 func checkMilestoneForIssueTx(ctx context.Context, tx pgx.Tx, projectID, milestoneID int64, priority model.Priority, issueType model.IssueType, force bool, reason string) (forcedReason string, err error) {
 	var msProjectID int64
 	var msStatus string
-	err = tx.QueryRow(ctx, `SELECT project_id, status FROM milestone WHERE id = $1`, milestoneID).Scan(&msProjectID, &msStatus)
+	err = tx.QueryRow(ctx, `SELECT project_id, status FROM milestone WHERE id = $1 FOR SHARE`, milestoneID).Scan(&msProjectID, &msStatus)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && msProjectID != projectID) {
 		return "", violation("milestone_id", "invalid_value", "같은 프로젝트의 마일스톤이어야 합니다.")
 	}

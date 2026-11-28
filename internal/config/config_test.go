@@ -344,8 +344,13 @@ func TestLoadDatabaseConfig(t *testing.T) {
 		}
 	}
 
-	// Invalid AGB_DB_MAX_CONNS values.
-	for _, bad := range []string{"0", "-4", "abc"} {
+	// Upper bound accepted at MaxDBMaxConns.
+	if cfg, err := Load(with("AGB_DB_MAX_CONNS", "1000")); err != nil || cfg.DBMaxConns != 1000 {
+		t.Errorf("AGB_DB_MAX_CONNS=1000: cfg=%+v err=%v", cfg, err)
+	}
+
+	// Invalid AGB_DB_MAX_CONNS values including int32 overflow and > MaxDBMaxConns.
+	for _, bad := range []string{"0", "-4", "abc", "1001", "2147483648"} {
 		_, err := Load(with("AGB_DB_MAX_CONNS", bad))
 		if err == nil || !strings.Contains(err.Error(), "AGB_DB_MAX_CONNS") {
 			t.Errorf("AGB_DB_MAX_CONNS=%q: err = %v, want AGB_DB_MAX_CONNS error", bad, err)

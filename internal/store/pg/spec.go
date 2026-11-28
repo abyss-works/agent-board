@@ -13,14 +13,45 @@ import (
 	"github.com/wsk0715/agent-board/internal/model"
 )
 
+const (
+	maxDocTitleRunes     = 512
+	maxDocKindRunes      = 64
+	maxChangeSummaryLen  = 1024
+	maxSourcePathRunes   = 512
+	maxDocTags           = 64
+	maxDocTagRunes       = 128
+	maxConcurrentRetries = 2
+)
+
+func checkTextFieldUTF8AndNUL(s string) error {
+	if !utf8.ValidString(s) {
+		return model.ErrInvalidUTF8
+	}
+	if strings.IndexByte(s, 0) >= 0 {
+		return model.ErrBinaryPayload
+	}
+	return nil
+}
+
 // UpsertSpec creates a mutable specification document or appends a new
 // spec_revision, records document_activity, emits an event, and enqueues an
-// ingest job.
+// ingest job. Concurrent first-write races on (project_id, slug) retry cleanly.
 func (s *Store) UpsertSpec(ctx context.Context, tr Trace, projectKey, slug string, in UpsertSpecInput) (SpecWriteResult, error) {
 	projectKey = model.NormalizeProjectKey(projectKey)
 	if err := model.ValidateUTF8TextString(in.Content); err != nil {
 		return SpecWriteResult{}, err
 	}
+	for _, fieldVal := range []string{slug, in.Title, in.Kind, in.ChangeSummary} {
+		if err := checkTextFieldUTF8AndNUL(fieldVal); err != nil {
+			return SpecWriteResult{}, err
+		}
+	}
+	for _, t := range in.Tags {
+		if err := checkTextFieldUTF8AndNUL(t); err != nil {
+			return SpecWriteResult{}, err
+		}
+	}
+
 	var verr model.ValidationError
 	if !model.ValidSpecSlug(slug) {
 		verr.Fields = append(verr.Fields, model.FieldError{
@@ -30,16 +61,46 @@ func (s *Store) UpsertSpec(ctx context.Context, tr Trace, projectKey, slug strin
 		})
 	}
 	title := strings.TrimSpace(in.Title)
-	if n := utf8.RuneCountInString(title); n < 1 || n > model.MaxTitleRunes {
+	if n := utf8.RuneCountInString(title); n < 1 || n > maxDocTitleRunes {
 		verr.Fields = append(verr.Fields, model.FieldError{
 			Field:   "title",
 			Reason:  "invalid_value",
-			Message: fmt.Sprintf("1~%d자여야 합니다.", model.MaxTitleRunes),
+			Message: fmt.Sprintf("1~%d자여야 합니다.", maxDocTitleRunes),
 		})
 	}
 	kind := strings.TrimSpace(in.Kind)
 	if kind == "" {
 		kind = "spec"
+	} else if utf8.RuneCountInString(kind) > maxDocKindRunes {
+		verr.Fields = append(verr.Fields, model.FieldError{
+			Field:   "kind",
+			Reason:  "invalid_value",
+			Message: fmt.Sprintf("%d자를 넘을 수 없습니다.", maxDocKindRunes),
+		})
+	}
+	if utf8.RuneCountInString(in.ChangeSummary) > maxChangeSummaryLen {
+		verr.Fields = append(verr.Fields, model.FieldError{
+			Field:   "change_summary",
+			Reason:  "invalid_value",
+			Message: fmt.Sprintf("%d자를 넘을 수 없습니다.", maxChangeSummaryLen),
+		})
+	}
+	if len(in.Tags) > maxDocTags {
+		verr.Fields = append(verr.Fields, model.FieldError{
+			Field:   "tags",
+			Reason:  "invalid_value",
+			Message: fmt.Sprintf("태그는 최대 %d개입니다.", maxDocTags),
+		})
+	} else {
+		for i, tag := range in.Tags {
+			if utf8.RuneCountInString(strings.TrimSpace(tag)) > maxDocTagRunes {
+				verr.Fields = append(verr.Fields, model.FieldError{
+					Field:   fmt.Sprintf("tags[%d]", i),
+					Reason:  "invalid_value",
+					Message: fmt.Sprintf("%d자를 넘을 수 없습니다.", maxDocTagRunes),
+				})
+			}
+		}
 	}
 	if len(verr.Fields) > 0 {
 		return SpecWriteResult{}, &verr
@@ -51,126 +112,132 @@ func (s *Store) UpsertSpec(ctx context.Context, tr Trace, projectKey, slug strin
 	sizeBytes := len(in.Content)
 
 	var res SpecWriteResult
-	err := s.withTx(ctx, func(tx pgx.Tx, events *[]model.Event) error {
-		proj, err := getProjectTx(ctx, tx, projectKey, false)
-		if err != nil {
-			return err
-		}
-		if proj.Status != model.ProjectActive {
-			return ErrProjectNotActive
-		}
-		now := s.now()
-		var docID int64
-		var createdAt time.Time
-		var createdBy string
-		var archived bool
-		var created bool
-		var revNo int
-
-		err = tx.QueryRow(ctx,
-			`SELECT id, created_at, created_by, archived
-			 FROM spec_document
-			 WHERE project_id = $1 AND slug = $2
-			 FOR UPDATE`,
-			proj.ID, slug,
-		).Scan(&docID, &createdAt, &createdBy, &archived)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			created = true
-			createdAt = now
-			createdBy = tr.Actor
-			revNo = 1
-			if err := tx.QueryRow(ctx,
-				`INSERT INTO spec_document (project_id, slug, kind, title, tags, archived, created_at, created_by, updated_at, updated_by)
-				 VALUES ($1, $2, $3, $4, $5::jsonb, FALSE, $6, $7, $6, $7)
-				 RETURNING id`,
-				proj.ID, slug, kind, title, tagsJSON, now, tr.Actor,
-			).Scan(&docID); err != nil {
+	var err error
+	for attempt := 0; attempt < maxConcurrentRetries; attempt++ {
+		err = s.withTx(ctx, func(tx pgx.Tx, events *[]model.Event) error {
+			proj, err := getProjectTx(ctx, tx, projectKey, false)
+			if err != nil {
 				return err
 			}
-		case err != nil:
-			return err
-		default:
-			var maxRev int
+			if proj.Status != model.ProjectActive {
+				return ErrProjectNotActive
+			}
+			now := s.now()
+			var docID int64
+			var createdAt time.Time
+			var createdBy string
+			var archived bool
+			var created bool
+			var revNo int
+
+			err = tx.QueryRow(ctx,
+				`SELECT id, created_at, created_by, archived
+				 FROM spec_document
+				 WHERE project_id = $1 AND slug = $2
+				 FOR UPDATE`,
+				proj.ID, slug,
+			).Scan(&docID, &createdAt, &createdBy, &archived)
+			switch {
+			case errors.Is(err, pgx.ErrNoRows):
+				created = true
+				createdAt = now
+				createdBy = tr.Actor
+				revNo = 1
+				if err := tx.QueryRow(ctx,
+					`INSERT INTO spec_document (project_id, slug, kind, title, tags, archived, created_at, created_by, updated_at, updated_by)
+					 VALUES ($1, $2, $3, $4, $5::jsonb, FALSE, $6, $7, $6, $7)
+					 RETURNING id`,
+					proj.ID, slug, kind, title, tagsJSON, now, tr.Actor,
+				).Scan(&docID); err != nil {
+					return err
+				}
+			case err != nil:
+				return err
+			default:
+				var maxRev int
+				if err := tx.QueryRow(ctx,
+					`SELECT COALESCE(MAX(revision_no), 0) FROM spec_revision WHERE spec_document_id = $1`, docID,
+				).Scan(&maxRev); err != nil {
+					return err
+				}
+				revNo = maxRev + 1
+			}
+
+			var revID int64
 			if err := tx.QueryRow(ctx,
-				`SELECT COALESCE(MAX(revision_no), 0) FROM spec_revision WHERE spec_document_id = $1`, docID,
-			).Scan(&maxRev); err != nil {
+				`INSERT INTO spec_revision (
+					spec_document_id, revision_no, title, content, sha256, size_bytes,
+					change_summary, created_at, created_by, session_id, client_host
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+				RETURNING id`,
+				docID, revNo, title, in.Content, hash, sizeBytes,
+				in.ChangeSummary, now, tr.Actor, tr.SessionID, tr.ClientHost,
+			).Scan(&revID); err != nil {
 				return err
 			}
-			revNo = maxRev + 1
-		}
+			if _, err := tx.Exec(ctx,
+				`UPDATE spec_document
+				 SET kind = $1, title = $2, tags = $3::jsonb, current_revision_id = $4, updated_at = $5, updated_by = $6
+				 WHERE id = $7`,
+				kind, title, tagsJSON, revID, now, tr.Actor, docID,
+			); err != nil {
+				return err
+			}
 
-		var revID int64
-		if err := tx.QueryRow(ctx,
-			`INSERT INTO spec_revision (
-				spec_document_id, revision_no, title, content, sha256, size_bytes,
-				change_summary, created_at, created_by, session_id, client_host
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			RETURNING id`,
-			docID, revNo, title, in.Content, hash, sizeBytes,
-			in.ChangeSummary, now, tr.Actor, tr.SessionID, tr.ClientHost,
-		).Scan(&revID); err != nil {
-			return err
+			changes := map[string]model.Change{
+				"revision_no": makeChange(nil, revNo),
+				"sha256":      makeChange(nil, hash),
+				"title":       makeChange(nil, title),
+			}
+			actID, err := insertDocumentActivityTx(ctx, tx, "spec", docID, tr, now, changes)
+			if err != nil {
+				return err
+			}
+			evKind := model.EventSpecUpdated
+			if created {
+				evKind = model.EventSpecCreated
+			}
+			pk := proj.Key
+			if err := emitEventTx(ctx, tx, events, now, &proj.ID, &pk, evKind, proj.Key+"/"+slug, tr.Actor, tr.SessionID, map[string]any{
+				"activity_id": actID,
+				"revision_no": revNo,
+			}); err != nil {
+				return err
+			}
+			jobID, err := enqueueIngestJobTx(ctx, tx, model.IngestSourceSpec, docID, hash)
+			if err != nil {
+				return err
+			}
+			contentCopy := in.Content
+			res = SpecWriteResult{
+				Spec: model.SpecDocument{
+					ID:                docID,
+					Project:           proj.Key,
+					Slug:              slug,
+					Kind:              kind,
+					Title:             title,
+					Tags:              tags,
+					CurrentRevisionID: &revID,
+					CurrentRevisionNo: revNo,
+					SHA256:            hash,
+					SizeBytes:         sizeBytes,
+					Content:           &contentCopy,
+					Archived:          archived,
+					CreatedAt:         model.NewTime(createdAt),
+					CreatedBy:         createdBy,
+					UpdatedAt:         model.NewTime(now),
+					UpdatedBy:         tr.Actor,
+				},
+				Created:      created,
+				IngestJobID:  jobID,
+				IngestStatus: model.IngestStatusPending,
+			}
+			return nil
+		})
+		if err == nil || !isUniqueViolation(err) {
+			break
 		}
-		if _, err := tx.Exec(ctx,
-			`UPDATE spec_document
-			 SET kind = $1, title = $2, tags = $3::jsonb, current_revision_id = $4, updated_at = $5, updated_by = $6
-			 WHERE id = $7`,
-			kind, title, tagsJSON, revID, now, tr.Actor, docID,
-		); err != nil {
-			return err
-		}
-
-		changes := map[string]model.Change{
-			"revision_no": makeChange(nil, revNo),
-			"sha256":      makeChange(nil, hash),
-			"title":       makeChange(nil, title),
-		}
-		actID, err := insertDocumentActivityTx(ctx, tx, "spec", docID, tr, now, changes)
-		if err != nil {
-			return err
-		}
-		evKind := model.EventSpecUpdated
-		if created {
-			evKind = model.EventSpecCreated
-		}
-		pk := proj.Key
-		if err := emitEventTx(ctx, tx, events, now, &proj.ID, &pk, evKind, proj.Key+"/"+slug, tr.Actor, tr.SessionID, map[string]any{
-			"activity_id": actID,
-			"revision_no": revNo,
-		}); err != nil {
-			return err
-		}
-		jobID, err := enqueueIngestJobTx(ctx, tx, model.IngestSourceSpec, docID, hash)
-		if err != nil {
-			return err
-		}
-		contentCopy := in.Content
-		res = SpecWriteResult{
-			Spec: model.SpecDocument{
-				ID:                docID,
-				Project:           proj.Key,
-				Slug:              slug,
-				Kind:              kind,
-				Title:             title,
-				Tags:              tags,
-				CurrentRevisionID: &revID,
-				CurrentRevisionNo: revNo,
-				SHA256:            hash,
-				SizeBytes:         sizeBytes,
-				Content:           &contentCopy,
-				Archived:          archived,
-				CreatedAt:         model.NewTime(createdAt),
-				CreatedBy:         createdBy,
-				UpdatedAt:         model.NewTime(now),
-				UpdatedBy:         tr.Actor,
-			},
-			Created:      created,
-			IngestJobID:  jobID,
-			IngestStatus: model.IngestStatusPending,
-		}
-		return nil
-	})
+	}
 	return res, err
 }
 
@@ -208,11 +275,11 @@ func (s *Store) GetSpec(ctx context.Context, projectKey, slug string) (model.Spe
 	return d, nil
 }
 
-// ListSpecs returns spec summaries of a project matching filter.
-func (s *Store) ListSpecs(ctx context.Context, projectKey string, filter SpecFilter) ([]model.SpecSummary, error) {
+// ListSpecs returns spec summaries of a project matching filter and the total count before pagination.
+func (s *Store) ListSpecs(ctx context.Context, projectKey string, filter SpecFilter) ([]model.SpecSummary, int, error) {
 	projectKey = model.NormalizeProjectKey(projectKey)
 	if _, err := s.GetProject(ctx, projectKey); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	args := []any{projectKey}
 	cond := ` WHERE p.key = $1`
@@ -223,12 +290,17 @@ func (s *Store) ListSpecs(ctx context.Context, projectKey string, filter SpecFil
 		args = append(args, filter.Kinds)
 		cond += fmt.Sprintf(` AND d.kind = ANY($%d)`, len(args))
 	}
+	fromClause := ` FROM spec_document d
+	      JOIN project p ON p.id = d.project_id
+	      JOIN spec_revision r ON r.id = d.current_revision_id`
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*)`+fromClause+cond, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	q := `SELECT d.id, p.key, d.slug, d.kind, d.title, d.tags,
 	             r.revision_no, r.sha256, r.size_bytes,
-	             d.archived, d.created_at, d.created_by, d.updated_at, d.updated_by
-	      FROM spec_document d
-	      JOIN project p ON p.id = d.project_id
-	      JOIN spec_revision r ON r.id = d.current_revision_id` + cond + ` ORDER BY d.updated_at DESC, d.id DESC`
+	             d.archived, d.created_at, d.created_by, d.updated_at, d.updated_by` +
+		fromClause + cond + ` ORDER BY d.updated_at DESC, d.id DESC`
 	if filter.Limit > 0 {
 		args = append(args, filter.Limit)
 		q += fmt.Sprintf(` LIMIT $%d`, len(args))
@@ -239,7 +311,7 @@ func (s *Store) ListSpecs(ctx context.Context, projectKey string, filter SpecFil
 	}
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	items := []model.SpecSummary{}
@@ -252,14 +324,14 @@ func (s *Store) ListSpecs(ctx context.Context, projectKey string, filter SpecFil
 			&d.CurrentRevisionNo, &d.SHA256, &d.SizeBytes,
 			&d.Archived, &createdAt, &d.CreatedBy, &updatedAt, &d.UpdatedBy,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		d.Tags = unmarshalStringArray(tagsRaw)
 		d.CreatedAt = model.NewTime(createdAt)
 		d.UpdatedAt = model.NewTime(updatedAt)
 		items = append(items, d)
 	}
-	return items, rows.Err()
+	return items, total, rows.Err()
 }
 
 // ListSpecRevisions returns all append-only revisions of a spec newest first.

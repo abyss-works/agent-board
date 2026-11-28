@@ -8,9 +8,9 @@ services:
     environment:
       POSTGRES_DB: ${AGB_PG_DB:-agb}
       POSTGRES_USER: ${AGB_PG_USER:-agb}
-      POSTGRES_PASSWORD: ${AGB_PG_PASSWORD:-agb}
+      POSTGRES_PASSWORD: ${AGB_PG_PASSWORD:?AGB_PG_PASSWORD is required}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AGB_PG_USER:-agb} -d ${AGB_PG_DB:-agb}"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10

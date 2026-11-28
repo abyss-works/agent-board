@@ -373,7 +373,11 @@ func (h *handler) patchDeviceAuthorization(w http.ResponseWriter, r *http.Reques
 	created, err := h.registerAgentActor(r.Context(), actor)
 	if err != nil {
 		h.devices.cancelApprove(code)
-		writeError(w, h.storeError(r, err))
+		if h.pgStore != nil {
+			writeError(w, h.pgStoreError(r, err))
+		} else {
+			writeError(w, h.storeError(r, err))
+		}
 		return
 	}
 	d, err := h.devices.finishApprove(code, TraceFrom(r.Context()), created)

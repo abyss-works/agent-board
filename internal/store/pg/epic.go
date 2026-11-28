@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/wsk0715/agent-board/internal/model"
 )
+
+var epicKeyRE = regexp.MustCompile(`^[A-Z][A-Z0-9-]{1,31}$`)
 
 const epicCols = `e.id, p.key, e.key, e.title, e.description, e.status, e.source_issue_id, e.source_issue_key, e.closed_at, e.created_at, e.updated_at, e.created_by, e.updated_by`
 
@@ -39,8 +42,24 @@ func scanEpic(row pgx.Row) (model.Epic, error) {
 func (s *Store) CreateEpic(ctx context.Context, tr Trace, projectKey string, in CreateEpicInput) (model.Epic, error) {
 	projectKey = model.NormalizeProjectKey(projectKey)
 	title := strings.TrimSpace(in.Title)
+	var verr model.ValidationError
 	if n := utf8.RuneCountInString(title); n < 1 || n > model.MaxTitleRunes {
-		return model.Epic{}, violation("title", "invalid_value", fmt.Sprintf("1~%d자여야 합니다.", model.MaxTitleRunes))
+		verr.Fields = append(verr.Fields, model.FieldError{
+			Field:   "title",
+			Reason:  "invalid_value",
+			Message: fmt.Sprintf("1~%d자여야 합니다.", model.MaxTitleRunes),
+		})
+	}
+	customKey := strings.ToUpper(strings.TrimSpace(in.Key))
+	if customKey != "" && !epicKeyRE.MatchString(customKey) {
+		verr.Fields = append(verr.Fields, model.FieldError{
+			Field:   "key",
+			Reason:  "invalid_value",
+			Message: "대문자로 시작하는 대문자·숫자·하이픈 2~32자여야 합니다.",
+		})
+	}
+	if len(verr.Fields) > 0 {
+		return model.Epic{}, &verr
 	}
 	var out model.Epic
 	err := s.withTx(ctx, func(tx pgx.Tx, events *[]model.Event) error {
@@ -51,7 +70,17 @@ func (s *Store) CreateEpic(ctx context.Context, tr Trace, projectKey string, in 
 		if proj.Status != model.ProjectActive {
 			return ErrProjectNotActive
 		}
-		key := strings.ToUpper(strings.TrimSpace(in.Key))
+		if in.SourceIssueID != nil {
+			var issProjID int64
+			err := tx.QueryRow(ctx, `SELECT project_id FROM issue WHERE id = $1`, *in.SourceIssueID).Scan(&issProjID)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && issProjID != proj.ID) {
+				return violation("source_issue_id", "invalid_value", "같은 프로젝트에 존재하는 이슈여야 합니다.")
+			}
+			if err != nil {
+				return err
+			}
+		}
+		key := customKey
 		if key == "" {
 			var count int64
 			if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM epic WHERE project_id = $1`, proj.ID).Scan(&count); err != nil {
@@ -121,11 +150,11 @@ func (s *Store) GetEpic(ctx context.Context, key string) (model.Epic, error) {
 	return e, err
 }
 
-// ListEpics returns epics of a project matching filter.
-func (s *Store) ListEpics(ctx context.Context, projectKey string, filter EpicFilter) ([]model.Epic, error) {
+// ListEpics returns epics of a project matching filter and the total count before pagination.
+func (s *Store) ListEpics(ctx context.Context, projectKey string, filter EpicFilter) ([]model.Epic, int, error) {
 	projectKey = model.NormalizeProjectKey(projectKey)
 	if _, err := s.GetProject(ctx, projectKey); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	args := []any{projectKey}
 	cond := ` WHERE p.key = $1`
@@ -136,6 +165,12 @@ func (s *Store) ListEpics(ctx context.Context, projectKey string, filter EpicFil
 		}
 		args = append(args, vals)
 		cond += fmt.Sprintf(` AND e.status = ANY($%d)`, len(args))
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM epic e JOIN project p ON p.id = e.project_id`+cond, args...,
+	).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 	q := `SELECT ` + epicCols + ` FROM epic e JOIN project p ON p.id = e.project_id` + cond + ` ORDER BY e.id ASC`
 	if filter.Limit > 0 {
@@ -148,18 +183,18 @@ func (s *Store) ListEpics(ctx context.Context, projectKey string, filter EpicFil
 	}
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	items := []model.Epic{}
 	for rows.Next() {
 		e, err := scanEpic(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, e)
 	}
-	return items, rows.Err()
+	return items, total, rows.Err()
 }
 
 // UpdateEpic applies a partial update to an epic.

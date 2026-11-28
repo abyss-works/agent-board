@@ -322,12 +322,12 @@ func (s *Store) GetIssue(ctx context.Context, key string) (IssueDetail, error) {
 	return row.detail, nil
 }
 
-// ListIssues returns issues for a project matching filter.
-func (s *Store) ListIssues(ctx context.Context, projectKey string, filter IssueFilter) ([]IssueDetail, error) {
+// ListIssues returns issues for a project matching filter and the total count before pagination.
+func (s *Store) ListIssues(ctx context.Context, projectKey string, filter IssueFilter) ([]IssueDetail, int, error) {
 	projectKey = model.NormalizeProjectKey(projectKey)
 	if projectKey != "" {
 		if _, err := s.GetProject(ctx, projectKey); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	var conds []string
@@ -377,11 +377,16 @@ func (s *Store) ListIssues(ctx context.Context, projectKey string, filter IssueF
 		conds = append(conds, "EXISTS (SELECT 1 FROM issue_label il WHERE il.issue_id = i.id AND il.label = "+addArg(lbl)+")")
 	}
 
-	q := `SELECT ` + issueCols + issueFrom
+	whereClause := ""
 	if len(conds) > 0 {
-		q += ` WHERE ` + strings.Join(conds, ` AND `)
+		whereClause = ` WHERE ` + strings.Join(conds, ` AND `)
 	}
-	q += ` ORDER BY i.priority ASC, i.created_at ASC, i.id ASC`
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*)`+issueFrom+whereClause, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	q := `SELECT ` + issueCols + issueFrom + whereClause + ` ORDER BY i.priority ASC, i.created_at ASC, i.id ASC`
 	if filter.Limit > 0 {
 		q += ` LIMIT ` + addArg(filter.Limit)
 	}
@@ -391,28 +396,28 @@ func (s *Store) ListIssues(ctx context.Context, projectKey string, filter IssueF
 
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	items := []IssueDetail{}
 	for rows.Next() {
 		r, err := scanIssueRow(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, r.detail)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	ptrs := make([]*IssueDetail, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
 	if err := hydrateIssueCollections(ctx, s.pool, ptrs); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return items, nil
+	return items, total, nil
 }
 
 func sameInt64Ptr(a, b *int64) bool {
@@ -685,15 +690,113 @@ func (s *Store) UpdateIssue(ctx context.Context, tr Trace, key string, expectedV
 	return res, err
 }
 
-// DeleteIssue marks an issue deleted with the required status reason.
-func (s *Store) DeleteIssue(ctx context.Context, tr Trace, key string, reason string) (IssueDetail, error) {
+// DeleteIssue marks an issue deleted with the required status reason and optional If-Match version.
+func (s *Store) DeleteIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64, reason string) (IssueDetail, error) {
 	deleted := model.StatusDeleted
 	patch := IssuePatch{Status: &deleted}
 	if reason != "" {
 		patch.StatusReason = &reason
 	}
-	res, err := s.UpdateIssue(ctx, tr, key, nil, patch)
+	res, err := s.UpdateIssue(ctx, tr, key, expectedVersion, patch)
 	return res.Issue, err
+}
+
+// VerifyIssue transitions a pending issue to verified. Issues with
+// verification_state "none" are rejected with a validation error.
+func (s *Store) VerifyIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64) (IssueDetail, error) {
+	return s.setIssueVerificationState(ctx, tr, key, model.VerificationVerified, expectedVersion)
+}
+
+// UnverifyIssue transitions a verified issue back to pending. Issues with
+// verification_state "none" are rejected with a validation error.
+func (s *Store) UnverifyIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64) (IssueDetail, error) {
+	return s.setIssueVerificationState(ctx, tr, key, model.VerificationPending, expectedVersion)
+}
+
+func (s *Store) setIssueVerificationState(ctx context.Context, tr Trace, key string, target model.VerificationState, expectedVersion *int64) (IssueDetail, error) {
+	var out IssueDetail
+	err := s.withTx(ctx, func(tx pgx.Tx, events *[]model.Event) error {
+		curRow, err := scanIssueRow(tx.QueryRow(ctx, `SELECT `+issueCols+issueFrom+` WHERE i.key = $1 FOR UPDATE OF i`, key))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := hydrateIssueCollections(ctx, tx, []*IssueDetail{&curRow.detail}); err != nil {
+			return err
+		}
+		cur := curRow.detail
+		if expectedVersion != nil && cur.Version != *expectedVersion {
+			return ErrVersionMismatch
+		}
+		if cur.VerificationState == model.VerificationNone {
+			return violation("verification_state", "invalid_value", "검증이 필요하지 않은 이슈입니다.")
+		}
+		if cur.VerificationState == target {
+			out = cur
+			return nil
+		}
+		var projectStatus string
+		if err := tx.QueryRow(ctx, `SELECT status FROM project WHERE id = $1`, curRow.projectID).Scan(&projectStatus); err != nil {
+			return err
+		}
+		if model.ProjectStatus(projectStatus) != model.ProjectActive {
+			return ErrProjectNotActive
+		}
+		now := s.now()
+		var verifiedAt *time.Time
+		var verifiedBy *string
+		if target == model.VerificationVerified {
+			verifiedAt = &now
+			actor := tr.Actor
+			verifiedBy = &actor
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE issue
+			 SET verification_state = $1, verified_at = $2, verified_by = $3,
+			     version = version + 1, updated_at = $4, updated_by = $5
+			 WHERE id = $6`,
+			string(target), verifiedAt, verifiedBy, now, tr.Actor, cur.ID,
+		); err != nil {
+			return err
+		}
+		changes := map[string]model.Change{
+			"verification_state": makeChange(cur.VerificationState, target),
+		}
+		changesJSON, err := json.Marshal(changes)
+		if err != nil {
+			return err
+		}
+		var actID int64
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO activity (issue_id, kind, actor_id, session_id, client_host, at, changes)
+			 VALUES ($1, 'updated', $2, $3, $4, $5, $6::jsonb)
+			 RETURNING id`,
+			cur.ID, tr.Actor, tr.SessionID, tr.ClientHost, now, string(changesJSON),
+		).Scan(&actID); err != nil {
+			return err
+		}
+		pk := cur.Project
+		if err := emitEventTx(ctx, tx, events, now, &curRow.projectID, &pk, model.EventIssueUpdated, cur.Key, tr.Actor, tr.SessionID, map[string]any{
+			"activity_id": actID,
+		}); err != nil {
+			return err
+		}
+		if _, err := enqueueIngestJobTx(ctx, tx, model.IngestSourceIssue, cur.ID, issueContentHash(cur.Title, cur.Body, cur.Labels, cur.Refs)); err != nil {
+			return err
+		}
+		updated, err := scanIssueRow(tx.QueryRow(ctx, `SELECT `+issueCols+issueFrom+` WHERE i.id = $1`, cur.ID))
+		if err != nil {
+			return err
+		}
+		if err := hydrateIssueCollections(ctx, tx, []*IssueDetail{&updated.detail}); err != nil {
+			return err
+		}
+		out = updated.detail
+		return nil
+	})
+	return out, err
 }
 
 // AddComment appends a comment activity row, emits an event, and enqueues an ingest job.

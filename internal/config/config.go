@@ -16,7 +16,10 @@ import (
 
 // DefaultDBMaxConns is the default PostgreSQL connection pool size when
 // AGB_DATABASE_URL is configured and AGB_DB_MAX_CONNS is unset.
-const DefaultDBMaxConns = 16
+const (
+	DefaultDBMaxConns = 16
+	MaxDBMaxConns     = 1000
+)
 
 // Config is the complete server configuration.
 type Config struct {
@@ -133,8 +136,8 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 	if v := strings.TrimSpace(getenv("AGB_DB_MAX_CONNS")); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			errs = append(errs, fmt.Errorf("AGB_DB_MAX_CONNS must be a positive integer, got %q", previewValue(v)))
+		if err != nil || n < 1 || n > MaxDBMaxConns {
+			errs = append(errs, fmt.Errorf("AGB_DB_MAX_CONNS must be an integer between 1 and %d, got %q", MaxDBMaxConns, previewValue(v)))
 		} else {
 			cfg.DBMaxConns = n
 		}

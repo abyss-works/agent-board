@@ -2,18 +2,27 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	pgstore "github.com/wsk0715/agent-board/internal/store/pg"
 )
+
+// maxPGDocumentBodyBytes caps the JSON envelope size of spec/record writes.
+// It allows a full 2 MiB UTF-8 payload plus JSON escaping and metadata headroom
+// without allowing oversized metadata payloads to bypass the content cap.
+const maxPGDocumentBodyBytes = 3 * 1024 * 1024
 
 func (h *handler) registerPGRoutes(mux *http.ServeMux) {
 	// Projects
@@ -65,10 +74,10 @@ func (h *handler) registerPGRoutes(mux *http.ServeMux) {
 	})
 
 	// Sessions, messages, events, devices, tokens
-	route(mux, "/v1/sessions", methods{"GET": h.pgListSessions})
-	route(mux, "/v1/sessions/{actor}/{session}", methods{"GET": h.pgGetSession})
+	route(mux, "/v1/sessions", methods{"GET": h.pgListSessions, "POST": h.pgStartSession})
+	route(mux, "/v1/sessions/{actor}/{session}", methods{"GET": h.pgGetSession, "PATCH": h.pgPatchSession})
 	route(mux, "/v1/projects/{key}/messages", methods{"GET": h.pgListMessages, "POST": h.pgCreateMessage})
-	route(mux, "/v1/messages/{id}", methods{"DELETE": h.pgDeleteMessage})
+	route(mux, "/v1/messages/{id}", methods{"GET": h.pgGetMessage, "DELETE": h.pgDeleteMessage})
 	route(mux, "/v1/messages/{id}/ack", methods{"POST": h.pgAckMessage})
 	route(mux, "/v1/events", methods{"GET": h.pgListEvents})
 	route(mux, streamEventsPattern, methods{"GET": h.pgStreamEvents})
@@ -163,6 +172,8 @@ func (h *handler) pgStoreError(r *http.Request, err error) *apiError {
 	case errors.Is(err, pgstore.ErrClaimForbidden):
 		return forbidden("다른 세션의 점유는 해제할 수 없습니다.",
 			Detail{Field: "claim", Reason: "not_claim_holder", Message: "점유한 세션 본인이나 사용자 행위자만 점유를 해제할 수 있습니다."})
+	case errors.Is(err, pgstore.ErrSessionExists):
+		return conflict("exists", "같은 행위자의 같은 세션 ID가 이미 있습니다.")
 	case errors.As(err, &ierr):
 		f := "content"
 		if ierr.Field != "" {
@@ -209,7 +220,7 @@ func (h *handler) pgStoreError(r *http.Request, err error) *apiError {
 
 // readDocumentUTF8Body validates Content-Type, checks raw bytes for strict UTF-8
 // and NUL bytes prior to JSON unmarshaling (because encoding/json replaces
-// invalid UTF-8 with U+FFFD), and enforces the document body size ceiling.
+// invalid UTF-8 with U+FFFD), and enforces maxPGDocumentBodyBytes.
 func readDocumentUTF8Body(w http.ResponseWriter, r *http.Request, allowed map[string]bool) (body, *apiError) {
 	if ct := strings.TrimSpace(r.Header.Get("Content-Type")); ct != "" {
 		mt, _, err := mime.ParseMediaType(ct)
@@ -222,7 +233,7 @@ func readDocumentUTF8Body(w http.ResponseWriter, r *http.Request, allowed map[st
 			}
 		}
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDocumentBodyBytes))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPGDocumentBodyBytes))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
@@ -371,12 +382,12 @@ func (h *handler) pgListEpics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, err := h.pgStore.ListEpics(r.Context(), r.PathValue("key"), f)
+	items, total, err := h.pgStore.ListEpics(r.Context(), r.PathValue("key"), f)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) pgCreateEpic(w http.ResponseWriter, r *http.Request) {
@@ -752,12 +763,12 @@ func (h *handler) pgListProjectIssues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, err := h.pgStore.ListIssues(r.Context(), r.PathValue("key"), f)
+	items, total, err := h.pgStore.ListIssues(r.Context(), r.PathValue("key"), f)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, len(items), f.Limit, f.Offset))
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) pgGetIssue(w http.ResponseWriter, r *http.Request) {
@@ -782,95 +793,154 @@ func (h *handler) pgPatchIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var patch pgstore.IssuePatch
-	var title, bodyText, statusReason, recheck, decision, verNote string
+	var nulls []Detail
+	nonNull := func(name string, present, null bool, set func()) {
+		if !present {
+			return
+		}
+		if null {
+			nulls = append(nulls, Detail{Field: name, Reason: "invalid_value", Message: "null일 수 없습니다."})
+			return
+		}
+		set()
+	}
+
+	var title, bodyText, statusReason, recheck, decision, verNote, forceReason string
 	var typ model.IssueType
 	var status model.IssueStatus
 	var prio model.Priority
 	var verState model.VerificationState
 	var labels, refs []string
 	var epicID, milestoneID int64
+	var force bool
 
-	if aerr := firstError(
-		decodeOptional(b, "title", &patch.Title),
-		decodeOptional(b, "body", &patch.Body),
-		decodeOptional(b, "type", &patch.Type),
-		decodeOptional(b, "status", &patch.Status),
-		decodeOptional(b, "priority", &patch.Priority),
-		decodeOptional(b, "status_reason", &patch.StatusReason),
-		decodeOptional(b, "verification_state", &patch.VerificationState),
-		decodeField(b, "force", &patch.Force),
-		decodeField(b, "reason", &patch.Reason),
-	); aerr != nil {
-		writeError(w, aerr)
-		return
-	}
-	_, _, _ = title, bodyText, statusReason
-	_, _, _, _ = typ, status, prio, verState
-
-	if p, n, err := field(b, "labels", &labels); err != nil {
-		writeError(w, err)
-		return
-	} else if p && !n {
-		patch.Labels = &labels
-	}
-	if p, n, err := field(b, "refs", &refs); err != nil {
-		writeError(w, err)
-		return
-	} else if p && !n {
-		patch.Refs = &refs
-	}
-	if p, n, err := field(b, "epic_id", &epicID); err != nil {
-		writeError(w, err)
-		return
-	} else if p {
-		patch.EpicID.Set = true
-		if !n {
-			v := epicID
-			patch.EpicID.Value = &v
-		}
-	}
-	for _, key := range []string{"milestone_id", "milestone"} {
-		if p, n, err := field(b, key, &milestoneID); err != nil {
-			writeError(w, err)
-			return
-		} else if p {
-			patch.MilestoneID.Set = true
-			if !n {
-				v := milestoneID
-				patch.MilestoneID.Value = &v
+	steps := []func() *apiError{
+		func() *apiError {
+			p, n, e := field(b, "title", &title)
+			nonNull("title", p, n, func() { patch.Title = &title })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "body", &bodyText)
+			nonNull("body", p, n, func() { patch.Body = &bodyText })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "type", &typ)
+			nonNull("type", p, n, func() { patch.Type = &typ })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "status", &status)
+			nonNull("status", p, n, func() { patch.Status = &status })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "priority", &prio)
+			nonNull("priority", p, n, func() { patch.Priority = &prio })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "labels", &labels)
+			nonNull("labels", p, n, func() { patch.Labels = &labels })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "refs", &refs)
+			nonNull("refs", p, n, func() { patch.Refs = &refs })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "status_reason", &statusReason)
+			nonNull("status_reason", p, n, func() { patch.StatusReason = &statusReason })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "verification_state", &verState)
+			nonNull("verification_state", p, n, func() { patch.VerificationState = &verState })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "force", &force)
+			nonNull("force", p, n, func() { patch.Force = force })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "reason", &forceReason)
+			nonNull("reason", p, n, func() { patch.Reason = forceReason })
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "epic_id", &epicID)
+			if p {
+				patch.EpicID.Set = true
+				if !n {
+					v := epicID
+					patch.EpicID.Value = &v
+				}
 			}
-			break
+			return e
+		},
+		func() *apiError {
+			for _, key := range []string{"milestone_id", "milestone"} {
+				p, n, e := field(b, key, &milestoneID)
+				if e != nil {
+					return e
+				}
+				if p {
+					patch.MilestoneID.Set = true
+					if !n {
+						v := milestoneID
+						patch.MilestoneID.Value = &v
+					}
+					break
+				}
+			}
+			return nil
+		},
+		func() *apiError {
+			p, n, e := field(b, "recheck_condition", &recheck)
+			if p {
+				patch.RecheckCondition.Set = true
+				if !n {
+					v := recheck
+					patch.RecheckCondition.Value = &v
+				}
+			}
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "decision_needed", &decision)
+			if p {
+				patch.DecisionNeeded.Set = true
+				if !n {
+					v := decision
+					patch.DecisionNeeded.Value = &v
+				}
+			}
+			return e
+		},
+		func() *apiError {
+			p, n, e := field(b, "verification_note", &verNote)
+			if p {
+				patch.VerificationNote.Set = true
+				if !n {
+					v := verNote
+					patch.VerificationNote.Value = &v
+				}
+			}
+			return e
+		},
+	}
+	for _, step := range steps {
+		if aerr := step(); aerr != nil {
+			writeError(w, aerr)
+			return
 		}
 	}
-	if p, n, err := field(b, "recheck_condition", &recheck); err != nil {
-		writeError(w, err)
+	if len(nulls) > 0 {
+		writeError(w, validationFailed(nulls))
 		return
-	} else if p {
-		patch.RecheckCondition.Set = true
-		if !n {
-			v := recheck
-			patch.RecheckCondition.Value = &v
-		}
-	}
-	if p, n, err := field(b, "decision_needed", &decision); err != nil {
-		writeError(w, err)
-		return
-	} else if p {
-		patch.DecisionNeeded.Set = true
-		if !n {
-			v := decision
-			patch.DecisionNeeded.Value = &v
-		}
-	}
-	if p, n, err := field(b, "verification_note", &verNote); err != nil {
-		writeError(w, err)
-		return
-	} else if p {
-		patch.VerificationNote.Set = true
-		if !n {
-			v := verNote
-			patch.VerificationNote.Value = &v
-		}
 	}
 
 	res, err := h.pgStore.UpdateIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version, patch)
@@ -883,13 +953,18 @@ func (h *handler) pgPatchIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) pgDeleteIssue(w http.ResponseWriter, r *http.Request) {
+	version, aerr := ifMatch(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
 	q := newQuery(r)
 	reason := q.one("reason")
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	it, err := h.pgStore.DeleteIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), reason)
+	it, err := h.pgStore.DeleteIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version, reason)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
@@ -899,28 +974,38 @@ func (h *handler) pgDeleteIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) pgVerifyIssue(w http.ResponseWriter, r *http.Request) {
-	h.pgSetVerification(w, r, model.VerificationVerified)
+	h.pgSetVerification(w, r, true)
 }
 
 func (h *handler) pgUnverifyIssue(w http.ResponseWriter, r *http.Request) {
-	h.pgSetVerification(w, r, model.VerificationPending)
+	h.pgSetVerification(w, r, false)
 }
 
-func (h *handler) pgSetVerification(w http.ResponseWriter, r *http.Request, st model.VerificationState) {
+func (h *handler) pgSetVerification(w http.ResponseWriter, r *http.Request, verify bool) {
+	if aerr := newQuery(r).finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
 	version, aerr := ifMatch(r)
 	if aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	res, err := h.pgStore.UpdateIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version, pgstore.IssuePatch{
-		VerificationState: &st,
-	})
+	var (
+		it  pgstore.IssueDetail
+		err error
+	)
+	if verify {
+		it, err = h.pgStore.VerifyIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version)
+	} else {
+		it, err = h.pgStore.UnverifyIssue(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), version)
+	}
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	w.Header().Set("ETag", etag(res.Issue.Version))
-	writeJSON(w, http.StatusOK, res.Issue)
+	w.Header().Set("ETag", etag(it.Version))
+	writeJSON(w, http.StatusOK, it)
 }
 
 func (h *handler) pgAddComment(w http.ResponseWriter, r *http.Request) {
@@ -1093,12 +1178,12 @@ func (h *handler) pgListSpecs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, err := h.pgStore.ListSpecs(r.Context(), r.PathValue("key"), f)
+	items, total, err := h.pgStore.ListSpecs(r.Context(), r.PathValue("key"), f)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, len(items), f.Limit, f.Offset))
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) pgListSpecRevisions(w http.ResponseWriter, r *http.Request) {
@@ -1233,12 +1318,12 @@ func (h *handler) pgListRecords(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, err := h.pgStore.ListRecords(r.Context(), r.PathValue("key"), f)
+	items, total, err := h.pgStore.ListRecords(r.Context(), r.PathValue("key"), f)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, len(items), f.Limit, f.Offset))
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) pgArchiveRecord(w http.ResponseWriter, r *http.Request) {
@@ -1276,21 +1361,39 @@ func (h *handler) pgSetRecordArchived(w http.ResponseWriter, r *http.Request, ar
 
 func (h *handler) pgListSessions(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	limit, offset := q.limit(50, 200), q.offset()
+	f := pgstore.SessionFilter{Project: q.one("project"), Actor: q.one("actor")}
+	if f.Project != "" && !model.ValidProjectKey(f.Project) {
+		q.add("project", "프로젝트 키 형식이 아닙니다.")
+	}
+	if f.Actor != "" && !model.ValidActorID(f.Actor) {
+		q.add("actor", "행위자 ID 형식이 아닙니다.")
+	}
+	if v := q.one("parent"); v != "" {
+		if ref, ok := parseSessionRef(v); ok {
+			f.Parent = &ref
+		} else {
+			q.add("parent", "<행위자>/<세션 ID> 형식이어야 합니다.")
+		}
+	}
+	f.Active, f.Named, f.Waiting = parseBool(q, "active"), parseBool(q, "named"), parseBool(q, "waiting")
+	f.Limit, f.Offset = q.limit(50, 200), q.offset()
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	items, total, err := h.pgStore.ListSessions(r.Context(), limit, offset)
+	items, total, err := h.pgStore.ListSessions(r.Context(), f)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, total, limit, offset))
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) pgGetSession(w http.ResponseWriter, r *http.Request) {
 	ref, aerr := sessionPath(r)
+	if aerr == nil {
+		aerr = newQuery(r).finish()
+	}
 	if aerr != nil {
 		writeError(w, aerr)
 		return
@@ -1303,33 +1406,235 @@ func (h *handler) pgGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s)
 }
 
-func (h *handler) pgListMessages(w http.ResponseWriter, r *http.Request) {
-	q := newQuery(r)
-	f := pgstore.MessageFilter{
-		To:       q.one("to"),
-		ToRole:   q.one("to_role"),
-		UnreadBy: q.one("unread_by"),
-		Limit:    q.limit(50, 200),
-		Offset:   q.offset(),
-	}
-	if all := parseBool(q, "all"); all != nil {
-		f.All = *all
-	}
-	if aerr := q.finish(); aerr != nil {
+func (h *handler) pgStartSession(w http.ResponseWriter, r *http.Request) {
+	if aerr := newQuery(r).finish(); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
-	items, err := h.pgStore.ListMessages(r.Context(), r.PathValue("key"), f)
+	b, aerr := readBody(w, r, map[string]bool{"session_id": true, "role": true, "issue": true})
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var in pgstore.ChildSessionInput
+	if aerr := firstError(
+		decodeField(b, "session_id", &in.SessionID),
+		decodeOptional(b, "role", &in.Role),
+		decodeOptional(b, "issue", &in.Issue),
+	); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	tr := TraceFrom(r.Context())
+	if in.SessionID == "" {
+		suffix, err := randomChars(h.opts.Rand, childSuffixChars, childSuffixLength)
+		if err != nil {
+			writeError(w, h.pgStoreError(r, err))
+			return
+		}
+		in.SessionID = tr.SessionID + "." + suffix
+		if len(in.SessionID) > maxSessionIDLen {
+			writeError(w, validationFailed([]Detail{{
+				Field:   "session_id",
+				Reason:  "too_long",
+				Message: fmt.Sprintf("부모 세션 ID로 만든 세션 ID가 %d자를 넘습니다. session_id를 직접 주세요.", maxSessionIDLen),
+			}}))
+			return
+		}
+	}
+	s, err := h.pgStore.CreateChildSession(r.Context(), tr, in)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope(items, len(items), f.Limit, f.Offset))
+	w.Header().Set("Location", "/v1/sessions/"+url.PathEscape(s.Actor)+"/"+url.PathEscape(s.SessionID))
+	writeJSON(w, http.StatusCreated, s)
+}
+
+func (h *handler) pgPatchSession(w http.ResponseWriter, r *http.Request) {
+	ref, aerr := sessionPath(r)
+	if aerr == nil {
+		aerr = newQuery(r).finish()
+	}
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	tr := TraceFrom(r.Context())
+	if a, ok := h.actor(tr.Actor); tr.Actor != ref.Actor && (!ok || a.Kind != model.ActorUser) {
+		writeError(w, errNotSessionActor)
+		return
+	}
+	b, aerr := readBody(w, r, map[string]bool{"parent": true, "role": true, "issue": true, "location": true, "state": true, "state_reason": true})
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	var patch pgstore.SessionPatch
+	var details []Detail
+	var parent, location map[string]json.RawMessage
+	var role, issue, state, stateReason string
+	steps := []func() *apiError{
+		func() *apiError {
+			present, null, e := field(b, "parent", &parent)
+			if e != nil || !present {
+				return e
+			}
+			patch.Parent.Set = true
+			if !null {
+				p, ok := sessionRefObject(parent)
+				if !ok {
+					details = append(details, Detail{Field: "parent", Reason: "invalid", Message: `{"actor","session_id"} 객체여야 합니다.`})
+				}
+				patch.Parent.Value = &p
+			}
+			return nil
+		},
+		func() *apiError {
+			present, null, e := field(b, "role", &role)
+			patch.Role.Set = present
+			if present && !null {
+				patch.Role.Value = &role
+			}
+			return e
+		},
+		func() *apiError {
+			present, null, e := field(b, "issue", &issue)
+			patch.Issue.Set = present
+			if present && !null {
+				patch.Issue.Value = &issue
+			}
+			return e
+		},
+		func() *apiError {
+			present, null, e := field(b, "location", &location)
+			if e != nil || !present {
+				return e
+			}
+			patch.Location.Set = true
+			if !null {
+				loc, problems := parseSessionLocation(location)
+				details = append(details, problems...)
+				patch.Location.Value = &loc
+			}
+			return nil
+		},
+		func() *apiError {
+			present, null, e := field(b, "state", &state)
+			patch.State.Set = present
+			if present && !null {
+				patch.State.Value = &state
+			}
+			return e
+		},
+		func() *apiError {
+			present, null, e := field(b, "state_reason", &stateReason)
+			patch.StateReason.Set = present
+			if present && !null {
+				patch.StateReason.Value = &stateReason
+			}
+			return e
+		},
+	}
+	for _, step := range steps {
+		if aerr := step(); aerr != nil {
+			writeError(w, aerr)
+			return
+		}
+	}
+	if len(details) > 0 {
+		writeError(w, validationFailed(details))
+		return
+	}
+	s, err := h.pgStore.UpdateSession(r.Context(), tr, ref.Actor, ref.SessionID, patch)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	if ref.Actor == tr.Actor && ref.SessionID == tr.SessionID {
+		keepWaiting(r)
+		if !patch.State.Set && !patch.StateReason.Set {
+			if at, cleared := h.clearWaiting(r.Context(), tr); cleared {
+				s.State = nil
+				s.StateReason = nil
+				s.StateAt = nil
+				s.UpdatedAt = at
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, s)
+}
+
+func (h *handler) pgListMessages(w http.ResponseWriter, r *http.Request) {
+	projectKey, aerr := messageProjectKey(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	q := newQuery(r)
+	tr := TraceFrom(r.Context())
+	f := pgstore.MessageFilter{
+		To:       q.one("to"),
+		UnreadBy: q.one("unread_by"),
+		Viewer:   &model.SessionRef{Actor: tr.Actor, SessionID: tr.SessionID},
+	}
+	if v := q.one("to_session"); v != "" {
+		if ref, ok := parseSessionRef(v); ok {
+			f.ToSession = &ref
+		} else {
+			q.add("to_session", "<행위자>/<세션 ID> 형식이어야 합니다.")
+		}
+	}
+	if v := q.one("to_role"); v != "" {
+		if _, ok := model.ParseSessionRole(v); !ok {
+			q.add("to_role", "main, subagent, runner 중 하나여야 합니다.")
+		} else {
+			f.ToRole = v
+		}
+	}
+	if v := q.one("issue"); v != "" {
+		if !model.ValidIssueKey(v) {
+			q.add("issue", "이슈 키 형식이어야 합니다.")
+		} else {
+			f.Issue = v
+		}
+	}
+	if v := q.one("reply_to"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			q.add("reply_to", "1 이상의 정수여야 합니다.")
+		} else {
+			f.ReplyTo = &id
+		}
+	}
+	if f.UnreadBy != "" && model.ValidateMessageReader(f.UnreadBy) != nil {
+		q.add("unread_by", fmt.Sprintf("공백과 제어 문자 없이 1~%d자여야 합니다.", model.MaxMessageToRunes))
+	}
+	if all := parseBool(q, "all"); all != nil {
+		f.All = *all
+	}
+	f.Limit, f.Offset = q.limit(50, 200), q.offset()
+	if aerr := q.finish(); aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	items, total, err := h.pgStore.ListMessages(r.Context(), projectKey, f)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
 }
 
 func (h *handler) pgCreateMessage(w http.ResponseWriter, r *http.Request) {
+	projectKey, aerr := messageProjectKey(r)
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
 	b, aerr := readBody(w, r, map[string]bool{
-		"to": true, "to_role": true, "issue": true, "reply_to": true, "title": true, "body": true, "ttl": true,
+		"to": true, "to_session": true, "to_role": true, "issue": true, "reply_to": true,
+		"title": true, "body": true, "ttl": true,
 	})
 	if aerr != nil {
 		writeError(w, aerr)
@@ -1348,13 +1653,44 @@ func (h *handler) pgCreateMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	m, err := h.pgStore.CreateMessage(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), in)
+	if raw, ok := b["to_session"]; ok && !isNull(raw) {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(raw, &m) == nil && m != nil {
+			if ref, ok := sessionRefObject(m); ok {
+				in.ToSession = &ref
+			}
+		}
+		if in.ToSession == nil {
+			writeError(w, validationFailed([]Detail{{
+				Field: "to_session", Reason: "invalid", Message: `{"actor","session_id"} 객체여야 합니다.`,
+			}}))
+			return
+		}
+	}
+	m, err := h.pgStore.CreateMessage(r.Context(), TraceFrom(r.Context()), projectKey, in)
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/v1/messages/%d", m.ID))
 	writeJSON(w, http.StatusCreated, m)
+}
+
+func (h *handler) pgGetMessage(w http.ResponseWriter, r *http.Request) {
+	id, aerr := messageID(r)
+	if aerr == nil {
+		aerr = newQuery(r).finish()
+	}
+	if aerr != nil {
+		writeError(w, aerr)
+		return
+	}
+	m, err := h.pgStore.GetMessage(r.Context(), id)
+	if err != nil {
+		writeError(w, h.pgStoreError(r, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
 }
 
 func (h *handler) pgDeleteMessage(w http.ResponseWriter, r *http.Request) {
@@ -1429,40 +1765,61 @@ func (h *handler) pgListEvents(w http.ResponseWriter, r *http.Request) {
 func (h *handler) pgStreamEvents(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
 	afterRaw := q.one("after")
-	var cursor int64
-	hasCursor := false
+	var afterVal int64
+	hasAfter := false
 	if afterRaw != "" {
 		n, ok := parseNonNegativeInt64(afterRaw)
 		if !ok {
 			q.add("after", "0 이상의 정수여야 합니다.")
 		} else {
-			cursor = n
-			hasCursor = true
+			afterVal = n
+			hasAfter = true
 		}
 	}
 	project := q.one("project")
+	if project != "" && !model.ValidProjectKey(project) {
+		q.add("project", "프로젝트 키 형식이 아닙니다.")
+	}
 	kinds := q.csv("kind")
-	if lastRaw := strings.TrimSpace(r.Header.Get("Last-Event-ID")); lastRaw != "" {
-		n, ok := parseNonNegativeInt64(lastRaw)
+
+	lastEventIDRaw := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	var cursor int64
+	hasCursor := false
+	if lastEventIDRaw != "" {
+		n, ok := parseNonNegativeInt64(lastEventIDRaw)
 		if !ok {
 			q.details = append(q.details, Detail{Field: "Last-Event-ID", Reason: "invalid_header", Message: "0 이상의 정수여야 합니다."})
 		} else {
 			cursor = n
 			hasCursor = true
 		}
+	} else if hasAfter {
+		cursor = afterVal
+		hasCursor = true
 	}
 	if aerr := q.finish(); aerr != nil {
 		writeError(w, aerr)
 		return
 	}
+
 	actor := TraceFrom(r.Context()).Actor
 	cred := credentialFrom(r.Context())
 	sub, unsub, err := h.broker.Subscribe(actor, cred.tokenID)
 	if err != nil {
-		writeError(w, tooManyRequests("동시 이벤트 스트림 연결 제한을 넘었습니다."))
+		switch {
+		case errors.Is(err, errBrokerClosed):
+			writeError(w, &apiError{Status: http.StatusServiceUnavailable, Code: "shutting_down", Message: "서버가 종료 중입니다."})
+		case errors.Is(err, errTooManyByActor):
+			writeError(w, tooManyRequests("행위자당 동시 이벤트 스트림 연결이 너무 많습니다."))
+		case errors.Is(err, errTooManyStreams):
+			writeError(w, tooManyRequests("동시 이벤트 스트림 연결이 너무 많습니다."))
+		default:
+			writeError(w, errInternal)
+		}
 		return
 	}
 	defer unsub()
+
 	if !hasCursor {
 		latest, err := h.pgStore.LatestEventID(r.Context())
 		if err != nil {
@@ -1471,33 +1828,103 @@ func (h *handler) pgStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		cursor = latest
 	}
-	initialItems, initialNext, err := h.pgStore.ListEvents(r.Context(), pgstore.EventFilter{
-		After: cursor, Project: project, Kinds: kinds, Limit: 500,
+
+	initialItems, initialNextAfter, err := h.pgStore.ListEvents(r.Context(), pgstore.EventFilter{
+		After:   cursor,
+		Project: project,
+		Kinds:   kinds,
+		Limit:   500,
 	})
 	if err != nil {
 		writeError(w, h.pgStoreError(r, err))
 		return
 	}
+
+	select {
+	case <-sub.closed:
+		if cred.tokenID > 0 {
+			writeError(w, errUnauthorized)
+		} else {
+			writeError(w, &apiError{Status: http.StatusServiceUnavailable, Code: "shutting_down", Message: "서버가 종료 중입니다."})
+		}
+		return
+	default:
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
+
 	h.stats.streamOpened(r.Method, streamEventsPattern)
 	defer h.stats.streamClosed(r.Method, streamEventsPattern)
 
-	for _, ev := range initialItems {
-		if err := writeSSEEvent(w, ev); err != nil {
+	writeBatch := func(items []model.Event, nextAfter int64) error {
+		if len(items) == 0 {
+			return nil
+		}
+		for _, ev := range items {
+			if err := writeSSEEvent(w, ev); err != nil {
+				return err
+			}
+			cursor = ev.ID
+		}
+		if err := rc.Flush(); err != nil {
+			return err
+		}
+		if nextAfter > cursor {
+			cursor = nextAfter
+		}
+		return nil
+	}
+
+	drain := func() error {
+		for {
+			select {
+			case <-sub.closed:
+				return context.Canceled
+			default:
+			}
+			items, nextAfter, err := h.pgStore.ListEvents(r.Context(), pgstore.EventFilter{
+				After:   cursor,
+				Project: project,
+				Kinds:   kinds,
+				Limit:   500,
+			})
+			if err != nil {
+				return err
+			}
+			if len(items) == 0 {
+				return nil
+			}
+			if err := writeBatch(items, nextAfter); err != nil {
+				return err
+			}
+			if len(items) < 500 {
+				return nil
+			}
+		}
+	}
+
+	if err := writeBatch(initialItems, initialNextAfter); err != nil {
+		return
+	}
+	if len(initialItems) == 500 {
+		if err := drain(); err != nil {
 			return
 		}
-		cursor = ev.ID
 	}
-	if initialNext > cursor {
-		cursor = initialNext
+
+	pingEvery := h.opts.SSEPingInterval
+	if pingEvery <= 0 {
+		pingEvery = defaultSSEPingInterval
 	}
-	_ = rc.Flush()
+	ticker := time.NewTicker(pingEvery)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -1508,22 +1935,21 @@ func (h *handler) pgStreamEvents(w http.ResponseWriter, r *http.Request) {
 		case <-sub.closed:
 			return
 		case <-sub.notify:
-			items, nextAfter, err := h.pgStore.ListEvents(r.Context(), pgstore.EventFilter{
-				After: cursor, Project: project, Kinds: kinds, Limit: 500,
-			})
-			if err != nil {
+			select {
+			case <-sub.closed:
+				return
+			default:
+			}
+			if err := drain(); err != nil {
 				return
 			}
-			for _, ev := range items {
-				if err := writeSSEEvent(w, ev); err != nil {
-					return
-				}
-				cursor = ev.ID
+		case <-ticker.C:
+			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+				return
 			}
-			if nextAfter > cursor {
-				cursor = nextAfter
+			if err := rc.Flush(); err != nil {
+				return
 			}
-			_ = rc.Flush()
 		}
 	}
 }

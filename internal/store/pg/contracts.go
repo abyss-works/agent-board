@@ -313,10 +313,40 @@ type MessageFilter struct {
 	ToRole    string
 	Issue     string
 	ReplyTo   *int64
+	Viewer    *model.SessionRef
 	UnreadBy  string
 	All       bool
 	Limit     int
 	Offset    int
+}
+
+// SessionPatch is a partial update for a session.
+type SessionPatch struct {
+	Parent      Optional[model.SessionRef]
+	Role        Optional[string]
+	Issue       Optional[string]
+	Location    Optional[model.SessionLocation]
+	State       Optional[string]
+	StateReason Optional[string]
+}
+
+// ChildSessionInput carries fields for registering a child session.
+type ChildSessionInput struct {
+	SessionID string
+	Role      *string
+	Issue     *string
+}
+
+// SessionFilter narrows ListSessions results.
+type SessionFilter struct {
+	Project string
+	Actor   string
+	Parent  *model.SessionRef
+	Active  *bool
+	Named   *bool
+	Waiting *bool
+	Limit   int
+	Offset  int
 }
 
 // EventFilter narrows ListEvents results.
@@ -349,7 +379,7 @@ type DomainStore interface {
 	// Epic
 	CreateEpic(ctx context.Context, tr Trace, projectKey string, in CreateEpicInput) (model.Epic, error)
 	GetEpic(ctx context.Context, key string) (model.Epic, error)
-	ListEpics(ctx context.Context, projectKey string, filter EpicFilter) ([]model.Epic, error)
+	ListEpics(ctx context.Context, projectKey string, filter EpicFilter) ([]model.Epic, int, error)
 	UpdateEpic(ctx context.Context, tr Trace, key string, patch EpicPatch) (model.Epic, error)
 	DeleteEpic(ctx context.Context, tr Trace, key string) (model.Epic, error)
 
@@ -363,30 +393,37 @@ type DomainStore interface {
 	// Issue, Label, Ref, Comment/Activity
 	CreateIssue(ctx context.Context, tr Trace, projectKey string, in CreateIssueInput) (IssueWriteResult, error)
 	GetIssue(ctx context.Context, key string) (IssueDetail, error)
-	ListIssues(ctx context.Context, projectKey string, filter IssueFilter) ([]IssueDetail, error)
+	ListIssues(ctx context.Context, projectKey string, filter IssueFilter) ([]IssueDetail, int, error)
 	UpdateIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64, patch IssuePatch) (IssueWriteResult, error)
-	DeleteIssue(ctx context.Context, tr Trace, key string, reason string) (IssueDetail, error)
+	DeleteIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64, reason string) (IssueDetail, error)
+	VerifyIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64) (IssueDetail, error)
+	UnverifyIssue(ctx context.Context, tr Trace, key string, expectedVersion *int64) (IssueDetail, error)
 	AddComment(ctx context.Context, tr Trace, issueKey string, in AddCommentInput) (ActivityWriteResult, error)
 
 	// Spec Document (mutable upsert + append-only spec_revision)
 	UpsertSpec(ctx context.Context, tr Trace, projectKey, slug string, in UpsertSpecInput) (SpecWriteResult, error)
 	GetSpec(ctx context.Context, projectKey, slug string) (model.SpecDocument, error)
-	ListSpecs(ctx context.Context, projectKey string, filter SpecFilter) ([]model.SpecSummary, error)
+	ListSpecs(ctx context.Context, projectKey string, filter SpecFilter) ([]model.SpecSummary, int, error)
 	ListSpecRevisions(ctx context.Context, projectKey, slug string) ([]model.SpecRevision, error)
 	SetSpecArchived(ctx context.Context, tr Trace, projectKey, slug string, archived bool) (model.SpecDocument, error)
 
 	// Record Document (immutable content/sha256, archive transition only)
 	CreateRecord(ctx context.Context, tr Trace, projectKey string, in CreateRecordInput) (RecordWriteResult, error)
 	GetRecord(ctx context.Context, projectKey, name string) (model.RecordDocument, error)
-	ListRecords(ctx context.Context, projectKey string, filter RecordFilter) ([]model.RecordSummary, error)
+	ListRecords(ctx context.Context, projectKey string, filter RecordFilter) ([]model.RecordSummary, int, error)
 	SetRecordArchived(ctx context.Context, tr Trace, projectKey, name string, archived bool) (model.RecordDocument, error)
 
 	// Session, IssueClaim, Message, Event, Actor, Token
 	TouchSession(ctx context.Context, tr Trace, at time.Time) error
+	GetSession(ctx context.Context, actor, sessionID string) (model.Session, error)
+	ListSessions(ctx context.Context, filter SessionFilter) ([]model.Session, int, error)
+	UpdateSession(ctx context.Context, tr Trace, actor, sessionID string, patch SessionPatch) (model.Session, error)
+	CreateChildSession(ctx context.Context, tr Trace, in ChildSessionInput) (model.Session, error)
 	ClaimIssue(ctx context.Context, tr Trace, issueKey string, reason string) (model.IssueClaim, bool, error)
 	ReleaseIssueClaim(ctx context.Context, tr Trace, issueKey string, outcome string, reason *string) (model.IssueClaim, error)
 	CreateMessage(ctx context.Context, tr Trace, projectKey string, in CreateMessageInput) (model.Message, error)
-	ListMessages(ctx context.Context, projectKey string, filter MessageFilter) ([]model.Message, error)
+	GetMessage(ctx context.Context, messageID int64) (model.Message, error)
+	ListMessages(ctx context.Context, projectKey string, filter MessageFilter) ([]model.Message, int, error)
 	MarkMessageRead(ctx context.Context, tr Trace, messageID int64, reader string) (model.MessageRead, error)
 	DeleteMessage(ctx context.Context, tr Trace, messageID int64) (model.Message, error)
 	ListEvents(ctx context.Context, filter EventFilter) ([]model.Event, int64, error)

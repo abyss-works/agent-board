@@ -500,3 +500,171 @@ func TestSpecsRecordsValidationImmutabilityAndIngestNotify(t *testing.T) {
 		t.Fatalf("ListEvents = %d, err = %v", len(evs), err)
 	}
 }
+
+func TestConcurrentFirstWriteSpecAndRecord(t *testing.T) {
+	st, _ := openCleanStore(t)
+	ctx := context.Background()
+
+	if _, err := st.CreateProject(ctx, trOwner, CreateProjectInput{Key: "RACE", Name: "Race"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Concurrent first UpsertSpec on the same slug: both must succeed with revisions 1 and 2.
+	specErrs := make(chan error, 2)
+	specRevs := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		go func(idx int) {
+			res, err := st.UpsertSpec(ctx, trOwner, "RACE", "concurrent-spec", UpsertSpecInput{
+				Title:   fmt.Sprintf("Title %d", idx),
+				Content: fmt.Sprintf("# body %d", idx),
+			})
+			specErrs <- err
+			specRevs <- res.Spec.CurrentRevisionNo
+		}(i)
+	}
+	seenRevs := map[int]bool{}
+	for i := 0; i < 2; i++ {
+		if err := <-specErrs; err != nil {
+			t.Fatalf("concurrent UpsertSpec err = %v", err)
+		}
+		seenRevs[<-specRevs] = true
+	}
+	if !seenRevs[1] || !seenRevs[2] {
+		t.Fatalf("expected revisions 1 and 2, got %v", seenRevs)
+	}
+
+	// Concurrent first CreateRecord with identical content: both succeed (one Created=true, one Created=false).
+	recErrs := make(chan error, 2)
+	recCreated := make(chan bool, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			res, err := st.CreateRecord(ctx, trOwner, "RACE", CreateRecordInput{
+				Name: "2026-11-28-decision-same.md", Kind: "decision", Title: "Same", Content: "# identical",
+			})
+			recErrs <- err
+			recCreated <- res.Created
+		}()
+	}
+	createdCount := 0
+	for i := 0; i < 2; i++ {
+		if err := <-recErrs; err != nil {
+			t.Fatalf("concurrent identical CreateRecord err = %v", err)
+		}
+		if <-recCreated {
+			createdCount++
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("createdCount = %d, want 1", createdCount)
+	}
+
+	// Concurrent first CreateRecord with different content: one succeeds, one gets *ImmutableError.
+	diffErrs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func(idx int) {
+			_, err := st.CreateRecord(ctx, trOwner, "RACE", CreateRecordInput{
+				Name: "2026-11-28-decision-diff.md", Kind: "decision", Title: "Diff", Content: fmt.Sprintf("# body %d", idx),
+			})
+			diffErrs <- err
+		}(i)
+	}
+	okCount, immCount := 0, 0
+	for i := 0; i < 2; i++ {
+		err := <-diffErrs
+		var ierr *ImmutableError
+		switch {
+		case err == nil:
+			okCount++
+		case errors.As(err, &ierr):
+			immCount++
+		default:
+			t.Fatalf("unexpected concurrent diff CreateRecord err = %v", err)
+		}
+	}
+	if okCount != 1 || immCount != 1 {
+		t.Fatalf("okCount=%d immCount=%d, want 1 and 1", okCount, immCount)
+	}
+}
+
+func TestPaginationTotalsClaimReasonAndMarkReadIdempotency(t *testing.T) {
+	st, _ := openCleanStore(t)
+	ctx := context.Background()
+
+	if _, err := st.CreateProject(ctx, trOwner, CreateProjectInput{Key: "PAGE", Name: "Page"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		if _, err := st.CreateEpic(ctx, trOwner, "PAGE", CreateEpicInput{Title: fmt.Sprintf("Epic %d", i)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateIssue(ctx, trOwner, "PAGE", CreateIssueInput{Title: fmt.Sprintf("Issue %d", i)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.UpsertSpec(ctx, trOwner, "PAGE", fmt.Sprintf("spec-%d", i), UpsertSpecInput{Title: fmt.Sprintf("Spec %d", i), Content: "body"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateRecord(ctx, trOwner, "PAGE", CreateRecordInput{Name: fmt.Sprintf("rec-%d.md", i), Kind: "decision", Title: "T", Content: "body"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMessage(ctx, trOwner, "PAGE", CreateMessageInput{Title: fmt.Sprintf("Msg %d", i), Body: "hello"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	epics, epTotal, err := st.ListEpics(ctx, "PAGE", EpicFilter{Limit: 1, Offset: 1})
+	if err != nil || len(epics) != 1 || epTotal != 3 {
+		t.Fatalf("ListEpics len=%d total=%d err=%v", len(epics), epTotal, err)
+	}
+	issues, issTotal, err := st.ListIssues(ctx, "PAGE", IssueFilter{Limit: 1, Offset: 1})
+	if err != nil || len(issues) != 1 || issTotal != 3 {
+		t.Fatalf("ListIssues len=%d total=%d err=%v", len(issues), issTotal, err)
+	}
+	specs, spTotal, err := st.ListSpecs(ctx, "PAGE", SpecFilter{Limit: 1, Offset: 1})
+	if err != nil || len(specs) != 1 || spTotal != 3 {
+		t.Fatalf("ListSpecs len=%d total=%d err=%v", len(specs), spTotal, err)
+	}
+	recs, recTotal, err := st.ListRecords(ctx, "PAGE", RecordFilter{Limit: 1, Offset: 1})
+	if err != nil || len(recs) != 1 || recTotal != 3 {
+		t.Fatalf("ListRecords len=%d total=%d err=%v", len(recs), recTotal, err)
+	}
+	msgs, msgTotal, err := st.ListMessages(ctx, "PAGE", MessageFilter{Limit: 1, Offset: 1})
+	if err != nil || len(msgs) != 1 || msgTotal != 3 {
+		t.Fatalf("ListMessages len=%d total=%d err=%v", len(msgs), msgTotal, err)
+	}
+
+	// ClaimIssue validates reason with CleanClaimReason and preserves reason on idempotent re-claim.
+	if _, _, err := st.ClaimIssue(ctx, trWorker, issues[0].Key, "bad\x07ctrl"); err == nil {
+		t.Fatalf("expected validation error for control char in claim reason")
+	}
+	c1, created, err := st.ClaimIssue(ctx, trWorker, issues[0].Key, "  implementing feature  ")
+	if err != nil || !created || c1.Reason == nil || *c1.Reason != "implementing feature" {
+		t.Fatalf("ClaimIssue c1 = %+v created=%v err=%v", c1, created, err)
+	}
+	c2, created2, err := st.ClaimIssue(ctx, trWorker, issues[0].Key, "")
+	if err != nil || created2 || c2.Reason == nil || *c2.Reason != "implementing feature" {
+		t.Fatalf("idempotent ClaimIssue lost reason: c2=%+v created=%v err=%v", c2, created2, err)
+	}
+
+	// Duplicate MarkMessageRead does not re-emit message.read event.
+	beforeEvs, _, _ := st.ListEvents(ctx, EventFilter{After: 0, Kinds: []string{model.EventMessageRead}, Limit: 50})
+	if _, err := st.MarkMessageRead(ctx, trWorker, msgs[0].ID, "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MarkMessageRead(ctx, trWorker, msgs[0].ID, "worker"); err != nil {
+		t.Fatal(err)
+	}
+	afterEvs, _, _ := st.ListEvents(ctx, EventFilter{After: 0, Kinds: []string{model.EventMessageRead}, Limit: 50})
+	if len(afterEvs)-len(beforeEvs) != 1 {
+		t.Fatalf("duplicate MarkMessageRead emitted %d events, want 1", len(afterEvs)-len(beforeEvs))
+	}
+
+	// Epic validation: bad key and cross-project/missing source_issue_id -> ValidationError (never FK 500).
+	var verr *model.ValidationError
+	if _, err := st.CreateEpic(ctx, trOwner, "PAGE", CreateEpicInput{Key: "bad key!", Title: "Bad"}); !errors.As(err, &verr) {
+		t.Fatalf("bad epic key err = %v, want ValidationError", err)
+	}
+	missingID := int64(999999)
+	if _, err := st.CreateEpic(ctx, trOwner, "PAGE", CreateEpicInput{Title: "Bad Ref", SourceIssueID: &missingID}); !errors.As(err, &verr) {
+		t.Fatalf("missing source_issue_id err = %v, want ValidationError", err)
+	}
+}
