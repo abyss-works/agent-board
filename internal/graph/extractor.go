@@ -54,6 +54,8 @@ func NewExtractor(pool *pgxpool.Pool, store *Store) *Extractor {
 	return &Extractor{pool: pool, store: store}
 }
 
+const maxExtractedRefsPerDoc = 128
+
 var (
 	typedIssueRefRE = regexp.MustCompile(`\bissue:([A-Z][A-Z0-9]{1,9}-[0-9]+)\b`)
 	typedDocRefRE   = regexp.MustCompile(`\bdoc:([A-Za-z0-9._/-]+\.md|[A-Za-z0-9._/-]+)\b`)
@@ -139,18 +141,90 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 		return nil
 	}
 
+	type cachedRef struct {
+		ref pg.NodeRef
+		ok  bool
+	}
+	issueCache := map[string]cachedRef{}
+	recordCache := map[string]cachedRef{}
+	specCache := map[string]cachedRef{}
+	lookupsUsed := 0
+
+	resolveIssueCached := func(key string) (pg.NodeRef, bool, bool, error) {
+		if c, hit := issueCache[key]; hit {
+			return c.ref, c.ok, true, nil
+		}
+		if lookupsUsed >= maxExtractedRefsPerDoc {
+			return pg.NodeRef{}, false, false, nil
+		}
+		lookupsUsed++
+		ref, ok, err := e.resolveIssue(ctx, key)
+		if err != nil {
+			return pg.NodeRef{}, false, false, err
+		}
+		issueCache[key] = cachedRef{ref: ref, ok: ok}
+		return ref, ok, true, nil
+	}
+
+	resolveRecordCached := func(refText string) (pg.NodeRef, bool, bool, error) {
+		if c, hit := recordCache[refText]; hit {
+			return c.ref, c.ok, true, nil
+		}
+		if lookupsUsed >= maxExtractedRefsPerDoc {
+			return pg.NodeRef{}, false, false, nil
+		}
+		lookupsUsed++
+		ref, ok, err := e.resolveRecord(ctx, src.ProjectID, projectKey, refText)
+		if err != nil {
+			return pg.NodeRef{}, false, false, err
+		}
+		recordCache[refText] = cachedRef{ref: ref, ok: ok}
+		return ref, ok, true, nil
+	}
+
+	resolveSpecCached := func(refText string) (pg.NodeRef, bool, bool, error) {
+		if c, hit := specCache[refText]; hit {
+			return c.ref, c.ok, true, nil
+		}
+		if lookupsUsed >= maxExtractedRefsPerDoc {
+			return pg.NodeRef{}, false, false, nil
+		}
+		lookupsUsed++
+		ref, ok, err := e.resolveSpec(ctx, src.ProjectID, projectKey, refText)
+		if err != nil {
+			return pg.NodeRef{}, false, false, err
+		}
+		specCache[refText] = cachedRef{ref: ref, ok: ok}
+		return ref, ok, true, nil
+	}
+
+	resolveDocOrSpecCached := func(refText string) (pg.NodeRef, bool, bool, error) {
+		if strings.HasPrefix(refText, "spec:") {
+			return resolveSpecCached(strings.TrimPrefix(refText, "spec:"))
+		}
+		if strings.HasPrefix(refText, "doc:") {
+			return resolveRecordCached(strings.TrimPrefix(refText, "doc:"))
+		}
+		ref, ok, allowed, err := resolveRecordCached(refText)
+		if err != nil || ok || !allowed {
+			return ref, ok, allowed, err
+		}
+		return resolveSpecCached(refText)
+	}
+
 	// 1. Parse explicit YAML frontmatter relations if present.
 	bodyText := src.Body
 	if fm, ok := model.ParseFrontMatter(src.Body); ok {
 		bodyText = stripFrontMatterBody(src.Body)
-		for _, issueKey := range fm.Issues {
-			issueKey = strings.TrimSpace(issueKey)
-			if issueKey == "" {
-				continue
-			}
-			if ref, ok, err := e.resolveIssue(ctx, issueKey); err != nil {
+		for _, issueKey := range dedupStrings(fm.Issues, maxExtractedRefsPerDoc) {
+			ref, found, allowed, err := resolveIssueCached(issueKey)
+			if err != nil {
 				return report, err
-			} else if ok {
+			}
+			if !allowed {
+				break
+			}
+			if found {
 				if err := recordExplicit(&ref, nil, model.EdgeKindAbout, "frontmatter issue: "+issueKey); err != nil {
 					return report, err
 				}
@@ -161,14 +235,15 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 				}
 			}
 		}
-		for _, relDoc := range fm.Related {
-			relDoc = strings.TrimSpace(relDoc)
-			if relDoc == "" {
-				continue
-			}
-			if ref, ok, err := e.resolveDocOrSpec(ctx, src.ProjectID, projectKey, relDoc); err != nil {
+		for _, relDoc := range dedupStrings(fm.Related, maxExtractedRefsPerDoc) {
+			ref, found, allowed, err := resolveDocOrSpecCached(relDoc)
+			if err != nil {
 				return report, err
-			} else if ok {
+			}
+			if !allowed {
+				break
+			}
+			if found {
 				if err := recordExplicit(&ref, nil, model.EdgeKindRelated, "frontmatter related: "+relDoc); err != nil {
 					return report, err
 				}
@@ -179,14 +254,15 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 				}
 			}
 		}
-		for _, supDoc := range fm.Supersedes {
-			supDoc = strings.TrimSpace(supDoc)
-			if supDoc == "" {
-				continue
-			}
-			if ref, ok, err := e.resolveDocOrSpec(ctx, src.ProjectID, projectKey, supDoc); err != nil {
+		for _, supDoc := range dedupStrings(fm.Supersedes, maxExtractedRefsPerDoc) {
+			ref, found, allowed, err := resolveDocOrSpecCached(supDoc)
+			if err != nil {
 				return report, err
-			} else if ok {
+			}
+			if !allowed {
+				break
+			}
+			if found {
 				if err := recordExplicit(&ref, nil, model.EdgeKindSupersedes, "frontmatter supersedes: "+supDoc); err != nil {
 					return report, err
 				}
@@ -205,13 +281,15 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 	refSources = append(refSources, bodyText)
 	combinedRefsText := strings.Join(refSources, "\n")
 
-	for _, m := range typedIssueRefRE.FindAllStringSubmatch(combinedRefsText, -1) {
-		key := m[1]
-		ref, ok, err := e.resolveIssue(ctx, key)
+	for _, key := range extractUniqueRefs(typedIssueRefRE, combinedRefsText, "", maxExtractedRefsPerDoc) {
+		ref, found, allowed, err := resolveIssueCached(key)
 		if err != nil {
 			return report, err
 		}
-		if !ok {
+		if !allowed {
+			break
+		}
+		if !found {
 			continue
 		}
 		kind := model.EdgeKindAbout
@@ -223,13 +301,15 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 		}
 	}
 
-	for _, m := range typedDocRefRE.FindAllStringSubmatch(combinedRefsText, -1) {
-		docRef := strings.TrimRight(m[1], ".,;:)")
-		ref, ok, err := e.resolveRecord(ctx, src.ProjectID, projectKey, docRef)
+	for _, docRef := range extractUniqueRefs(typedDocRefRE, combinedRefsText, ".,;:)", maxExtractedRefsPerDoc) {
+		ref, found, allowed, err := resolveRecordCached(docRef)
 		if err != nil {
 			return report, err
 		}
-		if !ok {
+		if !allowed {
+			break
+		}
+		if !found {
 			continue
 		}
 		if err := recordExplicit(&ref, nil, model.EdgeKindRelated, "explicit ref doc:"+docRef); err != nil {
@@ -237,13 +317,15 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 		}
 	}
 
-	for _, m := range typedSpecRefRE.FindAllStringSubmatch(combinedRefsText, -1) {
-		specRef := strings.TrimRight(m[1], ".,;:)")
-		ref, ok, err := e.resolveSpec(ctx, src.ProjectID, projectKey, specRef)
+	for _, specRef := range extractUniqueRefs(typedSpecRefRE, combinedRefsText, ".,;:)", maxExtractedRefsPerDoc) {
+		ref, found, allowed, err := resolveSpecCached(specRef)
 		if err != nil {
 			return report, err
 		}
-		if !ok {
+		if !allowed {
+			break
+		}
+		if !found {
 			continue
 		}
 		kind := model.EdgeKindAbout
@@ -256,13 +338,15 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 	}
 
 	// 3. Inferred issue mentions (bare keys in body -> about/related confirmed).
-	for _, m := range bareIssueKeyRE.FindAllStringSubmatch(bodyText, -1) {
-		key := m[1]
-		ref, ok, err := e.resolveIssue(ctx, key)
+	for _, key := range extractUniqueRefs(bareIssueKeyRE, bodyText, "", maxExtractedRefsPerDoc) {
+		ref, found, allowed, err := resolveIssueCached(key)
 		if err != nil {
 			return report, err
 		}
-		if !ok {
+		if !allowed {
+			break
+		}
+		if !found {
 			continue
 		}
 		kind := model.EdgeKindAbout
@@ -278,16 +362,18 @@ func (e *Extractor) ExtractAndStore(ctx context.Context, src ExtractSource) (Ext
 	hasSupersedeCue, matchedCue := detectSupersedeCue(src.Title + "\n" + bodyText)
 
 	// 4a. Direct record filename mentions in body text.
-	for _, m := range recordFileRE.FindAllStringSubmatch(bodyText, -1) {
-		docName := m[1]
+	for _, docName := range extractUniqueRefs(recordFileRE, bodyText, "", maxExtractedRefsPerDoc) {
 		if docName == src.KeyOrName {
 			continue
 		}
-		ref, ok, err := e.resolveRecord(ctx, src.ProjectID, projectKey, docName)
+		ref, found, allowed, err := resolveRecordCached(docName)
 		if err != nil {
 			return report, err
 		}
-		if !ok {
+		if !allowed {
+			break
+		}
+		if !found {
 			continue
 		}
 		if err := recordInferred(ref, model.EdgeKindRelated, 0.82, "referenced record "+docName); err != nil {
@@ -544,19 +630,6 @@ func (e *Extractor) resolveSpec(ctx context.Context, projectID int64, projectKey
 	return pg.NodeRef{Type: model.GraphNodeSpec, ID: id}, true, nil
 }
 
-func (e *Extractor) resolveDocOrSpec(ctx context.Context, projectID int64, projectKey, refText string) (pg.NodeRef, bool, error) {
-	if strings.HasPrefix(refText, "spec:") {
-		return e.resolveSpec(ctx, projectID, projectKey, strings.TrimPrefix(refText, "spec:"))
-	}
-	if strings.HasPrefix(refText, "doc:") {
-		return e.resolveRecord(ctx, projectID, projectKey, strings.TrimPrefix(refText, "doc:"))
-	}
-	if ref, ok, err := e.resolveRecord(ctx, projectID, projectKey, refText); err != nil || ok {
-		return ref, ok, err
-	}
-	return e.resolveSpec(ctx, projectID, projectKey, refText)
-}
-
 func splitProjectRef(defaultProject, ref string) (string, string) {
 	if p, rest, ok := strings.Cut(ref, "/"); ok && model.ValidProjectKey(p) && rest != "" {
 		return p, rest
@@ -688,6 +761,64 @@ func nonEmptyPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func extractUniqueRefs(re *regexp.Regexp, text, trimChars string, limit int) []string {
+	if limit <= 0 || text == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for offset := 0; offset < len(text); {
+		loc := re.FindStringSubmatchIndex(text[offset:])
+		if loc == nil {
+			break
+		}
+		if len(loc) >= 4 && loc[2] >= 0 && loc[3] >= 0 {
+			val := text[offset+loc[2] : offset+loc[3]]
+			if trimChars != "" {
+				val = strings.TrimRight(val, trimChars)
+			}
+			if val != "" {
+				if _, ok := seen[val]; !ok {
+					seen[val] = struct{}{}
+					out = append(out, val)
+					if len(out) >= limit {
+						break
+					}
+				}
+			}
+		}
+		if loc[1] <= 0 {
+			offset++
+		} else {
+			offset += loc[1]
+		}
+	}
+	return out
+}
+
+func dedupStrings(items []string, limit int) []string {
+	if limit <= 0 || len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, min(len(items), limit))
+	out := make([]string, 0, min(len(items), limit))
+	for _, s := range items {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func truncateRunes(s string, maxRunes int) string {

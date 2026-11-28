@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -173,6 +174,7 @@ type VoyageEmbedder struct {
 	maxRetries     int
 	retryBaseDelay time.Duration
 	httpClient     *http.Client
+	configErr      error
 }
 
 // NewVoyageEmbedder builds a VoyageEmbedder with safe defaults and a trimmed
@@ -182,6 +184,7 @@ func NewVoyageEmbedder(cfg VoyageEmbedderConfig) *VoyageEmbedder {
 	if baseURL == "" {
 		baseURL = DefaultVoyageBaseURL
 	}
+	apiKey := strings.TrimSpace(cfg.APIKey)
 	modelName := strings.TrimSpace(cfg.Model)
 	if modelName == "" {
 		modelName = DefaultVoyageEmbedModel
@@ -202,19 +205,18 @@ func NewVoyageEmbedder(cfg VoyageEmbedderConfig) *VoyageEmbedder {
 	if retryDelay <= 0 {
 		retryDelay = DefaultVoyageRetryBaseDelay
 	}
-	hc := cfg.HTTPClient
-	if hc == nil {
-		hc = &http.Client{Timeout: timeout}
-	}
+	hc := hardenVoyageHTTPClient(cfg.HTTPClient, timeout)
+	configErr := validateVoyageConfig(baseURL, apiKey)
 	return &VoyageEmbedder{
 		baseURL:        baseURL,
-		apiKey:         strings.TrimSpace(cfg.APIKey),
+		apiKey:         apiKey,
 		model:          modelName,
 		dimensions:     dims,
 		timeout:        timeout,
 		maxRetries:     maxRetries,
 		retryBaseDelay: retryDelay,
 		httpClient:     hc,
+		configErr:      configErr,
 	}
 }
 
@@ -274,6 +276,14 @@ type voyageEmbedResponse struct {
 }
 
 func (e *VoyageEmbedder) embed(ctx context.Context, texts []string, inputType string) ([][]float32, pg.Usage, error) {
+	if e.configErr != nil {
+		return nil, pg.Usage{}, &APIError{
+			Provider:  VoyageProvider,
+			Operation: "embed",
+			Message:   sanitizeText("voyage embed: "+e.configErr.Error(), e.apiKey),
+			Sentinels: []error{ErrInvalidConfig},
+		}
+	}
 	if e.apiKey == "" {
 		return nil, pg.Usage{}, &APIError{
 			Provider:  VoyageProvider,
@@ -314,7 +324,7 @@ func (e *VoyageEmbedder) embed(ctx context.Context, texts []string, inputType st
 		return nil, usage, &APIError{
 			Provider:  VoyageProvider,
 			Operation: "embed",
-			Message:   sanitizeText("voyage embed: "+shorten(out.Error.Message, 200), e.apiKey),
+			Message:   "voyage embed: " + shorten(sanitizeText(out.Error.Message, e.apiKey), 200),
 			Sentinels: []error{ErrUpstream},
 		}
 	}
@@ -322,7 +332,7 @@ func (e *VoyageEmbedder) embed(ctx context.Context, texts []string, inputType st
 		return nil, usage, &APIError{
 			Provider:  VoyageProvider,
 			Operation: "embed",
-			Message:   sanitizeText("voyage embed: "+shorten(out.Detail, 200), e.apiKey),
+			Message:   "voyage embed: " + shorten(sanitizeText(out.Detail, e.apiKey), 200),
 			Sentinels: []error{ErrUpstream},
 		}
 	}
@@ -381,6 +391,7 @@ type VoyageReranker struct {
 	maxRetries     int
 	retryBaseDelay time.Duration
 	httpClient     *http.Client
+	configErr      error
 }
 
 // NewVoyageReranker builds a VoyageReranker with safe defaults and a trimmed
@@ -390,6 +401,7 @@ func NewVoyageReranker(cfg VoyageRerankerConfig) *VoyageReranker {
 	if baseURL == "" {
 		baseURL = DefaultVoyageBaseURL
 	}
+	apiKey := strings.TrimSpace(cfg.APIKey)
 	modelName := strings.TrimSpace(cfg.Model)
 	if modelName == "" {
 		modelName = DefaultVoyageRerankModel
@@ -406,18 +418,17 @@ func NewVoyageReranker(cfg VoyageRerankerConfig) *VoyageReranker {
 	if retryDelay <= 0 {
 		retryDelay = DefaultVoyageRetryBaseDelay
 	}
-	hc := cfg.HTTPClient
-	if hc == nil {
-		hc = &http.Client{Timeout: timeout}
-	}
+	hc := hardenVoyageHTTPClient(cfg.HTTPClient, timeout)
+	configErr := validateVoyageConfig(baseURL, apiKey)
 	return &VoyageReranker{
 		baseURL:        baseURL,
-		apiKey:         strings.TrimSpace(cfg.APIKey),
+		apiKey:         apiKey,
 		model:          modelName,
 		timeout:        timeout,
 		maxRetries:     maxRetries,
 		retryBaseDelay: retryDelay,
 		httpClient:     hc,
+		configErr:      configErr,
 	}
 }
 
@@ -453,6 +464,14 @@ type voyageRerankResponse struct {
 func (r *VoyageReranker) Rerank(ctx context.Context, query string, docs []pg.RerankDocument, topK int) ([]pg.RerankResult, pg.Usage, error) {
 	if len(docs) == 0 {
 		return nil, pg.Usage{}, nil
+	}
+	if r.configErr != nil {
+		return nil, pg.Usage{}, &APIError{
+			Provider:  VoyageProvider,
+			Operation: "rerank",
+			Message:   sanitizeText("voyage rerank: "+r.configErr.Error(), r.apiKey),
+			Sentinels: []error{ErrInvalidConfig},
+		}
 	}
 	if r.apiKey == "" {
 		return nil, pg.Usage{}, &APIError{
@@ -502,7 +521,7 @@ func (r *VoyageReranker) Rerank(ctx context.Context, query string, docs []pg.Rer
 		return nil, usage, &APIError{
 			Provider:  VoyageProvider,
 			Operation: "rerank",
-			Message:   sanitizeText("voyage rerank: "+shorten(out.Error.Message, 200), r.apiKey),
+			Message:   "voyage rerank: " + shorten(sanitizeText(out.Error.Message, r.apiKey), 200),
 			Sentinels: []error{ErrUpstream},
 		}
 	}
@@ -510,7 +529,15 @@ func (r *VoyageReranker) Rerank(ctx context.Context, query string, docs []pg.Rer
 		return nil, usage, &APIError{
 			Provider:  VoyageProvider,
 			Operation: "rerank",
-			Message:   sanitizeText("voyage rerank: "+shorten(out.Detail, 200), r.apiKey),
+			Message:   "voyage rerank: " + shorten(sanitizeText(out.Detail, r.apiKey), 200),
+			Sentinels: []error{ErrUpstream},
+		}
+	}
+	if len(out.Data) == 0 {
+		return nil, usage, &APIError{
+			Provider:  VoyageProvider,
+			Operation: "rerank",
+			Message:   "voyage rerank: upstream returned empty data for non-empty documents",
 			Sentinels: []error{ErrUpstream},
 		}
 	}
@@ -548,6 +575,46 @@ func (r *VoyageReranker) Rerank(ctx context.Context, query string, docs []pg.Rer
 	return results, usage, nil
 }
 
+func disallowRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func hardenVoyageHTTPClient(hc *http.Client, timeout time.Duration) *http.Client {
+	if hc == nil {
+		return &http.Client{
+			Timeout:       timeout,
+			CheckRedirect: disallowRedirect,
+		}
+	}
+	cloned := *hc
+	cloned.CheckRedirect = disallowRedirect
+	return &cloned
+}
+
+func validateVoyageConfig(baseURL, apiKey string) error {
+	if strings.ContainsAny(apiKey, "\r\n\x00") {
+		return errors.New("API key contains invalid control characters")
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return errors.New("invalid base URL")
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported base URL scheme %q (must be http or https)", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("base URL host is required")
+	}
+	if u.User != nil {
+		return errors.New("base URL must not contain userinfo")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return errors.New("base URL must not contain query parameters or fragments")
+	}
+	return nil
+}
+
 func doVoyageJSON(
 	ctx context.Context,
 	hc *http.Client,
@@ -561,7 +628,11 @@ func doVoyageJSON(
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			delay := retryBaseDelay << (attempt - 1)
+			shift := min(attempt-1, 6)
+			delay := retryBaseDelay << shift
+			if delay <= 0 {
+				delay = retryBaseDelay
+			}
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
@@ -666,12 +737,11 @@ func classifyTransportError(err error, op, apiKey string) *APIError {
 }
 
 func classifyStatusError(code int, status string, raw []byte, op, apiKey string) *APIError {
-	msg := extractVoyageErrorMessage(raw)
-	detail := fmt.Sprintf("voyage %s: HTTP %s", op, status)
+	msg := sanitizeText(extractVoyageErrorMessage(raw), apiKey)
+	detail := sanitizeText(fmt.Sprintf("voyage %s: HTTP %s", op, status), apiKey)
 	if msg != "" {
 		detail += ": " + shorten(msg, 200)
 	}
-	detail = sanitizeText(detail, apiKey)
 
 	switch {
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:

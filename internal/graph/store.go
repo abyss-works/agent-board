@@ -11,11 +11,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/wsk0715/agent-board/internal/model"
 	"github.com/wsk0715/agent-board/internal/store/pg"
 )
+
+const maxUpsertUniqueRetries = 2
 
 // ErrCycle is returned when adding a depends_on or supersedes edge would create
 // a directed cycle (including a self-loop).
@@ -42,6 +45,21 @@ func (s *Store) UpsertExplicitEdge(ctx context.Context, in pg.UpsertEdgeInput) (
 		return model.Edge{}, ErrCycle
 	}
 
+	var lastErr error
+	for attempt := 0; attempt <= maxUpsertUniqueRetries; attempt++ {
+		edge, err := s.upsertExplicitEdgeOnce(ctx, in)
+		if err == nil {
+			return edge, nil
+		}
+		lastErr = err
+		if !isUniqueViolation(err) || ctx.Err() != nil {
+			return model.Edge{}, err
+		}
+	}
+	return model.Edge{}, lastErr
+}
+
+func (s *Store) upsertExplicitEdgeOnce(ctx context.Context, in pg.UpsertEdgeInput) (model.Edge, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return model.Edge{}, err
@@ -86,6 +104,21 @@ func (s *Store) UpsertInferredEdge(ctx context.Context, in pg.UpsertEdgeInput) (
 		return model.Edge{}, ErrCycle
 	}
 
+	var lastErr error
+	for attempt := 0; attempt <= maxUpsertUniqueRetries; attempt++ {
+		edge, err := s.upsertInferredEdgeOnce(ctx, in)
+		if err == nil {
+			return edge, nil
+		}
+		lastErr = err
+		if !isUniqueViolation(err) || ctx.Err() != nil {
+			return model.Edge{}, err
+		}
+	}
+	return model.Edge{}, lastErr
+}
+
+func (s *Store) upsertInferredEdgeOnce(ctx context.Context, in pg.UpsertEdgeInput) (model.Edge, error) {
 	targetStatus := model.EdgeStatusConfirmed
 	if in.Kind == model.EdgeKindSupersedes {
 		targetStatus = model.EdgeStatusCandidate
@@ -341,6 +374,23 @@ func (s *Store) decideEdge(ctx context.Context, actorID string, edgeID int64, ta
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Read edge kind without locking first so advisory lock acquisition order
+	// (lockEdgeKindTx -> FOR UPDATE OF e) matches UpsertExplicitEdge and
+	// UpsertInferredEdge and avoids AB-BA deadlocks.
+	var kindRaw string
+	if err := tx.QueryRow(ctx, `SELECT kind FROM graph_edge WHERE id = $1`, edgeID).Scan(&kindRaw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Edge{}, pg.ErrNotFound
+		}
+		return model.Edge{}, err
+	}
+	edgeKind := model.EdgeKind(kindRaw)
+	if requiresCycleCheck(edgeKind) {
+		if err := lockEdgeKindTx(ctx, tx, edgeKind); err != nil {
+			return model.Edge{}, err
+		}
+	}
+
 	cur, err := getEdgeForUpdateTx(ctx, tx, edgeID)
 	if err != nil {
 		return model.Edge{}, err
@@ -349,9 +399,6 @@ func (s *Store) decideEdge(ctx context.Context, actorID string, edgeID int64, ta
 		return model.Edge{}, &pg.EdgeAlreadyDecidedError{EdgeID: edgeID, Status: cur.Status}
 	}
 	if targetStatus == model.EdgeStatusConfirmed && requiresCycleCheck(cur.Kind) && cur.TargetType != nil && cur.TargetID != nil {
-		if err := lockEdgeKindTx(ctx, tx, cur.Kind); err != nil {
-			return model.Edge{}, err
-		}
 		cyclic, err := wouldCreateCycleTx(ctx, tx,
 			pg.NodeRef{Type: cur.SourceType, ID: cur.SourceID},
 			pg.NodeRef{Type: *cur.TargetType, ID: *cur.TargetID},
@@ -429,25 +476,31 @@ func lockEdgeKindTx(ctx context.Context, tx pgx.Tx, kind model.EdgeKind) error {
 	return err
 }
 
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 // wouldCreateCycleTx returns true if adding source -> target of the given kind
 // would create a directed cycle among confirmed edges of the same kind.
+// Uses UNION for global node deduplication so traversal stays O(V+E) on DAGs
+// with many shared paths.
 func wouldCreateCycleTx(ctx context.Context, tx pgx.Tx, source, target pg.NodeRef, kind model.EdgeKind) (bool, error) {
 	if source.Type == target.Type && source.ID == target.ID {
 		return true, nil
 	}
 	var reachable bool
 	err := tx.QueryRow(ctx, `
-		WITH RECURSIVE reach(node_type, node_id, visited) AS (
-			SELECT $1::text, $2::bigint, ARRAY[$1::text || ':' || $2::text]
-			UNION ALL
-			SELECT e.target_type, e.target_id, r.visited || (e.target_type || ':' || e.target_id::text)
+		WITH RECURSIVE reach(node_type, node_id) AS (
+			SELECT $1::text, $2::bigint
+			UNION
+			SELECT e.target_type, e.target_id
 			FROM graph_edge e
 			JOIN reach r ON e.source_type = r.node_type AND e.source_id = r.node_id
 			WHERE e.kind = $3
 			  AND e.status = 'confirmed'
 			  AND e.target_type IS NOT NULL
 			  AND e.target_id IS NOT NULL
-			  AND NOT ((e.target_type || ':' || e.target_id::text) = ANY(r.visited))
 		)
 		SELECT EXISTS (
 			SELECT 1 FROM reach WHERE node_type = $4 AND node_id = $5

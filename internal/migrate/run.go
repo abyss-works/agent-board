@@ -247,6 +247,11 @@ func Run(ctx context.Context, opts Options) (*RunResult, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Serialize migration runs against the same target database.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('agb_sqlite_migration'))`); err != nil {
+		return nil, fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+
 	// Ensure target database has no pre-existing migrated data.
 	if err := ensureTargetEmptyTx(ctx, tx); err != nil {
 		return nil, err
@@ -271,7 +276,7 @@ func Run(ctx context.Context, opts Options) (*RunResult, error) {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO actor (id, kind, created_at)
 			 VALUES ($1, $2, $3)
-			 ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, created_at = EXCLUDED.created_at`,
+			 ON CONFLICT (id) DO NOTHING`,
 			a.ID, a.Kind, a.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("insert actor %q: %w", a.ID, err)
@@ -522,7 +527,13 @@ func Run(ctx context.Context, opts Options) (*RunResult, error) {
 		if dep.IssueID == dep.DependsOnID {
 			continue
 		}
-		iss := issueByID[dep.IssueID]
+		iss, ok := issueByID[dep.IssueID]
+		if !ok {
+			return nil, fmt.Errorf("issue_dependency references missing source issue id=%d", dep.IssueID)
+		}
+		if _, ok := issueByID[dep.DependsOnID]; !ok {
+			return nil, fmt.Errorf("issue_dependency references missing target issue id=%d", dep.DependsOnID)
+		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO graph_edge (
 			     project_id, source_type, source_id, target_type, target_id, unresolved_target_text,
@@ -535,16 +546,25 @@ func Run(ctx context.Context, opts Options) (*RunResult, error) {
 		graphEdgeCount++
 	}
 	for _, rel := range docRels {
-		doc := docByID[rel.DocumentID]
+		doc, ok := docByID[rel.DocumentID]
+		if !ok {
+			return nil, fmt.Errorf("document_relation id=%d references missing source document id=%d", rel.ID, rel.DocumentID)
+		}
 		var targetType *string
 		var targetID *int64
 		var unresolved *string
 		switch {
 		case rel.TargetDocumentID != nil:
+			if _, ok := docByID[*rel.TargetDocumentID]; !ok {
+				return nil, fmt.Errorf("document_relation id=%d references missing target document id=%d", rel.ID, *rel.TargetDocumentID)
+			}
 			tt := "record"
 			targetType = &tt
 			targetID = rel.TargetDocumentID
 		case rel.TargetIssueID != nil:
+			if _, ok := issueByID[*rel.TargetIssueID]; !ok {
+				return nil, fmt.Errorf("document_relation id=%d references missing target issue id=%d", rel.ID, *rel.TargetIssueID)
+			}
 			tt := "issue"
 			targetType = &tt
 			targetID = rel.TargetIssueID
@@ -805,14 +825,26 @@ func ensureTargetEmptyTx(ctx context.Context, tx pgx.Tx) error {
 		name  string
 		query string
 	}{
+		{"actor(non-system)", `SELECT COUNT(*) FROM actor WHERE id <> 'system'`},
+		{"token", `SELECT COUNT(*) FROM token`},
 		{"project(non-global)", `SELECT COUNT(*) FROM project WHERE id <> 0`},
 		{"epic", `SELECT COUNT(*) FROM epic`},
 		{"milestone", `SELECT COUNT(*) FROM milestone`},
 		{"issue", `SELECT COUNT(*) FROM issue`},
+		{"spec_document", `SELECT COUNT(*) FROM spec_document`},
+		{"spec_revision", `SELECT COUNT(*) FROM spec_revision`},
 		{"record_document", `SELECT COUNT(*) FROM record_document`},
 		{"activity", `SELECT COUNT(*) FROM activity`},
+		{"document_activity", `SELECT COUNT(*) FROM document_activity`},
+		{"resource_activity", `SELECT COUNT(*) FROM resource_activity`},
 		{"message", `SELECT COUNT(*) FROM message`},
+		{"session", `SELECT COUNT(*) FROM session`},
+		{"issue_claim", `SELECT COUNT(*) FROM issue_claim`},
 		{"event", `SELECT COUNT(*) FROM event`},
+		{"ingest_job", `SELECT COUNT(*) FROM ingest_job`},
+		{"normalized_artifact", `SELECT COUNT(*) FROM normalized_artifact`},
+		{"rag_chunk", `SELECT COUNT(*) FROM rag_chunk`},
+		{"embedding_generation", `SELECT COUNT(*) FROM embedding_generation`},
 		{"graph_edge", `SELECT COUNT(*) FROM graph_edge`},
 	}
 	for _, c := range checks {
@@ -838,7 +870,7 @@ func syncIdentitySequencesTx(ctx context.Context, tx pgx.Tx) ([]string, error) {
 			return nil, fmt.Errorf("identity sequence not found for table %s", tbl)
 		}
 		var maxID int64
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM `+tbl).Scan(&maxID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM `+pgx.Identifier{tbl}.Sanitize()).Scan(&maxID); err != nil {
 			return nil, fmt.Errorf("read max id for %s: %w", tbl, err)
 		}
 		if maxID >= 1 {

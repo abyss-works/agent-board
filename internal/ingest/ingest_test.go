@@ -25,6 +25,10 @@ import (
 var ingestTestDBSeq atomic.Int64
 
 func openTestPGStore(t *testing.T) *pg.Store {
+	return openTestPGStoreWithMaxConns(t, 12)
+}
+
+func openTestPGStoreWithMaxConns(t *testing.T, maxConns int) *pg.Store {
 	t.Helper()
 	baseDSN := strings.TrimSpace(os.Getenv("AGB_TEST_PG_DSN"))
 	if baseDSN == "" {
@@ -57,7 +61,7 @@ func openTestPGStore(t *testing.T) *pg.Store {
 	})
 
 	u.Path = "/" + dbName
-	st, err := pg.Open(ctx, u.String(), 12)
+	st, err := pg.Open(ctx, u.String(), maxConns)
 	if err != nil {
 		t.Fatalf("pg.Open: %v", err)
 	}
@@ -228,6 +232,79 @@ Overview paragraph introducing the indexing service.
 	}
 	if chunks[2].SectionPath != "Architecture > Config Table" || !strings.Contains(chunks[2].ChunkText, "| tokenizer | TokenBigram |") {
 		t.Fatalf("table chunk corrupted: %+v", chunks[2])
+	}
+}
+
+func TestSemanticChunkerBoundsHugeTableHeaderAndUnterminatedFence(t *testing.T) {
+	chunker := NewSemanticChunker(ChunkerConfig{MaxChunkRunes: 400})
+
+	// 1 MiB table header + 2000 rows must not amplify memory across chunks.
+	var tableBuf strings.Builder
+	headerCell := strings.Repeat("H", 512*1024)
+	delimCell := strings.Repeat("-", 512*1024)
+	tableBuf.WriteString("| " + headerCell + " | v |\n")
+	tableBuf.WriteString("| " + delimCell + " | - |\n")
+	for i := 0; i < 2000; i++ {
+		fmt.Fprintf(&tableBuf, "| row-%04d | val-%04d |\n", i, i)
+	}
+	tableInput := tableBuf.String()
+	tableChunks := chunker.Chunk(ChunkInput{
+		Title:      "Large Table",
+		ProjectKey: "DEMO",
+		Kind:       "spec",
+		Body:       tableInput,
+	})
+	if len(tableChunks) < 2 {
+		t.Fatalf("expected multiple chunks for large table, got %d", len(tableChunks))
+	}
+	var totalChunkBytes, totalSearchBytes int
+	var sawFirstRow, sawLastRow bool
+	for _, ch := range tableChunks {
+		totalChunkBytes += len(ch.ChunkText)
+		totalSearchBytes += len(ch.SearchText)
+		if strings.Contains(ch.ChunkText, "row-0000") {
+			sawFirstRow = true
+		}
+		if strings.Contains(ch.ChunkText, "row-1999") {
+			sawLastRow = true
+		}
+	}
+	if !sawFirstRow || !sawLastRow {
+		t.Fatalf("table rows lost during chunking: first=%v last=%v", sawFirstRow, sawLastRow)
+	}
+	if maxAllowed := len(tableInput) * 3; totalChunkBytes > maxAllowed || totalSearchBytes > maxAllowed {
+		t.Fatalf("chunk output amplified unexpectedly: input=%d chunkBytes=%d searchBytes=%d (limit %d)",
+			len(tableInput), totalChunkBytes, totalSearchBytes, maxAllowed)
+	}
+
+	// Unterminated code fence hitting EOF must not duplicate the final code line across chunks.
+	var codeBuf strings.Builder
+	codeBuf.WriteString("```go\n")
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&codeBuf, "fmt.Println(\"line %02d payload text for chunk split\")\n", i)
+	}
+	const finalLine = `return "EOF_FINAL_SENTINEL_LINE"`
+	codeBuf.WriteString(finalLine)
+
+	codeChunks := chunker.Chunk(ChunkInput{
+		Title:      "Unterminated Fence",
+		ProjectKey: "DEMO",
+		Kind:       "note",
+		Body:       codeBuf.String(),
+	})
+	if len(codeChunks) < 2 {
+		t.Fatalf("expected multiple chunks for long unterminated fence, got %d", len(codeChunks))
+	}
+	sentinelCount := 0
+	for i, ch := range codeChunks {
+		c := strings.Count(ch.ChunkText, finalLine)
+		sentinelCount += c
+		if i < len(codeChunks)-1 && c > 0 {
+			t.Fatalf("unterminated fence final line leaked into earlier chunk %d: %q", i, ch.ChunkText)
+		}
+	}
+	if sentinelCount != 1 {
+		t.Fatalf("final code line occurrences = %d, want 1", sentinelCount)
 	}
 }
 
@@ -770,5 +847,179 @@ func TestBlueGreenGenerationAndPGroongaHNSWQueries(t *testing.T) {
 	}
 	if countRev2 != 1 {
 		t.Fatalf("spec rev2 chunks = %d, want 1 (stale chunks must be removed)", countRev2)
+	}
+}
+
+func TestSharedWaitDispatcherOnSmallPoolAndWaitTimeout(t *testing.T) {
+	// Constrained pool with MaxConns=4 while 16 concurrent Wait() calls + Worker run simultaneously.
+	st := openTestPGStoreWithMaxConns(t, 4)
+	ctx := context.Background()
+
+	proj, err := st.CreateProject(ctx, trOwner, pg.CreateProjectInput{Key: "POOL", Name: "Small Pool"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed an older decision so one of the concurrent jobs yields a supersedes candidate.
+	oldRec, err := st.CreateRecord(ctx, trOwner, proj.Key, pg.CreateRecordInput{
+		Name:    "2026-10-01-0800-decision-pool-base.md",
+		Kind:    "decision",
+		Title:   "Pool base strategy",
+		Content: "# Pool Base\nBaseline connection pool sharing rule.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	emb := newDeterministicEmbedder("voyage-4", 19)
+	q := NewQueue(st.Pool(), QueueConfig{WaitPollInterval: 30 * time.Millisecond})
+	defer q.Close()
+	w := NewWorker(WorkerConfig{
+		Pool:          st.Pool(),
+		Queue:         q,
+		Embedder:      emb,
+		WorkerID:      "w-small-pool",
+		SweepInterval: 30 * time.Millisecond,
+	})
+
+	// Before starting worker, verify Wait timeout returns TimedOut=true without DeadlineExceeded error.
+	timedOutRes, err := q.Wait(ctx, oldRec.IngestJobID, 40*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Wait timeout returned error %v, want nil with TimedOut=true", err)
+	}
+	if !timedOutRes.TimedOut {
+		t.Fatalf("expected TimedOut=true when worker is idle, got %+v", timedOutRes)
+	}
+
+	// Create 19 additional records (including one decision that supersedes oldRec) -> 20 total jobs.
+	jobIDs := []int64{oldRec.IngestJobID}
+	var supersedesJobID int64
+	for i := 0; i < 19; i++ {
+		kind := "note"
+		title := fmt.Sprintf("Worker log %d", i)
+		name := fmt.Sprintf("2026-10-02-%04d-note-log-%d.md", 1000+i, i)
+		content := fmt.Sprintf("# Entry %d\nRoutine observation %d.", i, i)
+		if i == 18 {
+			kind = "decision"
+			title = "Pool v2 strategy"
+			name = "2026-10-02-1018-decision-pool-v2.md"
+			content = fmt.Sprintf("# Pool v2\nThis decision supersedes %s with shared listener multiplexing.", oldRec.Record.Name)
+		}
+		rec, err := st.CreateRecord(ctx, trOwner, proj.Key, pg.CreateRecordInput{
+			Name:    name,
+			Kind:    kind,
+			Title:   title,
+			Content: content,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		jobIDs = append(jobIDs, rec.IngestJobID)
+		if i == 18 {
+			supersedesJobID = rec.IngestJobID
+		}
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		_ = w.Run(runCtx)
+	}()
+	defer func() {
+		cancel()
+		<-workerDone
+	}()
+
+	var wg sync.WaitGroup
+	results := make([]WaitResult, len(jobIDs))
+	errs := make([]error, len(jobIDs))
+	for i, jid := range jobIDs {
+		wg.Add(1)
+		go func(idx int, id int64) {
+			defer wg.Done()
+			results[idx], errs[idx] = q.Wait(ctx, id, 10*time.Second)
+		}(i, jid)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Wait[%d] (job %d) error: %v", i, jobIDs[i], err)
+		}
+		if results[i].TimedOut || results[i].Status != model.IngestStatusDone {
+			t.Fatalf("concurrent Wait[%d] (job %d) = %+v, want done without timeout", i, jobIDs[i], results[i])
+		}
+		if jobIDs[i] == supersedesJobID {
+			if len(results[i].SupersedesCandidates) != 1 || results[i].SupersedesCandidates[0].TargetID != oldRec.Record.ID {
+				t.Fatalf("supersedes job candidates = %+v, want target %d", results[i].SupersedesCandidates, oldRec.Record.ID)
+			}
+		}
+	}
+}
+
+func TestBackfillGenerationToleratesConcurrentChunkDeletion(t *testing.T) {
+	st := openTestPGStore(t)
+	ctx := context.Background()
+
+	proj, err := st.CreateProject(ctx, trOwner, pg.CreateProjectInput{Key: "BFIL", Name: "Backfill Race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	embV1 := newDeterministicEmbedder("voyage-4", 5)
+	q := NewQueue(st.Pool(), QueueConfig{})
+	defer q.Close()
+	gm := NewGenerationManager(st.Pool())
+	w := NewWorker(WorkerConfig{Pool: st.Pool(), Queue: q, Embedder: embV1, Generations: gm})
+
+	for i := 0; i < 3; i++ {
+		if _, err := st.CreateRecord(ctx, trOwner, proj.Key, pg.CreateRecordInput{
+			Name:    fmt.Sprintf("2026-10-01-10%02d-note-bf-%d.md", i, i),
+			Kind:    "note",
+			Title:   fmt.Sprintf("Backfill doc %d", i),
+			Content: fmt.Sprintf("# Doc %d\nBody content for concurrent backfill deletion test %d.", i, i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for {
+		processed, err := w.ProcessOnce(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !processed {
+			break
+		}
+	}
+
+	var victimChunkID int64
+	if err := st.Pool().QueryRow(ctx, `SELECT id FROM rag_chunk ORDER BY id ASC LIMIT 1`).Scan(&victimChunkID); err != nil {
+		t.Fatal(err)
+	}
+
+	gen2, err := gm.StartBuildingGeneration(ctx, "mock", "voyage-4-v2", 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var deletedOnce atomic.Bool
+	embV2 := newDeterministicEmbedder("voyage-4-v2", 29)
+	embV2.onEmbed = func(_ []string) error {
+		// Delete a chunk in-flight after BackfillGeneration has read it but before INSERT.
+		if deletedOnce.CompareAndSwap(false, true) {
+			if _, err := st.Pool().Exec(ctx, `DELETE FROM rag_chunk WHERE id = $1`, victimChunkID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	stats, err := gm.BackfillGeneration(ctx, gen2.ID, embV2, 10)
+	if err != nil {
+		t.Fatalf("BackfillGeneration failed under concurrent chunk deletion: %v", err)
+	}
+	if stats.ChunksEmbedded != 2 {
+		t.Fatalf("ChunksEmbedded = %d, want 2 (1 deleted chunk skipped cleanly)", stats.ChunksEmbedded)
 	}
 }

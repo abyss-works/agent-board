@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,14 @@ type Queue struct {
 	baseBackoff        time.Duration
 	maxBackoff         time.Duration
 	waitPollInterval   time.Duration
+
+	mu            sync.Mutex
+	waiters       map[int64]map[chan struct{}]struct{}
+	activeWaiters int
+	dispCancel    context.CancelFunc
+	dispDone      chan struct{}
+	stoppingDone  chan struct{}
+	closed        bool
 }
 
 // NewQueue constructs a Queue backed by pool.
@@ -81,6 +90,29 @@ func NewQueue(pool *pgxpool.Pool, cfg QueueConfig) *Queue {
 		baseBackoff:        baseBackoff,
 		maxBackoff:         maxBackoff,
 		waitPollInterval:   pollInterval,
+		waiters:            make(map[int64]map[chan struct{}]struct{}),
+	}
+}
+
+// Close shuts down the shared completion LISTEN dispatcher and ensures UNLISTEN *
+// runs before returning its PostgreSQL connection to the pool.
+func (q *Queue) Close() {
+	q.mu.Lock()
+	q.closed = true
+	cancel := q.dispCancel
+	done := q.dispDone
+	stopping := q.stoppingDone
+	q.dispCancel = nil
+	q.dispDone = nil
+	q.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	} else if stopping != nil {
+		<-stopping
 	}
 }
 
@@ -398,8 +430,9 @@ func (q *Queue) WaitForJob(ctx context.Context, jobID int64, timeout time.Durati
 }
 
 // Wait blocks until jobID reaches done or dead_letter, or until timeout
-// expires. It listens on PostgreSQL LISTEN/NOTIFY with a short polling
-// fallback and returns any candidate supersedes edges attached to the source.
+// expires. It multiplexes notifications over a single shared LISTEN connection
+// on IngestDoneNotifyChannel with a short polling fallback and returns any
+// candidate supersedes edges attached to the source.
 func (q *Queue) Wait(ctx context.Context, jobID int64, timeout time.Duration) (WaitResult, error) {
 	waitCtx := ctx
 	var cancel context.CancelFunc
@@ -408,105 +441,249 @@ func (q *Queue) Wait(ctx context.Context, jobID int64, timeout time.Duration) (W
 		defer cancel()
 	}
 
-	// Fast path check before acquiring a dedicated LISTEN connection.
-	if res, terminal, err := q.checkTerminalJob(waitCtx, jobID); err != nil {
+	checkNow := func() (WaitResult, bool, bool, error) {
+		res, terminal, err := q.checkTerminalJob(waitCtx, jobID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return WaitResult{}, false, false, ctx.Err()
+			}
+			if waitCtx.Err() != nil {
+				finalRes, finalErr := q.finalWaitResult(ctx, jobID)
+				return finalRes, true, true, finalErr
+			}
+			return WaitResult{}, false, false, err
+		}
+		return res, terminal, false, nil
+	}
+
+	// Fast path check before registering on the shared LISTEN dispatcher.
+	if res, done, _, err := checkNow(); err != nil {
 		return WaitResult{}, err
-	} else if terminal {
+	} else if done {
 		return res, nil
 	}
 
-	// Acquire a dedicated connection for LISTEN. If acquiring fails, fall back
-	// gracefully to polling so Wait stays resilient under pool pressure.
-	notifyCh := make(chan string, 16)
-	var stopListen func()
-	if conn, err := q.pool.Acquire(waitCtx); err == nil {
-		if _, err1 := conn.Exec(waitCtx, `LISTEN `+IngestDoneNotifyChannel); err1 == nil {
-			_, _ = conn.Exec(waitCtx, `LISTEN `+IngestNotifyChannel)
-			listenCtx, listenCancel := context.WithCancel(waitCtx)
-			doneCh := make(chan struct{})
-			go func() {
-				defer close(doneCh)
-				for {
-					n, nErr := conn.Conn().WaitForNotification(listenCtx)
-					if nErr != nil {
-						return
-					}
-					select {
-					case notifyCh <- n.Payload:
-					default:
-					}
-				}
-			}()
-			stopListen = func() {
-				listenCancel()
-				<-doneCh
-				conn.Release()
-			}
-		} else {
-			conn.Release()
-		}
-	}
-	if stopListen != nil {
-		defer stopListen()
-	}
+	notifyCh, unsub := q.subscribeDone(jobID)
+	defer unsub()
 
-	// Re-check immediately after LISTEN to close the race window between initial
-	// check and subscription registration.
-	if res, terminal, err := q.checkTerminalJob(waitCtx, jobID); err != nil {
+	// Re-check immediately after subscription to close the race window between
+	// initial check and listener registration.
+	if res, done, _, err := checkNow(); err != nil {
 		return WaitResult{}, err
-	} else if terminal {
+	} else if done {
 		return res, nil
 	}
 
 	ticker := time.NewTicker(q.waitPollInterval)
 	defer ticker.Stop()
-	targetPayload := strconv.FormatInt(jobID, 10)
 
 	for {
 		select {
-		case payload := <-notifyCh:
-			if payload != "" && payload != targetPayload {
-				continue
-			}
-			if res, terminal, err := q.checkTerminalJob(waitCtx, jobID); err != nil {
+		case <-notifyCh:
+			if res, done, _, err := checkNow(); err != nil {
 				return WaitResult{}, err
-			} else if terminal {
+			} else if done {
 				return res, nil
 			}
 		case <-ticker.C:
-			if res, terminal, err := q.checkTerminalJob(waitCtx, jobID); err != nil {
+			if res, done, _, err := checkNow(); err != nil {
 				return WaitResult{}, err
-			} else if terminal {
+			} else if done {
 				return res, nil
 			}
 		case <-waitCtx.Done():
-			// Distinguish caller cancellation from wait timeout.
-			if ctx.Err() != nil {
-				return WaitResult{}, ctx.Err()
-			}
-			job, gErr := q.GetJob(context.Background(), jobID)
-			if gErr != nil {
-				return WaitResult{
-					JobResult:            pg.JobResult{JobID: jobID, Status: model.IngestStatusPending, TimedOut: true},
-					SupersedesCandidates: []pg.SupersedesCandidate{},
-				}, nil
-			}
-			res := WaitResult{
-				JobResult: pg.JobResult{
-					JobID:    job.ID,
-					Status:   job.Status,
-					TimedOut: job.Status != model.IngestStatusDone && job.Status != model.IngestStatusDeadLetter,
-				},
-				SourceType:           job.SourceType,
-				SourceID:             job.SourceID,
-				SupersedesCandidates: []pg.SupersedesCandidate{},
-			}
-			if job.LastError != nil {
-				res.LastError = *job.LastError
-			}
-			return res, nil
+			return q.finalWaitResult(ctx, jobID)
 		}
 	}
+}
+
+func (q *Queue) finalWaitResult(ctx context.Context, jobID int64) (WaitResult, error) {
+	// Distinguish caller cancellation from wait timeout.
+	if ctx.Err() != nil {
+		return WaitResult{}, ctx.Err()
+	}
+	finalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	job, gErr := q.GetJob(finalCtx, jobID)
+	if gErr != nil {
+		if errors.Is(gErr, pg.ErrNotFound) {
+			return WaitResult{}, gErr
+		}
+		return WaitResult{
+			JobResult:            pg.JobResult{JobID: jobID, Status: model.IngestStatusPending, TimedOut: true},
+			SupersedesCandidates: []pg.SupersedesCandidate{},
+		}, nil
+	}
+	terminal := job.Status == model.IngestStatusDone || job.Status == model.IngestStatusDeadLetter
+	res := WaitResult{
+		JobResult: pg.JobResult{
+			JobID:    job.ID,
+			Status:   job.Status,
+			TimedOut: !terminal,
+		},
+		SourceType:           job.SourceType,
+		SourceID:             job.SourceID,
+		SupersedesCandidates: []pg.SupersedesCandidate{},
+	}
+	if job.LastError != nil {
+		res.LastError = *job.LastError
+	}
+	if job.Status == model.IngestStatusDone {
+		if nodeType, ok := ingestSourceToGraphNode(job.SourceType); ok {
+			if candidates, cErr := q.graphStore.ListCandidatesForSource(finalCtx, nodeType, job.SourceID); cErr == nil && candidates != nil {
+				res.SupersedesCandidates = candidates
+			}
+		}
+	}
+	return res, nil
+}
+
+func (q *Queue) subscribeDone(jobID int64) (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+
+	q.mu.Lock()
+	if q.waiters == nil {
+		q.waiters = make(map[int64]map[chan struct{}]struct{})
+	}
+	if q.waiters[jobID] == nil {
+		q.waiters[jobID] = make(map[chan struct{}]struct{})
+	}
+	q.waiters[jobID][ch] = struct{}{}
+	q.activeWaiters++
+	if !q.closed && q.dispCancel == nil {
+		dispCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		prevDone := q.stoppingDone
+		q.dispCancel = cancel
+		q.dispDone = done
+		go q.runDoneListener(dispCtx, prevDone, done)
+	}
+	q.mu.Unlock()
+
+	var once sync.Once
+	unsub := func() {
+		once.Do(func() {
+			q.mu.Lock()
+			if set := q.waiters[jobID]; set != nil {
+				delete(set, ch)
+				if len(set) == 0 {
+					delete(q.waiters, jobID)
+				}
+			}
+			q.activeWaiters--
+			var cancel context.CancelFunc
+			var done chan struct{}
+			if q.activeWaiters == 0 && q.dispCancel != nil {
+				cancel = q.dispCancel
+				done = q.dispDone
+				q.dispCancel = nil
+				q.dispDone = nil
+				q.stoppingDone = done
+			}
+			q.mu.Unlock()
+
+			if cancel != nil {
+				cancel()
+				<-done
+			}
+		})
+	}
+	return ch, unsub
+}
+
+func (q *Queue) runDoneListener(ctx context.Context, prevDone, done chan struct{}) {
+	defer close(done)
+	if prevDone != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-prevDone:
+		}
+	}
+
+	retryDelay := min(q.waitPollInterval, 100*time.Millisecond)
+	if retryDelay <= 0 {
+		retryDelay = 25 * time.Millisecond
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		conn, err := q.pool.Acquire(ctx)
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryDelay):
+			}
+			continue
+		}
+		if _, err := conn.Exec(ctx, `LISTEN `+IngestDoneNotifyChannel); err != nil {
+			releaseListenConn(conn)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryDelay):
+			}
+			continue
+		}
+
+		// Wake any waiters registered while acquiring/reconnecting so no
+		// completion signal emitted during the window is missed.
+		q.broadcastWaiters()
+
+		for {
+			n, nErr := conn.Conn().WaitForNotification(ctx)
+			if nErr != nil {
+				break
+			}
+			q.dispatchDonePayload(n.Payload)
+		}
+		releaseListenConn(conn)
+	}
+}
+
+func (q *Queue) dispatchDonePayload(payload string) {
+	id, err := strconv.ParseInt(strings.TrimSpace(payload), 10, 64)
+	if err != nil {
+		q.broadcastWaiters()
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for ch := range q.waiters[id] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (q *Queue) broadcastWaiters() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, set := range q.waiters {
+		for ch := range set {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func releaseListenConn(conn *pgxpool.Conn) {
+	if conn == nil {
+		return
+	}
+	unlistenCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := conn.Exec(unlistenCtx, `UNLISTEN *`); err != nil {
+		_ = conn.Conn().Close(unlistenCtx)
+	}
+	conn.Release()
 }
 
 func (q *Queue) checkTerminalJob(ctx context.Context, jobID int64) (WaitResult, bool, error) {

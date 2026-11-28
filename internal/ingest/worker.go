@@ -18,9 +18,12 @@ import (
 	"github.com/wsk0715/agent-board/internal/store/pg"
 )
 
-// DefaultSweepInterval is how often the worker sweeps for delayed retries or
-// missed notifications.
-const DefaultSweepInterval = 1 * time.Second
+// Default worker tuning constants.
+const (
+	DefaultSweepInterval   = 1 * time.Second
+	DefaultEmbedBatchSize  = 64
+	stateTransitionTimeout = 5 * time.Second
+)
 
 // WorkerConfig configures an asynchronous ingest Worker.
 type WorkerConfig struct {
@@ -118,7 +121,12 @@ func (w *Worker) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	notifyCh := make(chan struct{}, 1)
-	go w.listenLoop(ctx, notifyCh)
+	listenDone := make(chan struct{})
+	go func() {
+		defer close(listenDone)
+		w.listenLoop(ctx, notifyCh)
+	}()
+	defer func() { <-listenDone }()
 
 	for {
 		select {
@@ -147,7 +155,7 @@ func (w *Worker) listenLoop(ctx context.Context, notifyCh chan<- struct{}) {
 			continue
 		}
 		if _, err := conn.Exec(ctx, `LISTEN `+IngestNotifyChannel); err != nil {
-			conn.Release()
+			releaseListenConn(conn)
 			select {
 			case <-ctx.Done():
 				return
@@ -165,7 +173,7 @@ func (w *Worker) listenLoop(ctx context.Context, notifyCh chan<- struct{}) {
 			default:
 			}
 		}
-		conn.Release()
+		releaseListenConn(conn)
 	}
 }
 
@@ -195,7 +203,9 @@ func (w *Worker) ProcessOnce(ctx context.Context) (bool, error) {
 	}
 
 	if err := w.ProcessJob(ctx, job); err != nil {
-		deadLettered, failErr := w.queue.Fail(ctx, job.ID, err)
+		statusCtx, cancel := context.WithTimeout(context.Background(), stateTransitionTimeout)
+		defer cancel()
+		deadLettered, failErr := w.queue.Fail(statusCtx, job.ID, err)
 		if failErr != nil {
 			w.logger.Error("ingest fail transition error", "job_id", job.ID, "err", failErr)
 		} else if deadLettered {
@@ -204,7 +214,9 @@ func (w *Worker) ProcessOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	if err := w.queue.MarkDone(ctx, job.ID); err != nil {
+	statusCtx, cancel := context.WithTimeout(context.Background(), stateTransitionTimeout)
+	defer cancel()
+	if err := w.queue.MarkDone(statusCtx, job.ID); err != nil {
 		w.logger.Error("ingest mark done error", "job_id", job.ID, "err", err)
 		return true, err
 	}
@@ -318,20 +330,23 @@ func (w *Worker) ProcessJob(ctx context.Context, job *model.IngestJob) error {
 		for i, ch := range chunks {
 			texts[i] = ch.SearchText
 		}
-		vecs, _, err := w.embedder.EmbedDocuments(ctx, texts)
-		if err != nil {
-			return fmt.Errorf("embed chunks: %w", err)
-		}
-		if len(vecs) != len(chunks) {
-			return fmt.Errorf("embedder returned %d vectors for %d chunks", len(vecs), len(chunks))
-		}
-		vectorLits = make([]string, len(vecs))
-		for i, v := range vecs {
-			lit, err := embed.FormatVectorChecked(v, activeGen.Dimensions)
+		vectorLits = make([]string, 0, len(chunks))
+		for start := 0; start < len(texts); start += DefaultEmbedBatchSize {
+			end := min(start+DefaultEmbedBatchSize, len(texts))
+			batchVecs, _, err := w.embedder.EmbedDocuments(ctx, texts[start:end])
 			if err != nil {
-				return fmt.Errorf("format chunk vector %d: %w", i, err)
+				return fmt.Errorf("embed chunks [%d:%d]: %w", start, end, err)
 			}
-			vectorLits[i] = lit
+			if len(batchVecs) != end-start {
+				return fmt.Errorf("embedder returned %d vectors for %d chunks", len(batchVecs), end-start)
+			}
+			for j, v := range batchVecs {
+				lit, err := embed.FormatVectorChecked(v, activeGen.Dimensions)
+				if err != nil {
+					return fmt.Errorf("format chunk vector %d: %w", start+j, err)
+				}
+				vectorLits = append(vectorLits, lit)
+			}
 		}
 		hasVectors = true
 	}

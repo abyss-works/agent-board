@@ -197,28 +197,32 @@ func (m *GenerationManager) BackfillGeneration(ctx context.Context, generationID
 		if err != nil {
 			return stats, err
 		}
+		batchEmbedded := 0
 		for i, pc := range batch {
 			lit, err := embed.FormatVectorChecked(vecs[i], gen.Dimensions)
 			if err != nil {
 				_ = tx.Rollback(ctx)
 				return stats, err
 			}
-			if _, err := tx.Exec(ctx, `
+			tag, err := tx.Exec(ctx, `
 				INSERT INTO rag_embedding (chunk_id, generation_id, embedding)
-				VALUES ($1, $2, $3::vector)
+				SELECT $1, $2, $3::vector
+				WHERE EXISTS (SELECT 1 FROM rag_chunk WHERE id = $1)
 				ON CONFLICT (chunk_id, generation_id)
 				DO UPDATE SET embedding = EXCLUDED.embedding`,
 				pc.id, generationID, lit,
-			); err != nil {
+			)
+			if err != nil {
 				_ = tx.Rollback(ctx)
 				return stats, err
 			}
+			batchEmbedded += int(tag.RowsAffected())
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return stats, err
 		}
 
-		stats.ChunksEmbedded += len(batch)
+		stats.ChunksEmbedded += batchEmbedded
 		stats.Batches++
 		stats.TotalTokens += usage.TotalTokens
 	}

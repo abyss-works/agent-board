@@ -307,6 +307,122 @@ func TestFormatVectorAndValidation(t *testing.T) {
 	}
 }
 
+func TestVoyageBoundarySanitizationRedirectsAndValidation(t *testing.T) {
+	// 1. Secret straddling the 200-rune truncation boundary must be fully redacted
+	// (no prefix leak such as "pa-dummy").
+	padding := strings.Repeat("x", 190)
+	secretPrefix := testVoyageSecret[:8]
+	boundarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"detail": padding + testVoyageSecret + " trailing text",
+		})
+	}))
+	defer boundarySrv.Close()
+
+	emb := NewVoyageEmbedder(VoyageEmbedderConfig{
+		BaseURL: boundarySrv.URL,
+		APIKey:  testVoyageSecret,
+	})
+	_, _, err := emb.EmbedQuery(context.Background(), "boundary")
+	if err == nil {
+		t.Fatal("expected error from 400 response")
+	}
+	if strings.Contains(err.Error(), secretPrefix) {
+		t.Fatalf("200-rune boundary leaked API key prefix %q: %s", secretPrefix, err.Error())
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("expected [redacted] in error: %s", err.Error())
+	}
+
+	// Same boundary check on 200 OK JSON error.message payload in Rerank.
+	rrBoundarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"message": padding + testVoyageSecret},
+		})
+	}))
+	defer rrBoundarySrv.Close()
+
+	rrBoundary := NewVoyageReranker(VoyageRerankerConfig{
+		BaseURL: rrBoundarySrv.URL,
+		APIKey:  testVoyageSecret,
+	})
+	_, _, err = rrBoundary.Rerank(context.Background(), "q", []pg.RerankDocument{{ID: "1", Text: "a"}}, 1)
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v, want ErrUpstream", err)
+	}
+	if strings.Contains(err.Error(), secretPrefix) {
+		t.Fatalf("rerank boundary leaked API key prefix %q: %s", secretPrefix, err.Error())
+	}
+
+	// 2. 307 redirect must be blocked without contacting the redirect target.
+	var targetHits atomic.Int32
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer targetSrv.Close()
+
+	redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, targetSrv.URL+"/steal", http.StatusTemporaryRedirect)
+	}))
+	defer redirectSrv.Close()
+
+	redirEmb := NewVoyageEmbedder(VoyageEmbedderConfig{
+		BaseURL: redirectSrv.URL,
+		APIKey:  testVoyageSecret,
+	})
+	if _, _, err := redirEmb.EmbedQuery(context.Background(), "redirect"); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("embed 307 err = %v, want ErrUpstream", err)
+	}
+	redirRR := NewVoyageReranker(VoyageRerankerConfig{
+		BaseURL: redirectSrv.URL,
+		APIKey:  testVoyageSecret,
+	})
+	if _, _, err := redirRR.Rerank(context.Background(), "q", []pg.RerankDocument{{ID: "1", Text: "a"}}, 1); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("rerank 307 err = %v, want ErrUpstream", err)
+	}
+	if targetHits.Load() != 0 {
+		t.Fatalf("redirect target was contacted %d times, want 0", targetHits.Load())
+	}
+
+	// 3. Invalid config (control chars in API key, bad BaseURL scheme/userinfo/query).
+	for _, tc := range []struct {
+		name    string
+		baseURL string
+		apiKey  string
+	}{
+		{"internal_lf", "https://api.voyageai.com/v1", "pa-abc\ndef"},
+		{"internal_cr", "https://api.voyageai.com/v1", "pa-abc\rdef"},
+		{"nul_byte", "https://api.voyageai.com/v1", "pa-abc\x00def"},
+		{"bad_scheme", "file:///etc/passwd", testVoyageSecret},
+		{"userinfo", "https://user:pass@api.voyageai.com/v1", testVoyageSecret},
+		{"query_param", "https://api.voyageai.com/v1?foo=bar", testVoyageSecret},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewVoyageEmbedder(VoyageEmbedderConfig{BaseURL: tc.baseURL, APIKey: tc.apiKey})
+			if _, _, err := e.EmbedQuery(context.Background(), "q"); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("embed %s err = %v, want ErrInvalidConfig", tc.name, err)
+			}
+			r := NewVoyageReranker(VoyageRerankerConfig{BaseURL: tc.baseURL, APIKey: tc.apiKey})
+			if _, _, err := r.Rerank(context.Background(), "q", []pg.RerankDocument{{ID: "1", Text: "a"}}, 1); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("rerank %s err = %v, want ErrInvalidConfig", tc.name, err)
+			}
+		})
+	}
+
+	// 4. Rerank HTTP 200 with empty data:[] for non-empty documents must return ErrUpstream.
+	emptySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer emptySrv.Close()
+
+	emptyRR := NewVoyageReranker(VoyageRerankerConfig{BaseURL: emptySrv.URL, APIKey: testVoyageSecret})
+	if _, _, err := emptyRR.Rerank(context.Background(), "q", []pg.RerankDocument{{ID: "1", Text: "a"}}, 1); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("empty rerank data err = %v, want ErrUpstream", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

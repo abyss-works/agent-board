@@ -13,7 +13,10 @@ import (
 
 // Default semantic chunk sizing constants.
 const (
-	DefaultMaxChunkRunes = 1200
+	DefaultMaxChunkRunes      = 1200
+	maxRepeatedPrefixCapRunes = 256
+	maxBreadcrumbPartRunes    = 128
+	maxBreadcrumbTotalRunes   = 256
 )
 
 // ChunkerConfig configures SemanticChunker behavior.
@@ -188,10 +191,28 @@ func buildBreadcrumb(title, projectKey, kind, sectionPath string) string {
 	for _, p := range []string{title, projectKey, kind, sectionPath} {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			parts = append(parts, p)
+			parts = append(parts, truncateChunkRunes(p, maxBreadcrumbPartRunes))
 		}
 	}
-	return strings.Join(parts, " · ")
+	return truncateChunkRunes(strings.Join(parts, " · "), maxBreadcrumbTotalRunes)
+}
+
+func truncateChunkRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes])
+}
+
+func maxRepeatPrefixRunes(budget int) int {
+	if budget <= 0 {
+		return 0
+	}
+	return min(budget/3, maxRepeatedPrefixCapRunes)
 }
 
 type headingFrame struct {
@@ -354,31 +375,44 @@ func packBlocks(headingLine string, blocks []mdBlock, maxRunes int) []string {
 		return nil
 	}
 
+	repeatCap := maxRepeatPrefixRunes(maxRunes)
+	headingRunes := len([]rune(headingLine))
+	repeatHeading := headingLine != "" && headingRunes <= repeatCap
+	headingEmitted := false
+
 	var out []string
 	var cur []string
 	curRunes := 0
+	curHasHeadingOnly := false
 
 	startChunk := func() {
 		cur = cur[:0]
 		curRunes = 0
-		if headingLine != "" {
+		curHasHeadingOnly = false
+		if headingLine != "" && (repeatHeading || !headingEmitted) {
 			cur = append(cur, headingLine)
-			curRunes = len([]rune(headingLine))
+			curRunes = headingRunes
+			curHasHeadingOnly = true
 		}
 	}
 	flushChunk := func() {
 		if len(cur) == 0 {
 			return
 		}
-		// Avoid emitting a heading-only chunk when followed by real content.
-		if len(cur) == 1 && headingLine != "" && cur[0] == headingLine && len(out) > 0 {
+		// Avoid emitting a redundant repeated heading-only chunk when earlier chunks exist.
+		if curHasHeadingOnly && repeatHeading && len(out) > 0 {
 			cur = cur[:0]
 			curRunes = 0
+			curHasHeadingOnly = false
 			return
 		}
 		out = append(out, strings.Join(cur, "\n\n"))
+		if headingLine != "" && !headingEmitted {
+			headingEmitted = true
+		}
 		cur = cur[:0]
 		curRunes = 0
+		curHasHeadingOnly = false
 	}
 
 	startChunk()
@@ -393,36 +427,48 @@ func packBlocks(headingLine string, blocks []mdBlock, maxRunes int) []string {
 		if curRunes+extra <= maxRunes {
 			cur = append(cur, blk.text)
 			curRunes += extra
+			curHasHeadingOnly = false
 			continue
 		}
 
-		// Flush existing accumulated blocks if any content beyond heading exists.
-		if len(cur) > 1 || (len(cur) == 1 && (headingLine == "" || cur[0] != headingLine)) {
+		// Flush existing accumulated content. When the heading itself exceeds
+		// the repeat cap, emit it once in the first piece instead of repeating.
+		if len(cur) > 0 && (!curHasHeadingOnly || !repeatHeading) {
 			flushChunk()
 			startChunk()
 		}
 
-		// If the single block fits in a fresh chunk (with heading), emit or keep accumulating.
-		if curRunes+blkRunes+2 <= maxRunes {
+		// If the single block fits in a fresh chunk, append it.
+		freshExtra := blkRunes
+		if len(cur) > 0 {
+			freshExtra += 2
+		}
+		if curRunes+freshExtra <= maxRunes {
 			cur = append(cur, blk.text)
-			curRunes += blkRunes + 2
+			curRunes += freshExtra
+			curHasHeadingOnly = false
 			continue
 		}
 
-		// Oversized block handling while preserving table headers or code fences.
-		subPieces := splitOversizedBlock(blk, maxRunes-curRunes-2)
+		// Oversized block handling while preserving bounded table headers or code fences.
+		avail := maxRunes - curRunes
+		if len(cur) > 0 {
+			avail -= 2
+		}
+		subPieces := splitOversizedBlock(blk, avail)
 		for _, sub := range subPieces {
-			if len(cur) > 1 || (len(cur) == 1 && headingLine == "") {
+			if len(cur) > 0 && !curHasHeadingOnly {
 				flushChunk()
 				startChunk()
 			}
 			cur = append(cur, sub)
+			curHasHeadingOnly = false
 			flushChunk()
 			startChunk()
 		}
 	}
 
-	if len(cur) > 1 || (len(cur) == 1 && (headingLine == "" || len(out) == 0)) {
+	if len(cur) > 0 && (!curHasHeadingOnly || !repeatHeading || len(out) == 0) {
 		flushChunk()
 	}
 	return out
@@ -449,6 +495,7 @@ func splitTableByRows(table string, budget int) []string {
 	}
 	header := lines[0] + "\n" + lines[1]
 	headerRunes := len([]rune(header))
+	repeatHeader := headerRunes <= maxRepeatPrefixRunes(budget)
 
 	var pieces []string
 	cur := []string{header}
@@ -456,16 +503,28 @@ func splitTableByRows(table string, budget int) []string {
 
 	for _, row := range lines[2:] {
 		rowRunes := len([]rune(row)) + 1
-		if curRunes+rowRunes > budget && len(cur) > 1 {
+		if repeatHeader {
+			if curRunes+rowRunes > budget && len(cur) > 1 {
+				pieces = append(pieces, strings.Join(cur, "\n"))
+				cur = []string{header, row}
+				curRunes = headerRunes + rowRunes
+			} else {
+				cur = append(cur, row)
+				curRunes += rowRunes
+			}
+			continue
+		}
+		// Oversized header: keep it only on the first piece so memory stays O(input).
+		if curRunes+rowRunes > budget && len(cur) > 0 {
 			pieces = append(pieces, strings.Join(cur, "\n"))
-			cur = []string{header, row}
-			curRunes = headerRunes + rowRunes
+			cur = []string{row}
+			curRunes = rowRunes
 		} else {
 			cur = append(cur, row)
 			curRunes += rowRunes
 		}
 	}
-	if len(cur) > 1 {
+	if len(cur) > 0 && (!repeatHeader || len(cur) > 1 || len(pieces) == 0) {
 		pieces = append(pieces, strings.Join(cur, "\n"))
 	}
 	return pieces
@@ -473,13 +532,72 @@ func splitTableByRows(table string, budget int) []string {
 
 func splitCodeByLines(code string, budget int) []string {
 	lines := strings.Split(code, "\n")
-	if len(lines) <= 2 {
+	if len(lines) <= 1 {
 		return []string{code}
 	}
+	openCh, openN, hasOpen := detectFence(strings.TrimSpace(lines[0]))
+	if !hasOpen {
+		return splitProseByBudget(code, budget)
+	}
+
 	openFence := lines[0]
-	closeFence := lines[len(lines)-1]
-	bodyLines := lines[1 : len(lines)-1]
-	fenceOverhead := len([]rune(openFence)) + len([]rune(closeFence)) + 2
+	closeFence := ""
+	hasClose := false
+	lastTrimmed := strings.TrimSpace(lines[len(lines)-1])
+	if c2, n2, ok2 := detectFence(lastTrimmed); ok2 && c2 == openCh && n2 >= openN && strings.TrimSpace(lastTrimmed[n2:]) == "" {
+		hasClose = true
+		closeFence = lines[len(lines)-1]
+	}
+
+	var bodyLines []string
+	if hasClose {
+		bodyLines = lines[1 : len(lines)-1]
+	} else {
+		bodyLines = lines[1:]
+	}
+	if len(bodyLines) == 0 {
+		return []string{code}
+	}
+
+	fenceOverhead := len([]rune(openFence)) + 1
+	if hasClose {
+		fenceOverhead += len([]rune(closeFence)) + 1
+	}
+	repeatFence := fenceOverhead <= maxRepeatPrefixRunes(budget)
+
+	if !repeatFence {
+		// Oversized opening/closing fence: keep openFence on first piece and
+		// optional closeFence on last piece without repeating across pieces.
+		var pieces []string
+		var cur []string
+		curRunes := 0
+		for _, line := range lines {
+			lr := len([]rune(line))
+			extra := lr
+			if len(cur) > 0 {
+				extra++
+			}
+			if curRunes+extra > budget && len(cur) > 0 {
+				pieces = append(pieces, strings.Join(cur, "\n"))
+				cur = []string{line}
+				curRunes = lr
+			} else {
+				cur = append(cur, line)
+				curRunes += extra
+			}
+		}
+		if len(cur) > 0 {
+			pieces = append(pieces, strings.Join(cur, "\n"))
+		}
+		return pieces
+	}
+
+	formatPiece := func(body []string) string {
+		if hasClose {
+			return openFence + "\n" + strings.Join(body, "\n") + "\n" + closeFence
+		}
+		return openFence + "\n" + strings.Join(body, "\n")
+	}
 
 	var pieces []string
 	var cur []string
@@ -487,7 +605,7 @@ func splitCodeByLines(code string, budget int) []string {
 	for _, line := range bodyLines {
 		lr := len([]rune(line)) + 1
 		if curRunes+lr > budget && len(cur) > 0 {
-			pieces = append(pieces, openFence+"\n"+strings.Join(cur, "\n")+"\n"+closeFence)
+			pieces = append(pieces, formatPiece(cur))
 			cur = []string{line}
 			curRunes = fenceOverhead + lr
 		} else {
@@ -496,7 +614,7 @@ func splitCodeByLines(code string, budget int) []string {
 		}
 	}
 	if len(cur) > 0 {
-		pieces = append(pieces, openFence+"\n"+strings.Join(cur, "\n")+"\n"+closeFence)
+		pieces = append(pieces, formatPiece(cur))
 	}
 	return pieces
 }

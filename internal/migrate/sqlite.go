@@ -641,7 +641,7 @@ type sessionKey struct {
 }
 
 func sortSessionsTopologically(sessions []sqliteSession) ([]sqliteSession, error) {
-	if len(sessions) <= 1 {
+	if len(sessions) == 0 {
 		return sessions, nil
 	}
 	byKey := make(map[sessionKey]sqliteSession, len(sessions))
@@ -693,7 +693,7 @@ func sortSessionsTopologically(sessions []sqliteSession) ([]sqliteSession, error
 }
 
 func sortMessagesTopologically(messages []sqliteMessage) ([]sqliteMessage, error) {
-	if len(messages) <= 1 {
+	if len(messages) == 0 {
 		return messages, nil
 	}
 	byID := make(map[int64]sqliteMessage, len(messages))
@@ -1329,8 +1329,9 @@ func checkDocumentContent(content string) []string {
 // --- DSN Sanitization ---
 
 var (
-	dsnUserinfoRE = regexp.MustCompile(`(?i)(postgres(?:ql)?://)([^@\s/]+)@`)
-	dsnKVPassRE   = regexp.MustCompile(`(?i)(password\s*=\s*)('(?:\\'|[^'])*'|"(?:\\"|[^"])*"|\S+)`)
+	dsnUserinfoRE  = regexp.MustCompile(`(?i)(postgres(?:ql)?://)([^@\s/]+)@`)
+	dsnQueryPassRE = regexp.MustCompile(`(?i)([?&]password=)([^&\s'"]+)`)
+	dsnKVPassRE    = regexp.MustCompile(`(?i)((?:^|[\s,(])password\s*=\s*)('(?:\\'|[^'])*'|"(?:\\"|[^"])*"|[^\s&,'")]+)`)
 )
 
 // RedactDSN strips userinfo and password tokens from any string that may contain
@@ -1358,19 +1359,35 @@ func RedactDSN(msg, rawDSN string) string {
 				}
 			}
 		}
-		if u, err := url.Parse(rawDSN); err == nil && u.User != nil {
-			if userinfo := u.User.String(); userinfo != "" {
-				out = strings.ReplaceAll(out, userinfo, "***")
+		if u, err := url.Parse(rawDSN); err == nil {
+			if u.User != nil {
+				if userinfo := u.User.String(); userinfo != "" {
+					out = strings.ReplaceAll(out, userinfo, "***")
+				}
+				if pw, hasPW := u.User.Password(); hasPW && pw != "" {
+					out = strings.ReplaceAll(out, pw, "***")
+					if enc := url.QueryEscape(pw); enc != "" && enc != pw {
+						out = strings.ReplaceAll(out, enc, "***")
+					}
+				}
 			}
-			if pw, hasPW := u.User.Password(); hasPW && pw != "" {
-				out = strings.ReplaceAll(out, pw, "***")
-				if enc := url.QueryEscape(pw); enc != "" && enc != pw {
-					out = strings.ReplaceAll(out, enc, "***")
+			for key, vals := range u.Query() {
+				if strings.EqualFold(key, "password") {
+					for _, pw := range vals {
+						if pw == "" {
+							continue
+						}
+						out = strings.ReplaceAll(out, pw, "***")
+						if enc := url.QueryEscape(pw); enc != "" && enc != pw {
+							out = strings.ReplaceAll(out, enc, "***")
+						}
+					}
 				}
 			}
 		}
 	}
 	out = dsnUserinfoRE.ReplaceAllString(out, "${1}***@")
+	out = dsnQueryPassRE.ReplaceAllString(out, "${1}***")
 	out = dsnKVPassRE.ReplaceAllString(out, "${1}***")
 	return out
 }

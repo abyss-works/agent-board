@@ -461,6 +461,19 @@ func TestRedactDSNAndSanitizeError(t *testing.T) {
 	if strings.Contains(sanitized.Error(), "s3cr3t") {
 		t.Errorf("SanitizeError leaked secret: %v", sanitized)
 	}
+
+	qDSN := "postgres://db.internal:5432/appdb?user=alice&password=queryS3cr3t!&sslmode=disable"
+	qRedacted := migrate.RedactDSN("failed: "+qDSN, qDSN)
+	if strings.Contains(qRedacted, "queryS3cr3t") {
+		t.Errorf("query password leaked with rawDSN: %s", qRedacted)
+	}
+	qRedactedNoRaw := migrate.RedactDSN("failed: "+qDSN, "")
+	if strings.Contains(qRedactedNoRaw, "queryS3cr3t") {
+		t.Errorf("query password leaked without rawDSN: %s", qRedactedNoRaw)
+	}
+	if !strings.Contains(qRedactedNoRaw, "sslmode=disable") {
+		t.Errorf("query password redaction clobbered trailing params: %s", qRedactedNoRaw)
+	}
 }
 
 // --- Live PostgreSQL 17 integration tests ---
@@ -728,5 +741,59 @@ func TestRunNoBackfillAndDuplicateOpenClaimDefenseOnPG17(t *testing.T) {
 	}
 	if !outcome.Valid || outcome.String != "taken_over" {
 		t.Errorf("resolved claim outcome = %+v, want taken_over", outcome)
+	}
+}
+
+func TestRunRejectsNonEmptyActorAndSpecDocumentOnPG17(t *testing.T) {
+	baseDSN := testPGDSN(t)
+	srcPath := buildFull24TableSQLiteFixture(t)
+	ctx := context.Background()
+
+	// Case 1: Target database already has a non-system actor.
+	stActor, _ := createIsolatedPGDB(t, baseDSN)
+	if _, err := stActor.Pool().Exec(ctx, `INSERT INTO actor (id, kind) VALUES ('preexisting-user', 'user')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrate.Run(ctx, migrate.Options{SourcePath: srcPath, Pool: stActor.Pool()}); !errors.Is(err, migrate.ErrTargetNotEmpty) {
+		t.Fatalf("Run with pre-existing actor err = %v, want ErrTargetNotEmpty", err)
+	}
+
+	// Case 2: Target database already has a spec_document under GLOBAL scope.
+	stSpec, _ := createIsolatedPGDB(t, baseDSN)
+	if _, err := stSpec.Pool().Exec(ctx, `
+		INSERT INTO spec_document (project_id, slug, kind, title, created_by, updated_by)
+		VALUES (0, 'existing-spec', 'spec', 'Existing Spec', 'system', 'system')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrate.Run(ctx, migrate.Options{SourcePath: srcPath, Pool: stSpec.Pool()}); !errors.Is(err, migrate.ErrTargetNotEmpty) {
+		t.Fatalf("Run with pre-existing spec_document err = %v, want ErrTargetNotEmpty", err)
+	}
+
+	// Case 3: Single-row self-referencing message cycle in SQLite must be rejected.
+	dir := t.TempDir()
+	cyclePath := filepath.Join(dir, "selfcycle.db")
+	sqlSt, err := store.Open(cyclePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := "2026-10-01T10:00:00.000Z"
+	exp := "2026-12-01T00:00:00.000Z"
+	for _, q := range []string{
+		`INSERT INTO actor(id, kind, created_at) VALUES ('owner', 'user', '` + ts + `')`,
+		`INSERT INTO project(id, key, name, status, next_number, created_at, updated_at, created_by, updated_by)
+		 VALUES (1, 'CYC', 'Cycle', 'active', 1, '` + ts + `', '` + ts + `', 'owner', 'owner')`,
+		`INSERT INTO message(id, project_id, reply_to_id, title, body, created_at, created_by, created_session, created_host, expires_at)
+		 VALUES (1, 1, 1, 'Self reply', 'loop', '` + ts + `', 'owner', 's1', 'devbox', '` + exp + `')`,
+	} {
+		if _, err := sqlSt.DB().Exec(q); err != nil {
+			t.Fatalf("exec %q: %v", q, err)
+		}
+	}
+	_, _ = sqlSt.DB().Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	_ = sqlSt.Close()
+
+	stCycle, _ := createIsolatedPGDB(t, baseDSN)
+	if _, err := migrate.Run(ctx, migrate.Options{SourcePath: cyclePath, Pool: stCycle.Pool()}); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("Run with single-row self-referencing message err = %v, want cycle error", err)
 	}
 }

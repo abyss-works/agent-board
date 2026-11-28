@@ -8,6 +8,7 @@ import (
 	"sort"
 	"text/tabwriter"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -610,12 +611,23 @@ func VerifyWithOptions(ctx context.Context, sqlitePath string, pgPool *pgxpool.P
 			continue
 		}
 		var maxID int64
-		if err := pgPool.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM `+tbl).Scan(&maxID); err != nil {
+		if err := pgPool.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM `+pgx.Identifier{tbl}.Sanitize()).Scan(&maxID); err != nil {
 			return nil, fmt.Errorf("query max id for %s: %w", tbl, err)
+		}
+		var seqSchema, seqRel string
+		if err := pgPool.QueryRow(ctx, `
+			SELECT n.nspname, c.relname
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.oid = to_regclass($1)`,
+			*seqName,
+		).Scan(&seqSchema, &seqRel); err != nil {
+			return nil, fmt.Errorf("resolve sequence identifier %s: %w", *seqName, err)
 		}
 		var lastVal int64
 		var isCalled bool
-		if err := pgPool.QueryRow(ctx, `SELECT last_value, is_called FROM `+*seqName).Scan(&lastVal, &isCalled); err != nil {
+		seqIdent := pgx.Identifier{seqSchema, seqRel}.Sanitize()
+		if err := pgPool.QueryRow(ctx, `SELECT last_value, is_called FROM `+seqIdent).Scan(&lastVal, &isCalled); err != nil {
 			return nil, fmt.Errorf("query sequence %s: %w", *seqName, err)
 		}
 		nextVal := lastVal

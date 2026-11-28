@@ -7,9 +7,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/wsk0715/agent-board/internal/model"
@@ -380,5 +383,257 @@ This decision supersedes the prior %s approach by switching reciprocal rank fusi
 	}
 	if reloaded.Content == nil || *reloaded.Content != rawBody {
 		t.Fatal("source record content was modified unexpectedly")
+	}
+}
+
+func TestDiamondDAGCycleCheckAndConcurrency(t *testing.T) {
+	st := openTestPGStore(t)
+	ctx := context.Background()
+	gs := NewStore(st.Pool())
+
+	proj, err := st.CreateProject(ctx, trOwner, pg.CreateProjectInput{Key: "DAG", Name: "DAG Test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a 30-layer diamond DAG (60 nodes, 2^30 distinct paths).
+	const layers = 30
+	nodes := make([][2]pg.NodeRef, layers)
+	for i := 0; i < layers; i++ {
+		for j := 0; j < 2; j++ {
+			iss, err := st.CreateIssue(ctx, trOwner, proj.Key, pg.CreateIssueInput{
+				Title: fmt.Sprintf("L%d-N%d", i, j), Type: model.TypeFeature, Priority: model.P2,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			nodes[i][j] = pg.NodeRef{Type: model.GraphNodeIssue, ID: iss.Issue.ID}
+		}
+	}
+	for i := 0; i < layers-1; i++ {
+		for src := 0; src < 2; src++ {
+			for dst := 0; dst < 2; dst++ {
+				target := nodes[i+1][dst]
+				if _, err := gs.UpsertExplicitEdge(ctx, pg.UpsertEdgeInput{
+					ProjectID: proj.ID,
+					Source:    nodes[i][src],
+					Target:    &target,
+					Kind:      model.EdgeKindDependsOn,
+				}); err != nil {
+					t.Fatalf("layer %d (%d->%d): %v", i, src, dst, err)
+				}
+			}
+		}
+	}
+
+	start := time.Now()
+	// Forward edge across the full diamond must succeed quickly in O(V+E).
+	sink := nodes[layers-1][1]
+	if _, err := gs.UpsertExplicitEdge(ctx, pg.UpsertEdgeInput{
+		ProjectID: proj.ID, Source: nodes[0][0], Target: &sink, Kind: model.EdgeKindDependsOn,
+	}); err != nil {
+		t.Fatalf("forward diamond edge failed: %v", err)
+	}
+	// Back-edge from sink to root must return ErrCycle quickly.
+	root := nodes[0][0]
+	if _, err := gs.UpsertExplicitEdge(ctx, pg.UpsertEdgeInput{
+		ProjectID: proj.ID, Source: nodes[layers-1][0], Target: &root, Kind: model.EdgeKindDependsOn,
+	}); !errors.Is(err, ErrCycle) {
+		t.Fatalf("back-edge err = %v, want ErrCycle", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("diamond DAG cycle check took %v, expected O(V+E) completion", elapsed)
+	}
+
+	// Concurrent ConfirmEdge vs UpsertInferredEdge on supersedes edges must not deadlock.
+	recs := make([]pg.NodeRef, 12)
+	for i := range recs {
+		r, err := st.CreateRecord(ctx, trOwner, proj.Key, pg.CreateRecordInput{
+			Name:    fmt.Sprintf("2026-10-%02d-1000-decision-node-%d.md", i+1, i),
+			Kind:    "decision",
+			Title:   fmt.Sprintf("Node %d", i),
+			Content: fmt.Sprintf("# Node %d\nBody", i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recs[i] = pg.NodeRef{Type: model.GraphNodeRecord, ID: r.Record.ID}
+	}
+	var candidateIDs []int64
+	for i := 1; i < len(recs); i++ {
+		target := recs[i-1]
+		e, err := gs.UpsertInferredEdge(ctx, pg.UpsertEdgeInput{
+			ProjectID: proj.ID, Source: recs[i], Target: &target, Kind: model.EdgeKindSupersedes,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidateIDs = append(candidateIDs, e.ID)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(candidateIDs)*4)
+	for idx, edgeID := range candidateIDs {
+		wg.Add(2)
+		go func(id int64) {
+			defer wg.Done()
+			if _, err := gs.ConfirmEdge(ctx, "owner", id); err != nil && !errors.Is(err, pg.ErrEdgeAlreadyDecided) && !errors.Is(err, ErrCycle) {
+				errCh <- fmt.Errorf("ConfirmEdge(%d): %w", id, err)
+			}
+		}(edgeID)
+		go func(i int) {
+			defer wg.Done()
+			target := recs[i]
+			conf := 0.9
+			if _, err := gs.UpsertInferredEdge(ctx, pg.UpsertEdgeInput{
+				ProjectID: proj.ID, Source: recs[i+1], Target: &target, Kind: model.EdgeKindSupersedes, Confidence: &conf,
+			}); err != nil && !errors.Is(err, ErrCycle) {
+				errCh <- fmt.Errorf("UpsertInferredEdge(%d): %w", i, err)
+			}
+		}(idx)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	// Concurrent upserts of the same about and related edges must succeed without 23505 errors.
+	const workers = 8
+	var aboutIDs sync.Map
+	var relIDs sync.Map
+	errCh2 := make(chan error, workers*4)
+	for w := 0; w < workers; w++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			target := nodes[0][0]
+			e, err := gs.UpsertExplicitEdge(ctx, pg.UpsertEdgeInput{
+				ProjectID: proj.ID, Source: recs[0], Target: &target, Kind: model.EdgeKindAbout,
+			})
+			if err != nil {
+				errCh2 <- fmt.Errorf("concurrent explicit about: %w", err)
+				return
+			}
+			aboutIDs.Store(e.ID, true)
+		}()
+		go func() {
+			defer wg.Done()
+			target := recs[1]
+			conf := 0.8
+			e, err := gs.UpsertInferredEdge(ctx, pg.UpsertEdgeInput{
+				ProjectID: proj.ID, Source: recs[0], Target: &target, Kind: model.EdgeKindRelated, Confidence: &conf,
+			})
+			if err != nil {
+				errCh2 <- fmt.Errorf("concurrent inferred related: %w", err)
+				return
+			}
+			relIDs.Store(e.ID, true)
+		}()
+	}
+	wg.Wait()
+	close(errCh2)
+	for err := range errCh2 {
+		t.Fatal(err)
+	}
+	var aboutCount, relCount int
+	aboutIDs.Range(func(_, _ any) bool { aboutCount++; return true })
+	relIDs.Range(func(_, _ any) bool { relCount++; return true })
+	if aboutCount != 1 || relCount != 1 {
+		t.Fatalf("expected single converged edge IDs, got about=%d related=%d", aboutCount, relCount)
+	}
+}
+
+type queryCounterTracer struct {
+	issueLookups atomic.Int64
+}
+
+func (q *queryCounterTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, "FROM issue WHERE key") {
+		q.issueLookups.Add(1)
+	}
+	return ctx
+}
+
+func (q *queryCounterTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestExtractorDeduplicatesAndCapsRepeatedReferences(t *testing.T) {
+	st := openTestPGStore(t)
+	ctx := context.Background()
+
+	proj, err := st.CreateProject(ctx, trOwner, pg.CreateProjectInput{Key: "CAP", Name: "Cap Test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := st.CreateIssue(ctx, trOwner, proj.Key, pg.CreateIssueInput{
+		Title: "Target issue", Type: model.TypeFeature, Priority: model.P1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := st.CreateRecord(ctx, trOwner, proj.Key, pg.CreateRecordInput{
+		Name:    "2026-10-01-1000-note-repeat.md",
+		Kind:    "note",
+		Title:   "Repeat test",
+		Content: "seed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a traced pool against the same test database to count exact DB lookups.
+	cfg := st.Pool().Config().Copy()
+	tracer := &queryCounterTracer{}
+	cfg.ConnConfig.Tracer = tracer
+	tracedPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("pgxpool.NewWithConfig: %v", err)
+	}
+	defer tracedPool.Close()
+
+	ext := NewExtractor(tracedPool, NewStore(tracedPool))
+
+	// Case 1: Same issue key repeated 10,000 times must resolve with only 1 DB lookup.
+	repeatedBody := strings.Repeat("See "+iss.Issue.Key+" and issue:"+iss.Issue.Key+". ", 10000)
+	report, err := ext.ExtractAndStore(ctx, ExtractSource{
+		ProjectID:  proj.ID,
+		ProjectKey: proj.Key,
+		SourceType: model.GraphNodeRecord,
+		SourceID:   rec.Record.ID,
+		KeyOrName:  rec.Record.Name,
+		Kind:       rec.Record.Kind,
+		Title:      rec.Record.Title,
+		Body:       repeatedBody,
+	})
+	if err != nil {
+		t.Fatalf("ExtractAndStore repeated: %v", err)
+	}
+	if len(report.Explicit) != 1 {
+		t.Fatalf("expected 1 explicit edge, got %d", len(report.Explicit))
+	}
+	if got := tracer.issueLookups.Load(); got != 1 {
+		t.Fatalf("issue DB lookups for 10,000 repeats = %d, want 1", got)
+	}
+
+	// Case 2: 300 distinct unresolved keys must be bounded by maxExtractedRefsPerDoc.
+	tracer.issueLookups.Store(0)
+	var distinctBuf strings.Builder
+	for i := 1; i <= 300; i++ {
+		fmt.Fprintf(&distinctBuf, "FAKE-%d ", i)
+	}
+	if _, err := ext.ExtractAndStore(ctx, ExtractSource{
+		ProjectID:  proj.ID,
+		ProjectKey: proj.Key,
+		SourceType: model.GraphNodeRecord,
+		SourceID:   rec.Record.ID,
+		KeyOrName:  rec.Record.Name,
+		Kind:       rec.Record.Kind,
+		Title:      rec.Record.Title,
+		Body:       distinctBuf.String(),
+	}); err != nil {
+		t.Fatalf("ExtractAndStore distinct: %v", err)
+	}
+	if got := tracer.issueLookups.Load(); got > maxExtractedRefsPerDoc {
+		t.Fatalf("issue DB lookups for 300 distinct keys = %d, want <= %d", got, maxExtractedRefsPerDoc)
 	}
 }
