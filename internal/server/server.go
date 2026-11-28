@@ -231,6 +231,7 @@ func newPostgresServer(cfg *config.Config, opts Options) (*Server, error) {
 		Logger:        opts.Logger,
 		PGStore:       pgs,
 		GraphStore:    graphStore,
+		PGSemantic:    cfg.ContextEngine.VoyageEnabled() || opts.PGEmbedder != nil,
 		IngestQueue:   ingestQueue,
 		ContextEngine: contextEngine,
 		Web:           web,

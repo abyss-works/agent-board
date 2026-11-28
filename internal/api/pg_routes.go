@@ -74,6 +74,11 @@ func (h *handler) registerPGRoutes(mux *http.ServeMux) {
 		recByPart[""](w, r)
 	})
 
+	// Classic record document, search, and graph endpoints on the record and graph tables.
+	h.registerDocuments(mux)
+	route(mux, "/v1/search", methods{"GET": h.pgCompatSearch})
+	route(mux, "/v1/graph", methods{"GET": h.pgCompatGraph})
+
 	// Context retrieval, ready queue, and graph edge review
 	route(mux, "/v1/context/query", methods{"POST": h.pgContextQuery})
 	route(mux, "/v1/projects/{key}/ready", methods{"GET": h.pgReadyIssues})
@@ -228,8 +233,8 @@ func (h *handler) pgStoreError(r *http.Request, err error) *apiError {
 		}
 		return validationFailed(details)
 	}
-	h.opts.Logger.Error("internal error", "method", r.Method, "path", r.URL.Path, "err", err.Error())
-	return errInternal
+	// Errors of the classic document endpoints are the types of the SQLite store.
+	return h.storeError(r, err)
 }
 
 // readDocumentUTF8Body validates Content-Type, checks raw bytes for strict UTF-8

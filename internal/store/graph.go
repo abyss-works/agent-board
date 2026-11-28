@@ -25,6 +25,16 @@ func (s *Store) Graph(ctx context.Context, node string, depth int, similarModel 
 	if err != nil {
 		return nil, err
 	}
+	return walkGraph(g, node, depth, fold)
+}
+
+// WalkGraph is the walk of Graph over a graph another store built: nodes by ID and
+// the edges among them.
+func WalkGraph(nodes map[string]model.GraphNode, edges []model.GraphEdge, node string, depth int, fold bool) (*model.Graph, error) {
+	return walkGraph(&graph{nodes: nodes, edges: edges}, node, depth, fold)
+}
+
+func walkGraph(g *graph, node string, depth int, fold bool) (*model.Graph, error) {
 	if _, ok := g.nodes[node]; !ok {
 		return nil, ErrNotFound
 	}

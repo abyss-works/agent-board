@@ -130,3 +130,99 @@ func TestPGClassicViewsAndIssueShape(t *testing.T) {
 		t.Error("project list must carry its paging envelope")
 	}
 }
+
+// TestPGClassicDocumentsSearchGraph runs the record document, search, and graph
+// endpoints of PostgreSQL mode through the handler.
+func TestPGClassicDocumentsSearchGraph(t *testing.T) {
+	h := newPGTestHandler(t)
+	do := func(method, path string, body any, want int) []byte {
+		t.Helper()
+		var b []byte
+		if body != nil {
+			b, _ = json.Marshal(body)
+		}
+		rec := pgDo(h, method, path, b, "")
+		if rec.Code != want {
+			t.Fatalf("%s %s = %d %s, want %d", method, path, rec.Code, rec.Body.String(), want)
+		}
+		return rec.Body.Bytes()
+	}
+	do("POST", "/v1/projects", map[string]any{"key": "DOC", "name": "문서"}, 201)
+	do("POST", "/v1/issues", map[string]any{"project": "DOC", "title": "근거 이슈"}, 201)
+	text := func(kind, title, body string) string {
+		return "---\nkind: " + kind + "\ndate: 2026-11-06 14:00\ntitle: " + title + "\n---\n# " + title + "\n" + body + "\n"
+	}
+	oldName, newName := "2026-11-01-1000-decision-old.md", "2026-11-02-1000-decision-new.md"
+	do("PUT", "/v1/projects/DOC/documents/"+oldName, map[string]any{"content": text("decision", "옛 결정", "캐시는 오분 만료")}, 201)
+	do("PUT", "/v1/projects/DOC/documents/"+oldName, map[string]any{"content": text("decision", "옛 결정", "캐시는 오분 만료")}, 200)
+	do("PUT", "/v1/projects/DOC/documents/"+oldName, map[string]any{"content": text("decision", "옛 결정", "다른 내용")}, 409)
+	var created struct {
+		State      string   `json:"state"`
+		Supersedes []string `json:"supersedes"`
+		Issues     []string `json:"issues"`
+		Warnings   []any    `json:"warnings"`
+	}
+	if err := json.Unmarshal(do("PUT", "/v1/projects/DOC/documents/"+newName, map[string]any{
+		"content": text("decision", "새 결정", "캐시는 삼십분 만료"), "supersedes": []string{oldName}, "issues": []string{"DOC-1"}}, 201), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.State != "current" || len(created.Supersedes) != 1 || len(created.Issues) != 1 || created.Warnings == nil {
+		t.Fatalf("created = %+v", created)
+	}
+	do("PUT", "/v1/projects/DOC/documents/"+newName, map[string]any{"content": text("decision", "새 결정", "캐시는 삼십분 만료")}, 409) // metadata differs
+	do("POST", "/v1/projects/DOC/documents/"+oldName+"/relations", map[string]any{"kind": "supersedes", "target": newName}, 409)
+	do("POST", "/v1/projects/DOC/documents/nothing.md/archive", nil, 404)
+
+	var old struct {
+		State        string   `json:"state"`
+		SupersededBy []string `json:"superseded_by"`
+	}
+	if err := json.Unmarshal(do("GET", "/v1/projects/DOC/documents/"+oldName, nil, 200), &old); err != nil || old.State != "superseded" || len(old.SupersededBy) != 1 {
+		t.Fatalf("old = %+v %v", old, err)
+	}
+	do("POST", "/v1/projects/DOC/documents/"+newName+"/archive", nil, 200)
+	var acts struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(do("GET", "/v1/projects/DOC/documents/"+newName+"/activity", nil, 200), &acts); err != nil || acts.Total != 1 {
+		t.Fatalf("document activity = %+v %v", acts, err)
+	}
+	do("DELETE", "/v1/projects/DOC/documents/"+newName+"/archive", nil, 200)
+
+	var docs struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(do("GET", "/v1/documents?project=DOC&q=%EC%82%BC%EC%8B%AD%EB%B6%84", nil, 200), &docs); err != nil || docs.Total != 1 || docs.Items[0].Name != newName {
+		t.Fatalf("document search = %+v %v", docs, err)
+	}
+	if err := json.Unmarshal(do("GET", "/v1/projects/DOC/documents", nil, 200), &docs); err != nil || docs.Total != 2 {
+		t.Fatalf("document list = %+v %v", docs, err)
+	}
+	var hits struct {
+		Items []struct {
+			Type string `json:"type"`
+		} `json:"items"`
+		Semantic string `json:"semantic"`
+	}
+	if err := json.Unmarshal(do("GET", "/v1/search?q=%EA%B7%BC%EA%B1%B0&project=DOC", nil, 200), &hits); err != nil || len(hits.Items) != 1 || hits.Items[0].Type != "issue" || hits.Semantic != "disabled" {
+		t.Fatalf("search = %+v %v", hits, err)
+	}
+	var g struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+		Edges []struct {
+			Type string `json:"type"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(do("GET", "/v1/graph?depth=2&state=all&node=issue:DOC-1", nil, 200), &g); err != nil || len(g.Nodes) != 3 || len(g.Edges) != 2 {
+		t.Fatalf("graph = %+v %v", g, err)
+	}
+	do("GET", "/v1/graph?node=issue:DOC-99", nil, 404)
+	// an issue reference has to resolve
+	do("POST", "/v1/issues", map[string]any{"project": "DOC", "title": "참조", "refs": []string{"doc:nothing.md"}}, 422)
+	do("POST", "/v1/issues", map[string]any{"project": "DOC", "title": "참조", "refs": []string{"doc:" + newName}}, 201)
+}

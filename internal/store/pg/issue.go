@@ -234,6 +234,10 @@ func (s *Store) CreateIssue(ctx context.Context, tr Trace, projectKey string, in
 				return err
 			}
 		}
+		refTargetsForCreate, err := resolveIssueRefs(ctx, tx, projectID, cand.Refs, nil)
+		if err != nil {
+			return err
+		}
 		var forcedReason string
 		if in.MilestoneID != nil {
 			forcedReason, err = checkMilestoneForIssueTx(ctx, tx, projectID, *in.MilestoneID, cand.Priority, cand.Type, in.Force, in.Reason)
@@ -287,10 +291,8 @@ func (s *Store) CreateIssue(ctx context.Context, tr Trace, projectKey string, in
 				return err
 			}
 		}
-		for _, ref := range cand.Refs {
-			if _, err := tx.Exec(ctx, `INSERT INTO issue_ref (issue_id, ref) VALUES ($1, $2)`, issueID, ref); err != nil {
-				return err
-			}
+		if err := insertIssueRefs(ctx, tx, issueID, cand.Refs, refTargetsForCreate); err != nil {
+			return err
 		}
 		changes := map[string]model.Change{
 			"title":              makeChange(nil, cand.Title),
@@ -697,13 +699,19 @@ func (s *Store) UpdateIssue(ctx context.Context, tr Trace, key string, expectedV
 			}
 		}
 		if _, ok := changes["refs"]; ok {
+			kept, err := storedRefTargets(ctx, tx, cur.ID)
+			if err != nil {
+				return err
+			}
+			targets, err := resolveIssueRefs(ctx, tx, curRow.projectID, next.Refs, kept)
+			if err != nil {
+				return err
+			}
 			if _, err := tx.Exec(ctx, `DELETE FROM issue_ref WHERE issue_id = $1`, cur.ID); err != nil {
 				return err
 			}
-			for _, ref := range next.Refs {
-				if _, err := tx.Exec(ctx, `INSERT INTO issue_ref (issue_id, ref) VALUES ($1, $2)`, cur.ID, ref); err != nil {
-					return err
-				}
+			if err := insertIssueRefs(ctx, tx, cur.ID, next.Refs, targets); err != nil {
+				return err
 			}
 		}
 

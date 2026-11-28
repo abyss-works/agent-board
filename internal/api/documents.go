@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -70,9 +71,9 @@ func (h *handler) putDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, name := r.PathValue("key"), r.PathValue("name")
-	d, created, err := h.store.PutDocument(r.Context(), TraceFrom(r.Context()), project, name, in)
+	d, created, err := h.docs.PutDocument(r.Context(), TraceFrom(r.Context()), project, name, in)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	status := http.StatusOK
@@ -167,9 +168,9 @@ func (h *handler) putDocumentsBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		items[i] = store.BatchDocumentInput{Name: name, DocumentInput: in}
 	}
-	docs, err := h.store.PutDocumentsBatch(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), items)
+	docs, err := h.docs.PutDocumentsBatch(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), items)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"documents": docs})
@@ -235,9 +236,9 @@ func (h *handler) setArchived(w http.ResponseWriter, r *http.Request, archived b
 		writeError(w, aerr)
 		return
 	}
-	d, err := h.store.SetDocumentArchived(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), r.PathValue("name"), archived)
+	d, err := h.docs.SetDocumentArchived(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), r.PathValue("name"), archived)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
@@ -276,9 +277,9 @@ func (h *handler) changeRelation(w http.ResponseWriter, r *http.Request, add boo
 		writeError(w, validationFailed(bad))
 		return
 	}
-	d, err := h.store.ChangeDocumentRelation(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), r.PathValue("name"), rel, target, add)
+	d, err := h.docs.ChangeDocumentRelation(r.Context(), TraceFrom(r.Context()), r.PathValue("key"), r.PathValue("name"), rel, target, add)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
@@ -293,9 +294,9 @@ func (h *handler) documentActivity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, total, err := h.store.ListDocumentActivity(r.Context(), r.PathValue("key"), r.PathValue("name"), limit, offset)
+	items, total, err := h.docs.ListDocumentActivity(r.Context(), r.PathValue("key"), r.PathValue("name"), limit, offset)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope(items, total, limit, offset))
@@ -306,9 +307,9 @@ func (h *handler) getDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	d, err := h.store.GetDocument(r.Context(), r.PathValue("key"), r.PathValue("name"))
+	d, err := h.docs.GetDocument(r.Context(), r.PathValue("key"), r.PathValue("name"))
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
@@ -321,9 +322,9 @@ func (h *handler) listDocuments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, total, err := h.store.ListDocuments(r.Context(), r.PathValue("key"), limit, offset)
+	items, total, err := h.docs.ListDocuments(r.Context(), r.PathValue("key"), limit, offset)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope(items, total, limit, offset))
@@ -352,9 +353,9 @@ func (h *handler) searchDocuments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, aerr)
 		return
 	}
-	items, total, err := h.store.SearchDocuments(r.Context(), f)
+	items, total, err := h.docs.SearchDocuments(r.Context(), f)
 	if err != nil {
-		writeError(w, h.storeError(r, err))
+		writeError(w, h.docError(r, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope(items, total, f.Limit, f.Offset))
@@ -403,4 +404,25 @@ func rejectLocation(q *query) {
 		q.seen["location"] = true
 		q.add("location", "location은 없어졌습니다. 상태는 state, 가져온 문서는 imported를 쓰세요.")
 	}
+}
+
+// documentStore is what the record document endpoints need of a store. The SQLite
+// store has it as it is; PostgreSQL mode answers from the record and graph tables.
+type documentStore interface {
+	PutDocument(ctx context.Context, tr model.Trace, project, name string, in store.DocumentInput) (*model.DocumentResult, bool, error)
+	PutDocumentsBatch(ctx context.Context, tr model.Trace, project string, items []store.BatchDocumentInput) ([]model.DocumentResult, error)
+	GetDocument(ctx context.Context, project, name string) (*model.Document, error)
+	ListDocuments(ctx context.Context, project string, limit, offset int) ([]model.Document, int, error)
+	SearchDocuments(ctx context.Context, f store.DocumentFilter) ([]model.Document, int, error)
+	SetDocumentArchived(ctx context.Context, tr model.Trace, project, name string, archived bool) (*model.DocumentResult, error)
+	ChangeDocumentRelation(ctx context.Context, tr model.Trace, project, name string, kind model.RelationKind, target string, add bool) (*model.DocumentResult, error)
+	ListDocumentActivity(ctx context.Context, project, name string, limit, offset int) ([]model.DocumentActivity, int, error)
+}
+
+// docError maps an error of the document store to its response.
+func (h *handler) docError(r *http.Request, err error) *apiError {
+	if h.pgStore != nil {
+		return h.pgStoreError(r, err)
+	}
+	return h.storeError(r, err)
 }

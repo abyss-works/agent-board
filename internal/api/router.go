@@ -53,6 +53,9 @@ type Options struct {
 	// SimilarModel is the embedding model whose similar-document pairs the
 	// graph shows. Empty when search by meaning is off: no similar edges.
 	SimilarModel string
+	// PGSemantic tells the PostgreSQL-mode search that the context engine ranks by meaning
+	// (an embedding key is configured), so it joins the keyword search.
+	PGSemantic bool
 	// SSEPingInterval is how often an open event stream sends a keepalive
 	// comment. Zero uses the default (20 seconds).
 	SSEPingInterval time.Duration
@@ -70,6 +73,7 @@ type handler struct {
 	actors        map[string]model.Actor
 	actorOrder    []model.Actor
 	store         *store.Store
+	docs          documentStore
 	pgStore       *pgstore.Store
 	graphStore    *graph.Store
 	ingestQueue   *ingest.Queue
@@ -113,7 +117,11 @@ func New(o Options) http.Handler {
 	if h.opts.Logger == nil {
 		h.opts.Logger = slog.Default()
 	}
+	if o.Store != nil {
+		h.docs = o.Store
+	}
 	if h.pgStore != nil {
+		h.docs = pgDocuments{h.pgStore}
 		h.pgStore.SetEventHook(h.broker.Notify)
 		if h.graphStore == nil {
 			h.graphStore = graph.NewStore(h.pgStore.Pool())

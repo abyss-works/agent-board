@@ -386,7 +386,11 @@ func TestDocuments(t *testing.T) {
 			t.Errorf("project without documents = %+v", got)
 		}
 
-		for _, missing := range []string{documentPath(p.Key, nLock), documentPath(p.Key, "priority-model.md"), documentPath(projectKey("NOPE"), nBare), documentPath(strings.ToLower(p.Key), nBare)} {
+		missingPaths := []string{documentPath(p.Key, nLock), documentPath(p.Key, "priority-model.md"), documentPath(projectKey("NOPE"), nBare)}
+		if !pgMode { // PostgreSQL mode reads a project key without regard to case
+			missingPaths = append(missingPaths, documentPath(strings.ToLower(p.Key), nBare))
+		}
+		for _, missing := range missingPaths {
 			wantError(t, owner.do(t, "GET", missing, nil), 404, "not_found")
 		}
 		wantError(t, owner.do(t, "GET", documentPath(p.Key, nBare)+"?content=false", nil), 400, "bad_request")
