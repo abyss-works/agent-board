@@ -21,6 +21,7 @@ agent-board는 프로젝트의 진행 상황과 목록형 상태(아이디어, �
 | 댓글 읽기 | `agb issue activity <ISSUE> --fields kind,actor,at,body --text` ("출력과 종료 코드") |
 | 기록 문서 | `agb doc new <종류> --slug <s> --title "<제목>"`, `agb doc put <경로>`, `agb doc get -p <KEY> <이름> --content` ("기록 문서") |
 | 검색 | `agb search "<핵심어>" -p <KEY>`, 과거 기록 `agb recall "<질문>"` ("기록 문서" 끝의 "작업 전에 과거 기록을 찾을 때") |
+| 새 조회·쓰기 | `agb context "<질문>"` 외 ("한 번에 조회와 새 쓰기 명령") |
 | 값 뽑기 | `--fields a,b --text`. JSON은 스크립트로 가공하지 않는다 ("출력과 종료 코드") |
 | 메시지 | `agb msg put -p <KEY> --title "<제목>" --body "<내용>"`, `agb msg list -p <KEY> --unread`, `agb msg ack <ID>` ("메시지 공간") |
 | 이벤트 구독 | `agb watch [-p <KEY>] [--kind <접두사>] [--after <id>] [--timeout <기간>]` ("이벤트 스트림") |
@@ -581,6 +582,20 @@ agb doc activity <PROJECT> <이름>
    ```
    - Expected: 원문이 그대로 출력된다. `agb doc get <PROJECT> <이름>`은 상태와 관계를 보인다. 프로젝트는 `-p <PROJECT> <이름>`으로도 줄 수 있다.
    - 댓글을 읽는 명령은 `agb issue activity`이고, `agb issue comment`는 댓글을 쓴다. `agb issue comments`나 `agb doc show`는 없는 명령이며, 오류가 가까운 명령을 알려 준다.
+
+### 한 번에 조회와 새 쓰기 명령
+
+PostgreSQL 모드 서버는 위 검색을 한 번의 호출로 묶은 `context`와 큐·검토·쓰기 명령을 갖는다. 같은 호출이 MCP 도구로도 있다(`agb mcp`, 아래).
+
+- 한 번에 조회: `agb context "<질문>" -p <KEY>`는 키워드·의미 검색을 합쳐 순위를 매기고 상위 항목의 본문과 연결된 이웃(양방향, 확정된 간선)을 함께 돌려준다.
+  - 1위와 2위의 점수 차가 하한(기본 0.15) 이상이면 1위만 나온다(`cutoff_applied`). 결과가 모자라 보이면 `--max-results`를 늘리거나 `--cutoff 1`로 컷오프를 끈다.
+  - 리랭커나 임베딩이 실패하면 출력 끝에 대체 경로 알림이 붙는다. 이때 순위는 덜 정확하므로 원문을 읽어 확인한다.
+  - 대체됨 문서는 `--include-superseded`를 줘야 나오고, 나오면 `대체됨 →` 줄이 최신 문서를 가리킨다.
+- 착수 가능 큐: `agb ready <KEY>`는 선행 이슈가 모두 닫히고 아무도 잡지 않은 이슈를 우선순위 순으로 보인다. 잡은 것까지 보려면 `--include-claimed`.
+- 간선 후보: `agb edge candidates`로 수집 단계가 제안한 연결을 보고, 맞으면 `agb edge confirm <ID>`, 틀리면 `agb edge reject <ID>`. 확정한 간선만 `context`의 이웃과 대체 관계에 반영된다.
+- 스펙·기록 쓰기: `agb spec put <KEY> <slug> --body-file -`는 가변 스펙에 새 개정을 쌓고, `agb record add <KEY> <이름> --kind <종류> --body-file -`는 불변 기록을 더한다. `--wait`를 주면 색인이 끝난 뒤(최대 15초) 응답하고 `ingest_status`와 대체 후보가 담긴다. 쓴 직후 `context`로 찾아야 하면 `--wait`를 준다.
+- 에픽·마일스톤: 에픽(`agb epic ...`)은 마일스톤 위의 묶음이다. 마일스톤은 `planned`(`agb milestone plan`) → `active`(`agb milestone start`) → `closed`(`agb milestone close`)로 간다. 진행 중 마일스톤에는 P0 또는 bug 이슈만 편입되고 그 밖은 422 `milestone_scope_locked`다.
+- MCP: 에이전트 도구 설정에 명령 `agb`, 인자 `mcp`로 등록하면 `agb_context`, `agb_ready`, `agb_edge_candidates`, `agb_edge_decide`, `agb_spec_put`, `agb_record_add` 도구가 생긴다. 인증은 CLI와 같은 환경 값을 쓴다.
 
 ## 메시지 공간
 

@@ -12,7 +12,7 @@ import (
 )
 
 var milestoneCmd = &command{name: "milestone", summary: "마일스톤 관리", subs: []*command{
-	milestoneListCmd, milestoneGetCmd, milestoneCreateCmd, milestoneUpdateCmd, milestoneCloseCmd, milestoneReopenCmd, milestoneDeleteCmd,
+	milestoneListCmd, milestoneGetCmd, milestoneCreateCmd, milestoneUpdateCmd, milestoneCloseCmd, milestoneReopenCmd, milestonePlanCmd, milestoneStartCmd, milestoneDeleteCmd,
 }}
 
 // milestoneList is the response of the milestone list endpoint.
@@ -273,7 +273,7 @@ var milestoneUpdateCmd = &command{
   --name <이름>           이름 변경. 1~50자
   --description <텍스트>  설명 변경. 빈 문자열이면 설명을 지움
   --target-date <날짜>    목표일 변경. YYYY-MM-DD, none 이면 목표일을 지움
-  --status <S>            open, closed. 같은 변경을 close, reopen 으로도 합니다
+  --status <S>            planned, active, open, closed. 같은 변경을 plan, start, close, reopen 으로도 합니다
 `,
 	run: func(a *App, ctx context.Context, g *globals, args []string) error {
 		fs := leafFlags("milestone update", g)
@@ -355,6 +355,17 @@ var milestoneReopenCmd = milestoneStatusCmd("reopen", "마일스톤 다시 열�
 상태를 open 으로 바꾸고 닫은 시각을 지웁니다. 닫은 마일스톤을 다시 열고, 삭제한 마일스톤도 되살립니다.
 삭제한 마일스톤은 같은 이름의 삭제되지 않은 마일스톤이 없을 때만 되살아납니다(있으면 409).
 `, "open")
+
+var milestonePlanCmd = milestoneStatusCmd("plan", "마일스톤을 계획(planned) 단계로", `사용법: agb milestone plan <ID>
+
+상태를 planned 로 바꿉니다. 계획 단계에서는 이슈를 자유롭게 편입합니다.
+`, "planned")
+
+var milestoneStartCmd = milestoneStatusCmd("start", "마일스톤을 진행(active) 단계로", `사용법: agb milestone start <ID>
+
+상태를 active 로 바꿉니다. 진행 중 마일스톤에는 P0 또는 bug 이슈만 편입할 수 있고, 그 밖의 이슈는 422
+milestone_scope_locked 입니다. 예외는 이슈 수정 요청에 force 와 reason 을 함께 보내야 합니다.
+`, "active")
 
 var milestoneDeleteCmd = &command{
 	name: "delete", summary: "마일스톤 소프트 삭제",

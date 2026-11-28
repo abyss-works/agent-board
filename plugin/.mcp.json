@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agb": {
+      "command": "agb",
+      "args": ["mcp"]
+    }
+  }
+}

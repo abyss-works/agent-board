@@ -279,7 +279,7 @@ agb help <명령> 또는 agb <명령> --help 로 자세한 사용법을, agb hel
 
 var root = &command{name: "agb", subs: []*command{
 	configCmd, loginCmd, logoutCmd, skillCmd, setupCmd, hookCmd, healthCmd, whoamiCmd, actorsCmd, statsCmd, sessionCmd, projectCmd, topicCmd, milestoneCmd, templateCmd, issueCmd, releaseCmd, docCmd, msgCmd, initCmd,
-	agendaCmd, digestCmd, activityCmd, watchCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd,
+	agendaCmd, digestCmd, activityCmd, watchCmd, boardCmd, queueCmd, labelsCmd, searchCmd, findCmd, graphCmd, recallCmd, contextCmd, readyCmd, edgeCmd, specCmd, recordCmd, epicCmd, mcpCmd,
 }}
 
 // Run executes args and returns the exit code: 0 success, 1 API or
